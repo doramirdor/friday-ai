@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+make sure to split between main, preload and renderer layers when you create code

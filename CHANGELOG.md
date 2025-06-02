@@ -82,3 +82,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Infrastructure
 - Follows Electron architecture best practices with proper separation between main, preload, and renderer layers
 - Maintains robust error handling and logging throughout the application stack
+
+### Fixed
+- Fixed recording state management when Swift recorder fails after starting
+  - Now properly handles RECORDING_FAILED events even after recording has begun
+  - Added combined-recording-failed event to notify frontend of mid-recording failures
+  - Frontend now cleans up recording state properly when system audio capture fails
+  - Prevents "No active recording" error when trying to stop a failed recording
+  - Improved error handling and user feedback for Bluetooth audio interference issues
+
+### Enhanced
+- Better fallback mechanism for system audio capture failures
+  - Swift recorder now properly falls back to microphone-only mode
+  - Clear user notifications about Bluetooth audio limitations
+  - Recording process continues with microphone even when system audio fails
+
+## [2024-06-01]

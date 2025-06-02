@@ -390,9 +390,19 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         isProcessingQueue = true
         while (transcriptionQueue.length > 0) {
           const statusResult = await (window.api as any).transcription.isReady()
+          
           if (!statusResult.ready) {
-            console.log('⏳ Waiting for transcription service to be ready...')
-            await new Promise(resolve => setTimeout(resolve, 1000))
+            const details = statusResult.details || {}
+            console.log('⏳ Waiting for transcription service to be ready...', {
+              serviceReady: details.serviceReady,
+              socketConnected: details.socketConnected,
+              processRunning: details.processRunning,
+              isStarting: details.isStarting
+            })
+            
+            // Wait longer if service is starting, shorter for socket reconnection
+            const waitTime = details.isStarting ? 2000 : 1000
+            await new Promise(resolve => setTimeout(resolve, waitTime))
             continue
           }
 
@@ -404,6 +414,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                 console.log('✅ Queued transcription chunk processed successfully')
               } else {
                 console.error('Failed to process queued transcription chunk:', result.error)
+                // Don't retry indefinitely - just log and continue
               }
             } catch (error) {
               console.error('Error processing queued transcription chunk:', error)
@@ -451,7 +462,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                   // Check if service is ready, if not, queue the chunk
                   const statusResult = await (window.api as any).transcription.isReady()
                   if (!statusResult.ready) {
-                    console.log('⏳ Transcription service busy, queuing chunk for later processing')
+                    const details = statusResult.details || {}
+                    console.log('⏳ Transcription service busy, queuing chunk for later processing', {
+                      serviceReady: details.serviceReady,
+                      socketConnected: details.socketConnected,
+                      processRunning: details.processRunning,
+                      isStarting: details.isStarting
+                    })
                     transcriptionQueue.push(arrayBuffer)
                     // Trigger queue processing in background
                     setTimeout(processQueuedChunks, 500)
@@ -460,14 +477,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                     try {
                       const result = await (window.api as any).transcription.processChunk(arrayBuffer)
                       if (!result.success) {
-                        console.log('⏳ Processing failed, queuing chunk for retry')
+                        console.log('⏳ Processing failed, queuing chunk for retry. Error:', result.error)
                         transcriptionQueue.push(arrayBuffer)
                         setTimeout(processQueuedChunks, 500)
                       } else {
                         console.log('✅ Transcription segment sent successfully')
                       }
                     } catch (error) {
-                      console.log('⏳ Processing error, queuing chunk for retry')
+                      console.log('⏳ Processing error, queuing chunk for retry. Error:', error)
                       transcriptionQueue.push(arrayBuffer)
                       setTimeout(processQueuedChunks, 500)
                     }

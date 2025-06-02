@@ -351,7 +351,8 @@ function connectToTranscriptionSocket(): Promise<void> {
     
     transcriptionSocket = new net.Socket()
     transcriptionSocket.setKeepAlive(true, 60000) // Keep connection alive
-    transcriptionSocket.setTimeout(30000) // 30 second timeout
+    // Remove timeout - let it stay connected
+    // transcriptionSocket.setTimeout(30000) // 30 second timeout
 
     transcriptionSocket.connect(actualTranscriptionPort, 'localhost', () => {
       console.log(`🔌 Connected to transcription socket server on port ${actualTranscriptionPort}`)
@@ -385,34 +386,39 @@ function connectToTranscriptionSocket(): Promise<void> {
 
     transcriptionSocket.on('error', (error) => {
       console.error('Socket error:', error)
-      reject(error)
+      // Don't reject here during normal operation, only during initial connection
+      if (!isTranscriptionReady) {
+        reject(error)
+      }
     })
 
-    transcriptionSocket.on('timeout', () => {
-      console.log('Socket timeout - closing connection')
-      transcriptionSocket?.destroy()
-    })
+    // Remove timeout handler since we removed the timeout
+    // transcriptionSocket.on('timeout', () => {
+    //   console.log('Socket timeout - closing connection')
+    //   transcriptionSocket?.destroy()
+    // })
 
     transcriptionSocket.on('close', () => {
       console.log('📞 Socket connection closed - keeping service ready for reconnection')
       transcriptionSocket = null
       // Don't set isTranscriptionReady to false here to allow reconnection
       
-      // Attempt to reconnect after a longer delay if the process is still running
+      // Attempt to reconnect after a shorter delay if the process is still running
       if (transcriptionProcess && !transcriptionProcess.killed) {
-        console.log('🔄 Attempting to reconnect to transcription service in 5 seconds...')
+        console.log('🔄 Attempting to reconnect to transcription service in 3 seconds...')
         setTimeout(() => {
-          if (transcriptionProcess && !transcriptionProcess.killed && !transcriptionSocket) {
+          if (transcriptionProcess && !transcriptionProcess.killed && !transcriptionSocket && isTranscriptionReady) {
             connectToTranscriptionSocket()
               .then(() => {
                 console.log('✅ Reconnected to transcription service')
               })
               .catch((error) => {
                 console.error('Failed to reconnect to transcription service:', error)
+                // Only set to false if reconnection fails multiple times
                 isTranscriptionReady = false
               })
           }
-        }, 5000) // Increased delay to reduce connection churn
+        }, 3000) // Reduced delay for faster reconnection
       } else {
         isTranscriptionReady = false
       }
@@ -531,12 +537,38 @@ function setupTranscriptionHandlers(): void {
   })
 
   ipcMain.handle('transcription:is-ready', () => {
-    return { ready: isTranscriptionReady }
+    // More comprehensive readiness check
+    const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed
+    const serviceReady = isTranscriptionReady && !isTranscriptionStarting
+    const processRunning = transcriptionProcess && !transcriptionProcess.killed
+    
+    return { 
+      ready: serviceReady && socketConnected && processRunning,
+      details: {
+        serviceReady,
+        socketConnected,
+        processRunning,
+        isStarting: isTranscriptionStarting
+      }
+    }
   })
 
   ipcMain.handle('transcription:process-chunk', async (_, audioBuffer: ArrayBuffer) => {
-    if (!transcriptionSocket || !isTranscriptionReady) {
-      return { success: false, error: 'Transcription service not ready' }
+    // More comprehensive readiness check
+    const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed
+    const serviceReady = isTranscriptionReady && !isTranscriptionStarting
+    const processRunning = transcriptionProcess && !transcriptionProcess.killed
+    
+    if (!serviceReady) {
+      return { success: false, error: 'Transcription service not ready or still starting' }
+    }
+    
+    if (!socketConnected) {
+      return { success: false, error: 'Socket connection not available' }
+    }
+    
+    if (!processRunning) {
+      return { success: false, error: 'Transcription process not running' }
     }
 
     try {
@@ -544,7 +576,7 @@ function setupTranscriptionHandlers(): void {
       const filePath = saveAudioChunk(buffer)
 
       // Send the file path via socket
-      transcriptionSocket.write(filePath + '\n')
+      transcriptionSocket!.write(filePath + '\n')
 
       return { success: true }
     } catch (error) {

@@ -49,10 +49,14 @@ const api = {
     onRecordingStopped: (callback) => {
       electron.ipcRenderer.on("combined-recording-stopped", (_, result) => callback(result));
     },
+    onRecordingFailed: (callback) => {
+      electron.ipcRenderer.on("combined-recording-failed", (_, result) => callback(result));
+    },
     // Remove listeners
     removeAllListeners: () => {
       electron.ipcRenderer.removeAllListeners("combined-recording-started");
       electron.ipcRenderer.removeAllListeners("combined-recording-stopped");
+      electron.ipcRenderer.removeAllListeners("combined-recording-failed");
     }
   }
 };

@@ -1198,13 +1198,93 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
             try await RecorderCLI.screenCaptureStream?.startCapture()
             print("Capture started successfully")
             
-            if audioSource == "both" {
+            if audioSource == "both" || audioSource == "system" {
                 systemRecordingActive = true
+                print("✅ System audio recording active")
             }
+            
         } catch {
-            print("Failed to start capture: \(error.localizedDescription)")
-            throw error
+            print("Failed to start capture: \(error)")
+            print("❌ Failed to initiate recording: \(error)")
+            
+            // If this is a combined recording attempt, fall back to microphone-only
+            if audioSource == "both" {
+                print("🔄 System audio capture failed, falling back to microphone-only recording...")
+                
+                // Continue with just microphone recording
+                let currentDevice = getCurrentAudioDevice()
+                let warning = "System audio capture failed due to audio routing limitations (detected: \(currentDevice))"
+                let recommendation = "For system audio, switch from AirPods to built-in speakers"
+                
+                ResponseHandler.returnResponse([
+                    "code": "RECORDING_STARTED_MIC_ONLY",
+                    "path": finalMp3Path ?? "",
+                    "timestamp": ISO8601DateFormatter().string(from: Date()),
+                    "warning": warning,
+                    "recommendation": recommendation,
+                    "cause": "Bluetooth audio device interference",
+                    "solution": "Switch to MacBook speakers for full audio capture"
+                ], shouldExitProcess: false)
+                
+                // Don't throw error, continue with microphone recording
+                return
+            } else {
+                // For system-only recordings, this is a real failure
+                ResponseHandler.returnResponse([
+                    "code": "RECORDING_FAILED",
+                    "error": "Failed to initiate recording: \(error)"
+                ])
+                
+                throw error
+            }
         }
+    }
+
+    // Helper function to get current audio device
+    func getCurrentAudioDevice() -> String {
+        var defaultOutputDeviceID: AudioDeviceID = 0
+        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        let result = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &defaultOutputDeviceID
+        )
+        
+        if result == noErr {
+            // Get device name
+            var deviceNameProperty = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceName,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            
+            var deviceNameSize = UInt32(256)
+            var deviceNameBuffer = [UInt8](repeating: 0, count: 256)
+            
+            let nameResult = AudioObjectGetPropertyData(
+                defaultOutputDeviceID,
+                &deviceNameProperty,
+                0,
+                nil,
+                &deviceNameSize,
+                &deviceNameBuffer
+            )
+            
+            if nameResult == noErr {
+                return String(bytes: deviceNameBuffer.prefix(Int(deviceNameSize)), encoding: .utf8) ?? "Unknown Device"
+            }
+        }
+        
+        return "Unknown Device"
     }
 
     func configureStream(_ configuration: SCStreamConfiguration) {

@@ -106,6 +106,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [isSwiftRecorderAvailable, setIsSwiftRecorderAvailable] = useState(false)
   const [recordingMode, setRecordingMode] = useState<'microphone' | 'combined'>('microphone')
   const [isCombinedRecording, setIsCombinedRecording] = useState(false)
+  const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
 
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const recordingInterval = useRef<NodeJS.Timeout | null>(null)
@@ -248,11 +249,33 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     const handleCombinedRecordingStarted = (result: any): void => {
       console.log('🎙️ Combined recording started:', result)
       setIsCombinedRecording(true)
+      
+      // Handle different recording start types
+      if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
+        // Show warning about system audio capture failure
+        console.warn('⚠️ System audio capture failed:', result.warning)
+        
+        // Set warning message for UI display
+        setRecordingWarning(`⚠️ ${result.warning}`)
+        
+        // Update status to indicate microphone-only mode
+        setTranscriptionStatus('recording-mic-only')
+      } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
+        // Handle recording failure
+        console.error('❌ Recording failed:', result.error)
+        setRecordingWarning(`❌ Recording failed: ${result.error}`)
+        setTranscriptionStatus('error')
+        setIsCombinedRecording(false)
+      } else {
+        // Clear any previous warnings
+        setRecordingWarning(null)
+      }
     }
 
     const handleCombinedRecordingStopped = (result: any): void => {
       console.log('🎙️ Combined recording stopped:', result)
       setIsCombinedRecording(false)
+      setRecordingWarning(null) // Clear warning when recording stops
 
       // Load the combined recording for playback
       if (result.path) {
@@ -260,9 +283,35 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       }
     }
 
+    const handleCombinedRecordingFailed = (result: any): void => {
+      console.error('❌ Recording failed during operation:', result.error)
+      
+      // Clean up recording state
+      setIsCombinedRecording(false)
+      setIsRecording(false)
+      setTranscriptionStatus('error')
+      setRecordingWarning(`❌ Recording failed: ${result.error}`)
+      
+      // Stop parallel transcription recording
+      isRecordingRef.current = false
+      
+      // Stop audio stream
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((track) => track.stop())
+        audioStreamRef.current = null
+      }
+      
+      // Clear timer
+      if (recordingInterval.current) {
+        clearInterval(recordingInterval.current)
+        recordingInterval.current = null
+      }
+    }
+
     if (isSwiftRecorderAvailable) {
       ;(window.api as any).swiftRecorder.onRecordingStarted(handleCombinedRecordingStarted)
       ;(window.api as any).swiftRecorder.onRecordingStopped(handleCombinedRecordingStopped)
+      ;(window.api as any).swiftRecorder.onRecordingFailed(handleCombinedRecordingFailed)
     }
 
     return (): void => {
@@ -1184,6 +1233,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         return 'Ready to record'
       case 'recording':
         return `Recording live... ${formatTime(currentTime)}`
+      case 'recording-mic-only':
+        return `Recording (Microphone Only)... ${formatTime(currentTime)}`
       case 'processing':
         return 'Processing audio...'
       case 'error':
@@ -1433,6 +1484,26 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                 Stop Recording
               </button>
             </div>
+
+            {/* Show warning if system audio capture failed */}
+            {recordingWarning && (
+              <div
+                style={{
+                  padding: 'var(--spacing-md)',
+                  background: '#FFF3CD',
+                  border: '1px solid #FFEAA7',
+                  borderRadius: 'var(--radius-md)',
+                  marginBottom: 'var(--spacing-md)'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+                  <span style={{ fontSize: '16px' }}>⚠️</span>
+                  <span style={{ color: '#856404', fontSize: '14px' }}>
+                    {recordingWarning}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Live Transcript */}
             <div className="transcript-content" style={{ flex: 1, overflow: 'auto' }}>

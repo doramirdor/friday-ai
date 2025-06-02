@@ -626,12 +626,43 @@ async function startCombinedRecording(recordingPath, filename) {
             if (mainWindow) {
               mainWindow.webContents.send("combined-recording-started", result);
             }
+          } else if (result.code === "RECORDING_STARTED_MIC_ONLY" && !hasStarted) {
+            hasStarted = true;
+            resolve({
+              success: true,
+              path: result.path,
+              warning: result.warning,
+              recommendation: result.recommendation
+            });
+            if (mainWindow) {
+              mainWindow.webContents.send("combined-recording-started", result);
+            }
+            console.log("✅ Microphone-only recording started, process still tracked for stopping");
+          } else if (result.code === "SYSTEM_AUDIO_FAILED" && !hasStarted) {
+            hasStarted = true;
+            resolve({
+              success: false,
+              error: result.error,
+              cause: result.cause,
+              solution: result.solution
+            });
           } else if (result.code === "RECORDING_STOPPED") {
             if (mainWindow) {
               mainWindow.webContents.send("combined-recording-stopped", result);
             }
           } else if (result.code === "RECORDING_ERROR" && !hasStarted) {
             resolve({ success: false, error: result.error });
+          } else if (result.code === "RECORDING_FAILED") {
+            console.error("❌ Recording failed after start:", result.error);
+            if (mainWindow) {
+              mainWindow.webContents.send("combined-recording-failed", result);
+            }
+            if (hasStarted) {
+              swiftRecorderProcess = null;
+            } else {
+              hasStarted = true;
+              resolve({ success: false, error: result.error });
+            }
           }
         } catch {
           console.log("Swift recorder log:", line);
@@ -668,6 +699,7 @@ async function startCombinedRecording(recordingPath, filename) {
 async function stopCombinedRecording() {
   return new Promise((resolve) => {
     if (!swiftRecorderProcess) {
+      console.log("⚠️ No tracked Swift recorder process found");
       resolve({ success: false, error: "No active recording" });
       return;
     }

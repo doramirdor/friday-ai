@@ -66,10 +66,15 @@ const api = {
       ipcRenderer.on('combined-recording-stopped', (_, result) => callback(result))
     },
 
+    onRecordingFailed: (callback: (result: any) => void) => {
+      ipcRenderer.on('combined-recording-failed', (_, result) => callback(result))
+    },
+
     // Remove listeners
     removeAllListeners: () => {
       ipcRenderer.removeAllListeners('combined-recording-started')
       ipcRenderer.removeAllListeners('combined-recording-stopped')
+      ipcRenderer.removeAllListeners('combined-recording-failed')
     }
   }
 }

@@ -103,7 +103,15 @@ async function checkSwiftRecorderAvailability(): Promise<boolean> {
 async function startCombinedRecording(
   recordingPath: string,
   filename?: string
-): Promise<{ success: boolean; path?: string; error?: string }> {
+): Promise<{ 
+  success: boolean; 
+  path?: string; 
+  error?: string;
+  warning?: string;
+  recommendation?: string;
+  cause?: string;
+  solution?: string;
+}> {
   return new Promise((resolve) => {
     if (!isSwiftRecorderAvailable) {
       resolve({ success: false, error: 'Swift recorder not available' })
@@ -155,6 +163,30 @@ async function startCombinedRecording(
             if (mainWindow) {
               mainWindow.webContents.send('combined-recording-started', result)
             }
+          } else if (result.code === 'RECORDING_STARTED_MIC_ONLY' && !hasStarted) {
+            hasStarted = true
+            resolve({ 
+              success: true, 
+              path: result.path, 
+              warning: result.warning,
+              recommendation: result.recommendation
+            })
+
+            // Notify renderer about recording start with warning
+            if (mainWindow) {
+              mainWindow.webContents.send('combined-recording-started', result)
+            }
+            
+            // Important: Keep the process tracked so we can stop it later
+            console.log('✅ Microphone-only recording started, process still tracked for stopping')
+          } else if (result.code === 'SYSTEM_AUDIO_FAILED' && !hasStarted) {
+            hasStarted = true
+            resolve({ 
+              success: false, 
+              error: result.error,
+              cause: result.cause,
+              solution: result.solution
+            })
           } else if (result.code === 'RECORDING_STOPPED') {
             // Notify renderer about recording completion
             if (mainWindow) {
@@ -162,6 +194,22 @@ async function startCombinedRecording(
             }
           } else if (result.code === 'RECORDING_ERROR' && !hasStarted) {
             resolve({ success: false, error: result.error })
+          } else if (result.code === 'RECORDING_FAILED') {
+            // Handle recording failure even after it has started
+            console.error('❌ Recording failed after start:', result.error)
+            
+            // Notify renderer about the failure
+            if (mainWindow) {
+              mainWindow.webContents.send('combined-recording-failed', result)
+            }
+            
+            // If this happens after hasStarted, we need to clean up
+            if (hasStarted) {
+              swiftRecorderProcess = null // Process will exit, so clear reference
+            } else {
+              hasStarted = true
+              resolve({ success: false, error: result.error })
+            }
           }
         } catch {
           // Non-JSON output, just log it
@@ -211,6 +259,8 @@ async function stopCombinedRecording(): Promise<{
 }> {
   return new Promise((resolve) => {
     if (!swiftRecorderProcess) {
+      // Check if we might have a recording in progress but lost track of the process
+      console.log('⚠️ No tracked Swift recorder process found')
       resolve({ success: false, error: 'No active recording' })
       return
     }

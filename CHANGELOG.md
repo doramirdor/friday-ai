@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **System Audio Capture Issues**
+  - Identified and documented Bluetooth audio device interference with ScreenCaptureKit
+  - Improved system audio capture configuration in Swift recorder
+  - Enhanced audio routing detection and warnings for problematic setups
+  - Better stream configuration for more reliable system audio capture
+  - Fixed compilation errors in Swift recorder implementation
+
 - **Transcription Service Duplication Issues**
   - Fixed multiple transcription services starting simultaneously
   - Eliminated duplicate transcription results being received
@@ -21,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Better service readiness detection during queue processing
 
 ### Added
+- **Comprehensive System Audio Troubleshooting Guide**
+  - Detailed documentation of common system audio capture issues
+  - Step-by-step solutions for Bluetooth audio interference
+  - Best practices for optimal audio recording setup
+  - Debugging techniques and diagnostic information
+  - Alternative solutions for problematic audio configurations
+
+- **Enhanced Audio Diagnostics and Logging**
+  - Real-time audio device detection and routing analysis
+  - Bluetooth device warnings with specific recommendations
+  - Audio level monitoring and buffer analysis for system audio
+  - Enhanced logging for debugging audio capture issues
+  - File size monitoring and validation during recording
+
 - **Enhanced Transcription Service Management**
   - Added `isTranscriptionStarting` flag to prevent concurrent service starts in main process
   - Implemented process lock mechanism in Python transcription service to prevent multiple instances

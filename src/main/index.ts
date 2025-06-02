@@ -15,6 +15,7 @@ let mainWindow: BrowserWindow | null = null
 let transcriptionProcess: ChildProcess | null = null
 let transcriptionSocket: net.Socket | null = null
 let isTranscriptionReady = false
+let isTranscriptionStarting = false
 let actualTranscriptionPort = 9001 // Will be updated based on Python server output
 
 // Swift recorder process management
@@ -304,10 +305,14 @@ function startTranscriptionService(): Promise<void> {
         connectToTranscriptionSocket()
           .then(() => {
             isTranscriptionReady = true
+            isTranscriptionStarting = false
             console.log('✅ Transcription service ready')
             resolve()
           })
-          .catch(reject)
+          .catch((error) => {
+            isTranscriptionStarting = false
+            reject(error)
+          })
         return
       }
 
@@ -331,6 +336,7 @@ function startTranscriptionService(): Promise<void> {
     // Timeout after 30 seconds
     setTimeout(() => {
       if (!isTranscriptionReady) {
+        isTranscriptionStarting = false
         reject(new Error('Transcription service startup timeout'))
       }
     }, 30000)
@@ -428,6 +434,7 @@ function stopTranscriptionService(): void {
   }
 
   isTranscriptionReady = false
+  isTranscriptionStarting = false
 }
 
 // Audio processing functions
@@ -497,15 +504,23 @@ function saveCompleteRecording(audioBuffer: Buffer, meetingId: number): Promise<
 function setupTranscriptionHandlers(): void {
   ipcMain.handle('transcription:start-service', async () => {
     try {
-      if (!isTranscriptionReady) {
-        console.log('🎤 Starting transcription service (not ready)...')
-        await startTranscriptionService()
-      } else {
+      if (isTranscriptionReady) {
         console.log('✅ Transcription service already ready, skipping start')
+        return { success: true }
       }
+      
+      if (isTranscriptionStarting) {
+        console.log('⏳ Transcription service already starting, waiting...')
+        return { success: true }
+      }
+      
+      console.log('🎤 Starting transcription service (not ready)...')
+      isTranscriptionStarting = true
+      await startTranscriptionService()
       return { success: true }
     } catch (error) {
       console.error('Failed to start transcription service:', error)
+      isTranscriptionStarting = false
       return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
   })

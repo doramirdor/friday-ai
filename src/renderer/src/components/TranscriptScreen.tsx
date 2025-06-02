@@ -172,6 +172,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
   // Setup transcription service on component mount
   useEffect((): (() => void) => {
+    console.log('🔧 TranscriptScreen component initializing...')
+    
     const initializeTranscription = async (): Promise<void> => {
       try {
         setTranscriptionStatus('initializing')
@@ -205,18 +207,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       }
     }
 
-    initializeTranscription()
-    checkSwiftRecorderAvailability()
-
-    return (): void => {
-      // Cleanup only the transcription service listeners here
-      ;(window.api as any).transcription.removeAllListeners()
-    }
-  }, []) // Remove dependencies to run only once
-
-  // Separate effect for transcription result handlers that need currentTime
-  useEffect(() => {
-    // Setup transcription result listener
+    // Setup transcription result listener (currentTime is captured when called)
     const handleTranscriptionResult = (result: TranscriptionResult): void => {
       console.log('📝 Received transcription:', result)
 
@@ -239,12 +230,17 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       }
     }
 
+    initializeTranscription()
+    checkSwiftRecorderAvailability()
+    
+    // Setup transcription result listener once
     ;(window.api as any).transcription.onResult(handleTranscriptionResult)
 
     return (): void => {
+      // Cleanup transcription service listeners
       ;(window.api as any).transcription.removeAllListeners()
     }
-  }, [currentTime]) // Only currentTime dependency for the result handler
+  }, []) // Run only once on mount
 
   // Separate effect for Swift recorder event listeners
   useEffect(() => {

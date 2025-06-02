@@ -528,6 +528,7 @@ let mainWindow = null;
 let transcriptionProcess = null;
 let transcriptionSocket = null;
 let isTranscriptionReady = false;
+let isTranscriptionStarting = false;
 let actualTranscriptionPort = 9001;
 let swiftRecorderProcess = null;
 let isSwiftRecorderAvailable = false;
@@ -732,9 +733,13 @@ function startTranscriptionService() {
         console.log("📞 Connecting to transcription socket...");
         connectToTranscriptionSocket().then(() => {
           isTranscriptionReady = true;
+          isTranscriptionStarting = false;
           console.log("✅ Transcription service ready");
           resolve();
-        }).catch(reject);
+        }).catch((error) => {
+          isTranscriptionStarting = false;
+          reject(error);
+        });
         return;
       }
       console.log("Transcription output:", output);
@@ -753,6 +758,7 @@ function startTranscriptionService() {
     });
     setTimeout(() => {
       if (!isTranscriptionReady) {
+        isTranscriptionStarting = false;
         reject(new Error("Transcription service startup timeout"));
       }
     }, 3e4);
@@ -829,6 +835,7 @@ function stopTranscriptionService() {
     transcriptionProcess = null;
   }
   isTranscriptionReady = false;
+  isTranscriptionStarting = false;
 }
 function saveAudioChunk(audioBuffer) {
   const tempDir = os__namespace.tmpdir();
@@ -874,15 +881,21 @@ function saveCompleteRecording(audioBuffer, meetingId) {
 function setupTranscriptionHandlers() {
   electron.ipcMain.handle("transcription:start-service", async () => {
     try {
-      if (!isTranscriptionReady) {
-        console.log("🎤 Starting transcription service (not ready)...");
-        await startTranscriptionService();
-      } else {
+      if (isTranscriptionReady) {
         console.log("✅ Transcription service already ready, skipping start");
+        return { success: true };
       }
+      if (isTranscriptionStarting) {
+        console.log("⏳ Transcription service already starting, waiting...");
+        return { success: true };
+      }
+      console.log("🎤 Starting transcription service (not ready)...");
+      isTranscriptionStarting = true;
+      await startTranscriptionService();
       return { success: true };
     } catch (error) {
       console.error("Failed to start transcription service:", error);
+      isTranscriptionStarting = false;
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });

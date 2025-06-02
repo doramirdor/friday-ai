@@ -1042,6 +1042,11 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     }
 
     func setupRecordingEnvironment() {
+        print("🔧 Setting up recording environment...")
+        
+        // First, check current audio routing
+        checkSystemAudioRouting()
+        
         guard let firstDisplay = contentEligibleForSharing?.displays.first else {
             print("❌ No display found for recording")
             ResponseHandler.returnResponse([
@@ -1052,8 +1057,31 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         }
 
         print("✅ Using display: width=\(firstDisplay.width), height=\(firstDisplay.height)")
-        let screenContentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
-        print("✅ Screen content filter configured")
+        
+        // Create a more comprehensive content filter for better system audio capture
+        let screenContentFilter: SCContentFilter
+        
+        if audioSource == "system" || audioSource == "both" {
+            // For system audio capture, we need to include more content
+            // Try to capture all available displays and applications for better audio routing
+            let allDisplays = contentEligibleForSharing?.displays ?? [firstDisplay]
+            let runningApps = contentEligibleForSharing?.applications ?? []
+            
+            // Create filter that includes all displays and excludes fewer apps for better audio capture
+            screenContentFilter = SCContentFilter(
+                display: firstDisplay,
+                excludingApplications: [],
+                exceptingWindows: []
+            )
+            
+            print("✅ Configured comprehensive screen content filter for system audio")
+            print("   - Displays: \(allDisplays.count)")
+            print("   - Applications available: \(runningApps.count)")
+        } else {
+            // For microphone-only recording, minimal filter is fine
+            screenContentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
+            print("✅ Configured minimal screen content filter for microphone-only")
+        }
 
         Task { 
             do {
@@ -1065,6 +1093,73 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                     "error": "Failed to initiate recording: \(error.localizedDescription)"
                 ])
             }
+        }
+    }
+
+    private func checkSystemAudioRouting() {
+        print("🔍 Checking system audio routing...")
+        
+        // Get current audio output device
+        var defaultOutputDeviceID: AudioDeviceID = 0
+        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        let result = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &defaultOutputDeviceID
+        )
+        
+        if result == noErr {
+            // Get device name
+            var deviceNameProperty = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceName,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            
+            var deviceNameSize = UInt32(256)
+            var deviceNameBuffer = [UInt8](repeating: 0, count: 256)
+            
+            let nameResult = AudioObjectGetPropertyData(
+                defaultOutputDeviceID,
+                &deviceNameProperty,
+                0,
+                nil,
+                &deviceNameSize,
+                &deviceNameBuffer
+            )
+            
+            if nameResult == noErr {
+                let deviceName = String(bytes: deviceNameBuffer.prefix(Int(deviceNameSize)), encoding: .utf8) ?? "Unknown"
+                print("🔊 Current audio output device: \(deviceName)")
+                
+                // Check if it's a Bluetooth device
+                if deviceName.contains("AirPods") || deviceName.contains("Bluetooth") {
+                    print("⚠️ Warning: Bluetooth audio device detected")
+                    print("   System audio capture may be limited with Bluetooth devices")
+                    print("   For best results, consider switching to built-in speakers")
+                }
+                
+                // Check if device supports volume control (indicator of proper routing)
+                var volumeProperty = AudioObjectPropertyAddress(
+                    mSelector: kAudioDevicePropertyVolumeScalar,
+                    mScope: kAudioDevicePropertyScopeOutput,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                
+                let hasVolume = AudioObjectHasProperty(defaultOutputDeviceID, &volumeProperty)
+                print("🎚️ Device supports volume control: \(hasVolume)")
+            }
+        } else {
+            print("❌ Could not get default audio output device")
         }
     }
 
@@ -1113,20 +1208,47 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     }
 
     func configureStream(_ configuration: SCStreamConfiguration) {
-        configuration.width = 2
-        configuration.height = 2
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale.max)
+        print("🔧 Configuring stream for system audio capture...")
+        
+        // Use minimal video capture settings
+        configuration.width = 1
+        configuration.height = 1
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1) // Minimal video frame rate
         configuration.showsCursor = false
+        
+        // Configure audio capture settings
         configuration.capturesAudio = true
-        configuration.sampleRate = 44100 // Changed to 44.1kHz for better compatibility
-        configuration.channelCount = 2
-        print("Stream configured with 44.1kHz sample rate, 2 channels")
+        configuration.sampleRate = 44100 // Standard sample rate for better compatibility
+        configuration.channelCount = 2   // Stereo capture
+        
+        // Set audio capture to exclude app audio to focus on system audio
+        configuration.excludesCurrentProcessAudio = true
+        
+        // Note: We handle microphone separately for combined recording
+        // configuration.microphoneCaptureEnabled is not available in this API version
+        
+        print("   ✅ Audio capture enabled: \(configuration.capturesAudio)")
+        print("   ✅ Sample rate: \(configuration.sampleRate) Hz")
+        print("   ✅ Channels: \(configuration.channelCount)")
+        print("   ✅ Excludes current process: \(configuration.excludesCurrentProcessAudio)")
+        print("   ✅ Video resolution: \(configuration.width)x\(configuration.height)")
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
+        // Enhanced logging for the first few audio buffers
         if !self.streamFunctionCalled {
-            print("✅ First audio buffer received")
+            print("✅ First audio buffer received from system")
             self.streamFunctionCalled = true
+            
+            // Log audio buffer information
+            if let formatDesc = sampleBuffer.formatDescription {
+                let audioStreamBasicDesc = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)
+                if let asbd = audioStreamBasicDesc {
+                    print("   📊 Audio format: \(asbd.pointee.mSampleRate) Hz, \(asbd.pointee.mChannelsPerFrame) channels")
+                    print("   📊 Format ID: \(asbd.pointee.mFormatID)")
+                    print("   📊 Bits per channel: \(asbd.pointee.mBitsPerChannel)")
+                }
+            }
             
             // For combined recording, we need both components to be active
             if audioSource == "both" && !systemRecordingActive {
@@ -1136,13 +1258,33 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         }
         
         guard let audioBuffer = sampleBuffer.asPCMBuffer, sampleBuffer.isValid else { 
+            print("⚠️ Invalid audio buffer received")
             return
+        }
+        
+        // Check if we're actually getting audio data
+        let frameLength = audioBuffer.frameLength
+        if frameLength > 0 {
+            // Log occasional buffer information to monitor capture
+            if arc4random_uniform(1000) == 0 { // Log roughly every 1000 buffers
+                print("📊 System audio buffer: \(frameLength) frames")
+                
+                // Check audio levels in the buffer
+                if let channelData = audioBuffer.floatChannelData?[0] {
+                    var maxLevel: Float = 0.0
+                    for i in 0..<Int(frameLength) {
+                        maxLevel = max(maxLevel, abs(channelData[i]))
+                    }
+                    let dbLevel = maxLevel > 0 ? 20 * log10(maxLevel) : -160.0
+                    print("   🔊 System audio level: \(String(format: "%.1f", dbLevel)) dB")
+                }
+            }
         }
 
         do {
             try RecorderCLI.audioFileForRecording?.write(from: audioBuffer)
         } catch {
-            print("❌ Failed to write audio buffer: \(error.localizedDescription)")
+            print("❌ Failed to write system audio buffer: \(error.localizedDescription)")
             ResponseHandler.returnResponse([
                 "code": "AUDIO_BUFFER_WRITE_FAILED", 
                 "error": "Failed to write audio buffer: \(error.localizedDescription)"

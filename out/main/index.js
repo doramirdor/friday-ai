@@ -771,7 +771,6 @@ function connectToTranscriptionSocket() {
     }
     transcriptionSocket = new net__namespace.Socket();
     transcriptionSocket.setKeepAlive(true, 6e4);
-    transcriptionSocket.setTimeout(3e4);
     transcriptionSocket.connect(actualTranscriptionPort, "localhost", () => {
       console.log(`🔌 Connected to transcription socket server on port ${actualTranscriptionPort}`);
       resolve();
@@ -796,19 +795,17 @@ function connectToTranscriptionSocket() {
     });
     transcriptionSocket.on("error", (error) => {
       console.error("Socket error:", error);
-      reject(error);
-    });
-    transcriptionSocket.on("timeout", () => {
-      console.log("Socket timeout - closing connection");
-      transcriptionSocket?.destroy();
+      if (!isTranscriptionReady) {
+        reject(error);
+      }
     });
     transcriptionSocket.on("close", () => {
       console.log("📞 Socket connection closed - keeping service ready for reconnection");
       transcriptionSocket = null;
       if (transcriptionProcess && !transcriptionProcess.killed) {
-        console.log("🔄 Attempting to reconnect to transcription service in 5 seconds...");
+        console.log("🔄 Attempting to reconnect to transcription service in 3 seconds...");
         setTimeout(() => {
-          if (transcriptionProcess && !transcriptionProcess.killed && !transcriptionSocket) {
+          if (transcriptionProcess && !transcriptionProcess.killed && !transcriptionSocket && isTranscriptionReady) {
             connectToTranscriptionSocket().then(() => {
               console.log("✅ Reconnected to transcription service");
             }).catch((error) => {
@@ -816,7 +813,7 @@ function connectToTranscriptionSocket() {
               isTranscriptionReady = false;
             });
           }
-        }, 5e3);
+        }, 3e3);
       } else {
         isTranscriptionReady = false;
       }
@@ -904,11 +901,31 @@ function setupTranscriptionHandlers() {
     return { success: true };
   });
   electron.ipcMain.handle("transcription:is-ready", () => {
-    return { ready: isTranscriptionReady };
+    const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed;
+    const serviceReady = isTranscriptionReady && !isTranscriptionStarting;
+    const processRunning = transcriptionProcess && !transcriptionProcess.killed;
+    return {
+      ready: serviceReady && socketConnected && processRunning,
+      details: {
+        serviceReady,
+        socketConnected,
+        processRunning,
+        isStarting: isTranscriptionStarting
+      }
+    };
   });
   electron.ipcMain.handle("transcription:process-chunk", async (_, audioBuffer) => {
-    if (!transcriptionSocket || !isTranscriptionReady) {
-      return { success: false, error: "Transcription service not ready" };
+    const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed;
+    const serviceReady = isTranscriptionReady && !isTranscriptionStarting;
+    const processRunning = transcriptionProcess && !transcriptionProcess.killed;
+    if (!serviceReady) {
+      return { success: false, error: "Transcription service not ready or still starting" };
+    }
+    if (!socketConnected) {
+      return { success: false, error: "Socket connection not available" };
+    }
+    if (!processRunning) {
+      return { success: false, error: "Transcription process not running" };
     }
     try {
       const buffer = Buffer.from(audioBuffer);

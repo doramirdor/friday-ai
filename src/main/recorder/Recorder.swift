@@ -1198,93 +1198,141 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
             try await RecorderCLI.screenCaptureStream?.startCapture()
             print("Capture started successfully")
             
-            if audioSource == "both" || audioSource == "system" {
-                systemRecordingActive = true
-                print("✅ System audio recording active")
+            // Check audio source after successful start
+            if audioSource == .both {
+                // Check current audio device for potential issues
+                let currentDevice = getCurrentAudioDevice()
+                if currentDevice.contains("AirPods") || currentDevice.contains("Bluetooth") {
+                    print("⚠️  Bluetooth audio device detected: \(currentDevice)")
+                    print("💡 Recommendation: Switch to built-in speakers for better system audio capture")
+                    
+                    let warning = "System audio capture may be limited with Bluetooth devices. Switch to built-in speakers for full audio recording."
+                    let recommendation = "Go to System Preferences > Sound > Output and select 'MacBook Speakers' or similar built-in audio device for optimal recording quality."
+                    
+                    sendResponse([
+                        "code": "RECORDING_STARTED_MIC_ONLY",
+                        "path": outputPath,
+                        "timestamp": ISO8601DateFormatter().string(from: Date()),
+                        "warning": warning,
+                        "recommendation": recommendation
+                    ])
+                } else {
+                    sendResponse([
+                        "code": "RECORDING_STARTED", 
+                        "path": outputPath,
+                        "timestamp": ISO8601DateFormatter().string(from: Date())
+                    ])
+                }
+            } else {
+                sendResponse([
+                    "code": "RECORDING_STARTED", 
+                    "path": outputPath,
+                    "timestamp": ISO8601DateFormatter().string(from: Date())
+                ])
             }
             
         } catch {
-            print("Failed to start capture: \(error)")
-            print("❌ Failed to initiate recording: \(error)")
+            print("❌ Failed to initiate recording: \(error.localizedDescription)")
             
-            // If this is a combined recording attempt, fall back to microphone-only
-            if audioSource == "both" {
-                print("🔄 System audio capture failed, falling back to microphone-only recording...")
+            // If system audio capture fails, try microphone-only fallback
+            if audioSource == .both {
+                print("🔄 Attempting microphone-only fallback...")
                 
-                // Continue with just microphone recording
-                let currentDevice = getCurrentAudioDevice()
-                let warning = "System audio capture failed due to audio routing limitations (detected: \(currentDevice))"
-                let recommendation = "For system audio, switch from AirPods to built-in speakers"
-                
-                ResponseHandler.returnResponse([
-                    "code": "RECORDING_STARTED_MIC_ONLY",
-                    "path": finalMp3Path ?? "",
-                    "timestamp": ISO8601DateFormatter().string(from: Date()),
-                    "warning": warning,
-                    "recommendation": recommendation,
-                    "cause": "Bluetooth audio device interference",
-                    "solution": "Switch to MacBook speakers for full audio capture"
-                ], shouldExitProcess: false)
-                
-                // Don't throw error, continue with microphone recording
-                return
+                do {
+                    // Reset stream
+                    RecorderCLI.screenCaptureStream = nil
+                    
+                    // Start microphone-only recording
+                    audioSource = .microphone
+                    try await startMicrophoneOnlyRecording()
+                    
+                    let warning = "System audio capture failed. Recording microphone only."
+                    let recommendation = "For full audio capture, switch from Bluetooth to built-in speakers and try again."
+                    
+                    sendResponse([
+                        "code": "RECORDING_STARTED_MIC_ONLY",
+                        "path": outputPath,
+                        "timestamp": ISO8601DateFormatter().string(from: Date()),
+                        "warning": warning,
+                        "recommendation": recommendation
+                    ])
+                    
+                } catch {
+                    print("❌ Microphone-only fallback also failed: \(error.localizedDescription)")
+                    sendResponse([
+                        "code": "RECORDING_FAILED",
+                        "error": "Failed to start any recording: \(error.localizedDescription)"
+                    ])
+                    throw error
+                }
             } else {
-                // For system-only recordings, this is a real failure
-                ResponseHandler.returnResponse([
+                sendResponse([
                     "code": "RECORDING_FAILED",
-                    "error": "Failed to initiate recording: \(error)"
+                    "error": "Failed to initiate recording: \(error.localizedDescription)"
                 ])
-                
                 throw error
             }
         }
     }
 
     // Helper function to get current audio device
-    func getCurrentAudioDevice() -> String {
-        var defaultOutputDeviceID: AudioDeviceID = 0
-        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+    private func getCurrentAudioDevice() -> String {
+        let defaultDevice = AudioObjectID(kAudioObjectSystemObject)
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
         
-        let result = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &propertySize,
-            &defaultOutputDeviceID
-        )
+        var deviceID: AudioObjectID = 0
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
         
-        if result == noErr {
-            // Get device name
-            var deviceNameProperty = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceName,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            
-            var deviceNameSize = UInt32(256)
-            var deviceNameBuffer = [UInt8](repeating: 0, count: 256)
-            
-            let nameResult = AudioObjectGetPropertyData(
-                defaultOutputDeviceID,
-                &deviceNameProperty,
-                0,
-                nil,
-                &deviceNameSize,
-                &deviceNameBuffer
-            )
-            
-            if nameResult == noErr {
-                return String(bytes: deviceNameBuffer.prefix(Int(deviceNameSize)), encoding: .utf8) ?? "Unknown Device"
-            }
+        let status = AudioObjectGetPropertyData(defaultDevice, &propertyAddress, 0, nil, &size, &deviceID)
+        guard status == noErr else {
+            print("⚠️ Could not get default audio device")
+            return "Unknown"
         }
         
-        return "Unknown Device"
+        propertyAddress.mSelector = kAudioDevicePropertyDeviceName
+        var deviceName: CFString = "" as CFString
+        size = UInt32(MemoryLayout<CFString>.size)
+        
+        let nameStatus = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &size, &deviceName)
+        guard nameStatus == noErr else {
+            print("⚠️ Could not get device name")
+            return "Unknown"
+        }
+        
+        return deviceName as String
+    }
+
+    private func startMicrophoneOnlyRecording() async throws {
+        print("🎤 Starting microphone-only recording...")
+        
+        // Reset flags for microphone-only mode
+        micRecordingActive = false
+        systemRecordingActive = false
+        
+        // Start microphone recording
+        await setupMicrophoneRecording()
+        
+        if !micRecordingActive {
+            throw NSError(domain: "RecorderError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to start microphone recording"])
+        }
+        
+        print("✅ Microphone-only recording started successfully")
+    }
+
+    private func sendResponse(_ response: [String: Any]) {
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: response, options: [])
+            if let jsonString = String(data: jsonData, encoding: .utf8) {
+                print(jsonString)
+                fflush(stdout)
+            }
+        } catch {
+            print("Error creating JSON response: \(error)")
+        }
     }
 
     func configureStream(_ configuration: SCStreamConfiguration) {
@@ -1461,7 +1509,7 @@ class PermissionsRequester {
 
 class ResponseHandler {
     static func returnResponse(_ response: [String: Any], shouldExitProcess: Bool = true) {
-        if let jsonData = try? JSONSerialization.data(withJSONObject: response),
+        if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: []),
            let jsonString = String(data: jsonData, encoding: .utf8) {
             print(jsonString)
             fflush(stdout)

@@ -1,6 +1,28 @@
 node_modules
 dist
-out
+dist-electron
+release
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-.eslintcache
-*.log*
+*.log
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Database
+*.db
+*.db-journal
+
+# Python virtual environment
+venv/
+*.pyc
+__pycache__/
+
+# Temporary audio files
+audio_chunk_*.wav
+audio_chunk_*.webm
+*.tmp

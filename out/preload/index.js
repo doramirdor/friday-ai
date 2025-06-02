@@ -1,0 +1,69 @@
+"use strict";
+const electron = require("electron");
+const preload = require("@electron-toolkit/preload");
+const api = {
+  // Database API
+  db: {
+    // Meeting operations
+    createMeeting: (meeting) => electron.ipcRenderer.invoke("db:createMeeting", meeting),
+    getMeeting: (id) => electron.ipcRenderer.invoke("db:getMeeting", id),
+    getAllMeetings: () => electron.ipcRenderer.invoke("db:getAllMeetings"),
+    updateMeeting: (id, meeting) => electron.ipcRenderer.invoke("db:updateMeeting", id, meeting),
+    deleteMeeting: (id) => electron.ipcRenderer.invoke("db:deleteMeeting", id),
+    // Settings operations
+    getSettings: () => electron.ipcRenderer.invoke("db:getSettings"),
+    updateSettings: (settings) => electron.ipcRenderer.invoke("db:updateSettings", settings)
+  },
+  // Transcription API
+  transcription: {
+    // Service management
+    startService: () => electron.ipcRenderer.invoke("transcription:start-service"),
+    stopService: () => electron.ipcRenderer.invoke("transcription:stop-service"),
+    isReady: () => electron.ipcRenderer.invoke("transcription:is-ready"),
+    // Audio processing
+    processChunk: (audioBuffer) => electron.ipcRenderer.invoke("transcription:process-chunk", audioBuffer),
+    ping: () => electron.ipcRenderer.invoke("transcription:ping"),
+    saveRecording: (audioBuffer, meetingId) => electron.ipcRenderer.invoke("transcription:save-recording", audioBuffer, meetingId),
+    loadRecording: (filePath) => electron.ipcRenderer.invoke("transcription:load-recording", filePath),
+    // Event listeners for transcription results
+    onResult: (callback) => {
+      electron.ipcRenderer.on("transcription-result", (_, result) => callback(result));
+    },
+    // Remove listeners
+    removeAllListeners: () => {
+      electron.ipcRenderer.removeAllListeners("transcription-result");
+    }
+  },
+  // Swift Recorder API for combined audio recording
+  swiftRecorder: {
+    // Check if Swift recorder is available
+    checkAvailability: () => electron.ipcRenderer.invoke("swift-recorder:check-availability"),
+    // Start combined recording (system audio + microphone)
+    startCombinedRecording: (recordingPath, filename) => electron.ipcRenderer.invoke("swift-recorder:start-combined-recording", recordingPath, filename),
+    // Stop combined recording
+    stopCombinedRecording: () => electron.ipcRenderer.invoke("swift-recorder:stop-combined-recording"),
+    // Event listeners for recording events
+    onRecordingStarted: (callback) => {
+      electron.ipcRenderer.on("combined-recording-started", (_, result) => callback(result));
+    },
+    onRecordingStopped: (callback) => {
+      electron.ipcRenderer.on("combined-recording-stopped", (_, result) => callback(result));
+    },
+    // Remove listeners
+    removeAllListeners: () => {
+      electron.ipcRenderer.removeAllListeners("combined-recording-started");
+      electron.ipcRenderer.removeAllListeners("combined-recording-stopped");
+    }
+  }
+};
+if (process.contextIsolated) {
+  try {
+    electron.contextBridge.exposeInMainWorld("electron", preload.electronAPI);
+    electron.contextBridge.exposeInMainWorld("api", api);
+  } catch (error) {
+    console.error(error);
+  }
+} else {
+  window.electron = preload.electronAPI;
+  window.api = api;
+}

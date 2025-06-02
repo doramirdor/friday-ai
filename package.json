@@ -23,7 +23,11 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
-    "electron-updater": "^6.3.9"
+    "@types/sqlite3": "^5.1.0",
+    "electron-updater": "^6.3.9",
+    "fluent-ffmpeg": "^2.1.3",
+    "lucide-react": "^0.511.0",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

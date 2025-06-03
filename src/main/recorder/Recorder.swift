@@ -590,21 +590,16 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                     try setupMicrophoneForCombinedRecording()
                     print("✅ Microphone recording initialized")
                     
-                    // Send initial success response
+                    // DON'T send success response yet - wait for system audio test
                     recordingStartTime = Date()
-                    ResponseHandler.returnResponse([
-                        "code": "RECORDING_STARTED",
-                        "path": finalMp3Path!,
-                        "timestamp": ISO8601DateFormatter().string(from: recordingStartTime!)
-                    ], shouldExitProcess: false)
                     
-                    // Initialize system audio recording
+                    // Initialize system audio recording (this will test the stream)
                     initializeSystemAudioRecording()
                     
                 } catch {
                     print("❌ Failed to setup combined recording: \(error.localizedDescription)")
-                    ResponseHandler.returnResponse([
-                        "code": "CAPTURE_FAILED",
+                    sendResponse([
+                        "code": "RECORDING_FAILED",
                         "error": "Failed to initialize combined recording: \(error.localizedDescription)"
                     ])
                     return
@@ -762,30 +757,33 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                         }
                     }
                     
-                    // Notify recording started
-                    ResponseHandler.returnResponse([
-                        "code": "RECORDING_STARTED", 
-                        "path": self.finalMp3Path!, 
-                        "timestamp": formattedTimestamp
-                    ], shouldExitProcess: false)
+                    // Notify recording started - but NOT for combined recording mode
+                    // Combined recording waits for system audio test to complete
+                    if audioSource != "both" {
+                        sendResponse([
+                            "code": "RECORDING_STARTED", 
+                            "path": self.finalMp3Path!, 
+                            "timestamp": formattedTimestamp
+                        ])
+                    }
                 } else {
                     print("Failed to start microphone recording")
-                    ResponseHandler.returnResponse([
-                        "code": "CAPTURE_FAILED", 
+                    sendResponse([
+                        "code": "RECORDING_FAILED", 
                         "error": "Failed to start microphone recording"
                     ])
                 }
             } else {
                 print("Failed to prepare microphone recording")
-                ResponseHandler.returnResponse([
-                    "code": "CAPTURE_FAILED", 
+                sendResponse([
+                    "code": "RECORDING_FAILED", 
                     "error": "Failed to prepare microphone recording"
                 ])
             }
         } catch {
             print("Microphone recording setup error: \(error.localizedDescription)")
-            ResponseHandler.returnResponse([
-                "code": "CAPTURE_FAILED", 
+            sendResponse([
+                "code": "RECORDING_FAILED", 
                 "error": "Microphone setup error: \(error.localizedDescription)"
             ])
         }
@@ -856,27 +854,29 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         
         // Stop all recordings first
         if audioSource == "both" {
-            // Stop the microphone component if it's still recording
-            if microphoneRecorder?.isRecording == true {
-                microphoneRecorder?.stop()
-                micRecordingActive = false
-            }
-            
-            // Stop the system audio component if it's still active
-            if RecorderCLI.screenCaptureStream != nil {
-                RecorderCLI.terminateRecording()
-                systemRecordingActive = false
-            }
+            // For combined recording, use the combination process
+            stopAndCombineRecordings()
+            return
         } else if audioSource == "mic" && microphoneRecorder?.isRecording == true {
             microphoneRecorder?.stop()
         }
         
+        // Determine the source file for conversion
+        let sourceFile: String?
+        if audioSource == "mic" {
+            // For mic-only recording (including fallback), use the mic temp file
+            sourceFile = micTempWavPath ?? tempWavPath
+        } else {
+            // For system-only recording
+            sourceFile = tempWavPath
+        }
+        
         // Store the path for response
-        let outputPath = finalMp3Path ?? tempWavPath ?? ""
+        let outputPath = finalMp3Path ?? sourceFile ?? ""
         
         // If we have a WAV file, convert it to MP3
-        if let wavPath = tempWavPath, FileManager.default.fileExists(atPath: wavPath) {
-            let mp3Path = wavPath.replacingOccurrences(of: ".wav", with: ".mp3")
+        if let wavPath = sourceFile, FileManager.default.fileExists(atPath: wavPath) {
+            let mp3Path = finalMp3Path ?? wavPath.replacingOccurrences(of: ".wav", with: ".mp3")
             
             // Verify the MP3 path doesn't already exist (avoid overwriting)
             if FileManager.default.fileExists(atPath: mp3Path) {
@@ -911,11 +911,11 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                     }
                     
                     // Successfully converted
-                    ResponseHandler.returnResponse([
+                    sendResponse([
                         "code": "RECORDING_STOPPED", 
                         "timestamp": formattedTimestamp,
                         "path": mp3Path,
-                        "combined": audioSource == "both"
+                        "combined": false // This is now mic-only due to fallback
                     ])
                     
                     // Clean up temporary WAV file
@@ -927,33 +927,33 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                     }
                 } else {
                     // Conversion failed - return the WAV file
-                    ResponseHandler.returnResponse([
+                    sendResponse([
                         "code": "RECORDING_STOPPED", 
                         "timestamp": formattedTimestamp,
                         "path": wavPath,
                         "error": "MP3 conversion failed",
-                        "combined": audioSource == "both"
+                        "combined": false
                     ])
                 }
             } catch {
                 print("Initial conversion failed: \(error.localizedDescription)")
                 // Shell execution failed
-                ResponseHandler.returnResponse([
+                sendResponse([
                     "code": "RECORDING_STOPPED", 
                     "timestamp": formattedTimestamp,
                     "path": wavPath,
                     "error": "MP3 conversion error: \(error.localizedDescription)",
-                    "combined": audioSource == "both"
+                    "combined": false
                 ])
             }
         } else {
             // No WAV file found
-            ResponseHandler.returnResponse([
+            sendResponse([
                 "code": "RECORDING_STOPPED", 
                 "timestamp": formattedTimestamp,
                 "path": outputPath,
                 "error": "No recording file created",
-                "combined": audioSource == "both"
+                "combined": false
             ])
         }
     }
@@ -1188,6 +1188,9 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         let streamConfiguration = SCStreamConfiguration()
         configureStream(streamConfiguration)
 
+        // For combined recording, we need to determine the final recording path
+        let outputPath = finalMp3Path ?? tempWavPath ?? ""
+
         do {
             RecorderCLI.screenCaptureStream = SCStream(filter: filter, configuration: streamConfiguration, delegate: self)
 
@@ -1198,19 +1201,19 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
             try await RecorderCLI.screenCaptureStream?.startCapture()
             print("Capture started successfully")
             
-            // Check audio source after successful start
-            if audioSource == .both {
-                // Check current audio device for potential issues
+            // System audio capture succeeded!
+            if audioSource == "both" {
+                // Check current audio device for potential issues but continue with full recording
                 let currentDevice = getCurrentAudioDevice()
                 if currentDevice.contains("AirPods") || currentDevice.contains("Bluetooth") {
                     print("⚠️  Bluetooth audio device detected: \(currentDevice)")
-                    print("💡 Recommendation: Switch to built-in speakers for better system audio capture")
+                    print("💡 Note: Both microphone and system audio are recording, but system audio quality may be limited")
                     
-                    let warning = "System audio capture may be limited with Bluetooth devices. Switch to built-in speakers for full audio recording."
-                    let recommendation = "Go to System Preferences > Sound > Output and select 'MacBook Speakers' or similar built-in audio device for optimal recording quality."
+                    let warning = "Recording both microphone and system audio, but system audio quality may be limited with Bluetooth devices."
+                    let recommendation = "For optimal system audio quality, consider switching to built-in speakers."
                     
                     sendResponse([
-                        "code": "RECORDING_STARTED_MIC_ONLY",
+                        "code": "RECORDING_STARTED",
                         "path": outputPath,
                         "timestamp": ISO8601DateFormatter().string(from: Date()),
                         "warning": warning,
@@ -1234,28 +1237,35 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         } catch {
             print("❌ Failed to initiate recording: \(error.localizedDescription)")
             
-            // If system audio capture fails, try microphone-only fallback
-            if audioSource == .both {
-                print("🔄 Attempting microphone-only fallback...")
+            // If system audio capture fails and this is a combined recording, fall back to microphone-only
+            if audioSource == "both" {
+                print("🔄 System audio failed, falling back to microphone-only recording...")
                 
                 do {
                     // Reset stream
                     RecorderCLI.screenCaptureStream = nil
                     
-                    // Start microphone-only recording
-                    audioSource = .microphone
-                    try await startMicrophoneOnlyRecording()
+                    // Change mode to microphone-only
+                    audioSource = "mic"
                     
-                    let warning = "System audio capture failed. Recording microphone only."
+                    // Update the output path to use mic-only naming
+                    if let micPath = micTempWavPath {
+                        let micOnlyMp3 = micPath.replacingOccurrences(of: "_mic.wav", with: ".mp3")
+                        finalMp3Path = micOnlyMp3
+                    }
+                    
+                    let warning = "System audio capture failed due to Bluetooth audio limitations. Recording microphone only."
                     let recommendation = "For full audio capture, switch from Bluetooth to built-in speakers and try again."
                     
                     sendResponse([
                         "code": "RECORDING_STARTED_MIC_ONLY",
-                        "path": outputPath,
+                        "path": finalMp3Path ?? outputPath,
                         "timestamp": ISO8601DateFormatter().string(from: Date()),
                         "warning": warning,
                         "recommendation": recommendation
                     ])
+                    
+                    print("✅ Successfully fell back to microphone-only recording")
                     
                 } catch {
                     print("❌ Microphone-only fallback also failed: \(error.localizedDescription)")
@@ -1304,23 +1314,6 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         }
         
         return deviceName as String
-    }
-
-    private func startMicrophoneOnlyRecording() async throws {
-        print("🎤 Starting microphone-only recording...")
-        
-        // Reset flags for microphone-only mode
-        micRecordingActive = false
-        systemRecordingActive = false
-        
-        // Start microphone recording
-        await setupMicrophoneRecording()
-        
-        if !micRecordingActive {
-            throw NSError(domain: "RecorderError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to start microphone recording"])
-        }
-        
-        print("✅ Microphone-only recording started successfully")
     }
 
     private func sendResponse(_ response: [String: Any]) {

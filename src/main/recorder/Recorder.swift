@@ -59,6 +59,9 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     private var minSpeakerCount = 1
     private var maxSpeakerCount = 10
     
+    // Add state tracking for Bluetooth workaround
+    private var bluetoothWorkaroundEnabled = false
+    
     // Function to check if recording is active
     var isRecordingActive: Bool {
         if audioSource == "both" {
@@ -856,6 +859,17 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         let timestamp = Date()
         let formattedTimestamp = ISO8601DateFormatter().string(from: timestamp)
         
+        // Disable Bluetooth workaround if it was enabled
+        if bluetoothWorkaroundEnabled {
+            print("🔧 Disabling Bluetooth workaround...")
+            if AudioDeviceManager.disableBluetoothWorkaround() {
+                print("✅ Bluetooth workaround disabled successfully")
+            } else {
+                print("❌ Failed to disable Bluetooth workaround")
+            }
+            bluetoothWorkaroundEnabled = false
+        }
+        
         // Stop all recordings first
         if audioSource == "both" {
             // For combined recording, use the combination process
@@ -1145,11 +1159,23 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                 let deviceName = String(bytes: deviceNameBuffer.prefix(Int(deviceNameSize)), encoding: .utf8) ?? "Unknown"
                 print("🔊 Current audio output device: \(deviceName)")
                 
-                // Check if it's a Bluetooth device
-                if deviceName.contains("AirPods") || deviceName.contains("Bluetooth") {
+                // Check if it's a Bluetooth device and enable workaround if needed
+                if (deviceName.contains("AirPods") || deviceName.contains("Bluetooth")) && (audioSource == "system" || audioSource == "both") {
                     print("⚠️ Warning: Bluetooth audio device detected")
                     print("   System audio capture may be limited with Bluetooth devices")
                     print("   For best results, consider switching to built-in speakers")
+                    
+                    // Enable Bluetooth workaround for system audio capture
+                    print("🔧 Attempting to enable Bluetooth workaround...")
+                    if AudioDeviceManager.enableBluetoothWorkaround() {
+                        bluetoothWorkaroundEnabled = true
+                        print("✅ Bluetooth workaround enabled successfully")
+                        print("   Users will continue hearing audio through Bluetooth")
+                        print("   System audio will be captured from built-in speakers")
+                    } else {
+                        print("❌ Failed to enable Bluetooth workaround")
+                        print("   Recording will continue with standard Bluetooth limitations")
+                    }
                 }
                 
                 // Check if device supports volume control (indicator of proper routing)
@@ -1584,6 +1610,17 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     static func terminateRecording() {
         print("Terminating recording...")
         
+        // Disable Bluetooth workaround if it was enabled
+        if let recorderInstance = recorderInstance, recorderInstance.bluetoothWorkaroundEnabled {
+            print("🔧 Disabling Bluetooth workaround...")
+            if AudioDeviceManager.disableBluetoothWorkaround() {
+                print("✅ Bluetooth workaround disabled successfully")
+            } else {
+                print("❌ Failed to disable Bluetooth workaround")
+            }
+            recorderInstance.bluetoothWorkaroundEnabled = false
+        }
+        
         // Stop screen capture stream if active
         screenCaptureStream?.stopCapture()
         screenCaptureStream = nil
@@ -1729,18 +1766,4 @@ func recorderMain() -> Int32 {
     // This function is just a placeholder to satisfy the linker
     // The actual functionality is called through other entry points
     return 0
-}
-
-// Main structure for command line execution
-@main
-struct RecorderMain {
-    static func main() {
-        guard #available(macOS 13.0, *) else {
-            print("This application requires macOS 13.0 or later")
-            exit(1)
-        }
-        
-        let recorder = RecorderCLI()
-        recorder.executeRecordingProcess()
-    }
 } 

@@ -98,3 +98,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Recording process continues with microphone even when system audio fails
 
 ## [2024-06-01]
+
+## [Unreleased] - 2024-06-03
+
+### Fixed
+- **Settings Screen UI**: Fixed broken tab interface that was showing as separate buttons instead of connected tabs
+  - Replaced custom CSS classes that didn't exist with existing `.tabs` and `.tab` classes
+  - Simplified layout structure to match other components in the app
+  - Maintained all functional settings features including Gemini API key configuration
+  - Now displays proper tab interface with active state indicators
+
+### Added
+- **Markdown Editor**: Implemented visual markdown editor for Notes field in transcript screen
+  - Users now see formatted text (bold, italic, headers) instead of raw markdown syntax
+  - Added built-in toolbar with all markdown formatting options
+  - Maintains compatibility with existing markdown data
+
+### Changed
+- **Settings Functionality**: Made settings screen fully functional instead of static mockup
+  - All toggles, inputs, and dropdowns now save to database
+  - Added proper loading and saving states with success feedback
+  - Connected Gemini API key field to database for AI features
+
+## [Previous versions...]

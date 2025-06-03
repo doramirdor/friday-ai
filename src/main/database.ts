@@ -5,7 +5,7 @@ import * as fs from 'fs'
 
 export interface Meeting {
   id?: number
-  recordingPath: string
+  recordingPath: string | string[] // Support both single path and array of paths for chunks
   transcript: TranscriptLine[]
   title: string
   description: string
@@ -281,8 +281,13 @@ class DatabaseService {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
 
+      // Handle recordingPath serialization
+      const recordingPathValue = Array.isArray(meeting.recordingPath) 
+        ? JSON.stringify(meeting.recordingPath)
+        : meeting.recordingPath
+
       const values = [
-        meeting.recordingPath,
+        recordingPathValue,
         JSON.stringify(meeting.transcript),
         meeting.title,
         meeting.description,
@@ -361,7 +366,10 @@ class DatabaseService {
 
       if (meeting.recordingPath !== undefined) {
         fields.push('recording_path = ?')
-        values.push(meeting.recordingPath)
+        const recordingPathValue = Array.isArray(meeting.recordingPath) 
+          ? JSON.stringify(meeting.recordingPath)
+          : meeting.recordingPath
+        values.push(recordingPathValue)
       }
       if (meeting.transcript !== undefined) {
         fields.push('transcript = ?')
@@ -503,22 +511,35 @@ class DatabaseService {
     })
   }
 
-  private rowToMeeting(row: Record<string, any>): Meeting {
+  private rowToMeeting(row: Record<string, unknown>): Meeting {
+    // Helper function to parse recordingPath
+    const parseRecordingPath = (pathData: string): string | string[] => {
+      if (!pathData) return ''
+      
+      // Try to parse as JSON array, fallback to string
+      try {
+        const parsed = JSON.parse(pathData)
+        return Array.isArray(parsed) ? parsed : pathData
+      } catch {
+        return pathData
+      }
+    }
+
     return {
-      id: row.id,
-      recordingPath: row.recording_path,
-      transcript: JSON.parse(row.transcript),
-      title: row.title,
-      description: row.description,
-      tags: JSON.parse(row.tags),
-      actionItems: JSON.parse(row.action_items),
-      context: row.context,
-      context_files: row.context_files ? JSON.parse(row.context_files) : [],
-      notes: row.notes,
-      summary: row.summary,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      duration: row.duration
+      id: row.id as number,
+      recordingPath: parseRecordingPath(row.recording_path as string),
+      transcript: JSON.parse(row.transcript as string),
+      title: row.title as string,
+      description: row.description as string,
+      tags: JSON.parse(row.tags as string),
+      actionItems: JSON.parse(row.action_items as string),
+      context: row.context as string,
+      context_files: row.context_files ? JSON.parse(row.context_files as string) : [],
+      notes: row.notes as string,
+      summary: row.summary as string,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+      duration: row.duration as string
     }
   }
 

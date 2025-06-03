@@ -50,7 +50,7 @@ const api = {
     // Check if Swift recorder is available
     checkAvailability: () => ipcRenderer.invoke('swift-recorder:check-availability'),
 
-    // Start combined recording (system audio + microphone)
+    // Start combined recording (system + microphone)
     startCombinedRecording: (recordingPath: string, filename?: string) =>
       ipcRenderer.invoke('swift-recorder:start-combined-recording', recordingPath, filename),
 
@@ -76,6 +76,23 @@ const api = {
       ipcRenderer.removeAllListeners('combined-recording-stopped')
       ipcRenderer.removeAllListeners('combined-recording-failed')
     }
+  },
+
+  // Chunked Recording API for large recordings
+  chunkedRecording: {
+    // Start chunked recording for a meeting
+    start: (meetingId: number) => ipcRenderer.invoke('chunked-recording:start', meetingId),
+    
+    // Add a chunk to the recording
+    addChunk: (meetingId: number, audioBuffer: ArrayBuffer) => 
+      ipcRenderer.invoke('chunked-recording:add-chunk', meetingId, audioBuffer),
+    
+    // Stop chunked recording
+    stop: (meetingId: number) => ipcRenderer.invoke('chunked-recording:stop', meetingId),
+    
+    // Load chunks for playback
+    loadChunks: (chunkPaths: string[]) => 
+      ipcRenderer.invoke('chunked-recording:load-chunks', chunkPaths)
   },
 
   // Gemini AI API

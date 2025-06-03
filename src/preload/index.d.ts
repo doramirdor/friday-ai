@@ -49,9 +49,56 @@ interface CustomAPI {
   transcription: TranscriptionAPI
 }
 
+interface SwiftRecorderAPI {
+  checkAvailability: () => Promise<{ available: boolean }>
+  startCombinedRecording: (
+    recordingPath: string,
+    filename?: string
+  ) => Promise<{ success: boolean; error?: string }>
+  stopCombinedRecording: () => Promise<{ success: boolean; error?: string }>
+}
+
+interface ChunkedRecordingAPI {
+  start: (meetingId: number) => Promise<{ success: boolean; recording?: unknown; error?: string }>
+  addChunk: (
+    meetingId: number, 
+    audioBuffer: ArrayBuffer
+  ) => Promise<{ success: boolean; error?: string }>
+  stop: (meetingId: number) => Promise<{ success: boolean; chunkPaths?: string[]; error?: string }>
+  loadChunks: (chunkPaths: string[]) => Promise<{ success: boolean; chunks?: ArrayBuffer[]; error?: string }>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
-    api: CustomAPI
+    api: {
+      db: DatabaseAPI
+      transcription: TranscriptionAPI
+      swiftRecorder: SwiftRecorderAPI
+      chunkedRecording: ChunkedRecordingAPI
+      gemini: {
+        generateSummaryOnly: (input: {
+          transcript: string
+          context: string
+          meetingContext: string
+          notes: string
+          title: string
+        }) => Promise<{ success: boolean; summary?: string; error?: string }>
+        generateMeetingContent: (input: {
+          transcript: string
+          context: string
+          meetingContext: string
+          notes: string
+          title: string
+        }) => Promise<{
+          success: boolean
+          summary?: string
+          description?: string
+          actionItems?: Array<{ id: number; text: string; completed: boolean }>
+          tags?: string[]
+          error?: string
+        }>
+      }
+    }
   }
 }

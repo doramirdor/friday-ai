@@ -1316,7 +1316,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                     "path": finalMp3Path ?? outputPath,
                     "timestamp": ISO8601DateFormatter().string(from: Date()),
                     "warning": warningMessage,
-                    "recommendation": recommendation,
+                    "recommendation": '',
                     "device": currentDevice,
                     "screen_permission": hasScreenPermission
                 ])

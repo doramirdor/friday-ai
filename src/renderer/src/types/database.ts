@@ -1,6 +1,6 @@
 export interface Meeting {
   id?: number
-  recordingPath: string
+  recordingPath: string | string[] // Support both single path and array of paths for chunks
   transcript: TranscriptLine[]
   title: string
   description: string

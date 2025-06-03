@@ -115,9 +115,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Maintains compatibility with existing markdown data
 
 ### Changed
-- **Settings Functionality**: Made settings screen fully functional instead of static mockup
-  - All toggles, inputs, and dropdowns now save to database
-  - Added proper loading and saving states with success feedback
-  - Connected Gemini API key field to database for AI features
+- **Settings Functionality**: Made settings screen fully functional instead of static UI mockup
+  - Connected to database for loading and saving all settings including Gemini API key
+  - Added real save functionality with success feedback
+  - Fixed API key link to point to actual Google AI Studio
+  - All settings now persist between app sessions
+
+### Technical Details
+- **Core Audio Integration**: Added comprehensive audio device management functions
+  - `builtInOutputID()`: Identifies built-in speakers for aggregate device creation
+  - `createMultiOutputDevice()`: Creates temporary multi-output devices for Bluetooth workaround
+  - `destroyAggregateDevice()`: Properly cleans up temporary devices
+  - `enableBluetoothWorkaround()` / `disableBluetoothWorkaround()`: Manages workaround lifecycle
+- **Swift Recorder Enhancement**: Integrated workaround into recording setup and teardown
+  - Automatic Bluetooth detection via `kAudioDeviceTransportTypeBluetooth` transport type
+  - State tracking with `bluetoothWorkaroundEnabled` flag
+  - Cleanup in both normal completion and error scenarios
 
 ## [Previous versions...]

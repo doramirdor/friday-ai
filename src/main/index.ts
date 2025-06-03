@@ -25,6 +25,27 @@ let actualTranscriptionPort = 9001 // Will be updated based on Python server out
 let swiftRecorderProcess: ChildProcess | null = null
 let isSwiftRecorderAvailable = false
 
+// Add interfaces for chunked recording at the top
+interface RecordingChunk {
+  id: string
+  path: string
+  startTime: number
+  endTime: number
+  size: number
+}
+
+interface ChunkedRecording {
+  meetingId: number
+  chunks: RecordingChunk[]
+  isActive: boolean
+  totalDuration: number
+}
+
+// Add state for chunked recordings
+const activeChunkedRecordings = new Map<number, ChunkedRecording>()
+const CHUNK_DURATION_MS = 5 * 60 * 1000 // 5 minutes per chunk
+const CHUNK_SIZE_LIMIT = 50 * 1024 * 1024 // 50MB per chunk
+
 function createWindow(): void {
   // Create the browser window.
   mainWindow = new BrowserWindow({
@@ -562,6 +583,153 @@ function saveCompleteRecording(audioBuffer: Buffer, meetingId: number): Promise<
   })
 }
 
+// Add chunked recording functions
+function createRecordingChunk(meetingId: number, audioBuffer: Buffer, chunkIndex: number): Promise<RecordingChunk> {
+  return new Promise((resolve, reject) => {
+    const recordingsDir = path.join(os.homedir(), 'Friday Recordings', `meeting_${meetingId}_chunks`)
+    if (!fs.existsSync(recordingsDir)) {
+      fs.mkdirSync(recordingsDir, { recursive: true })
+    }
+
+    const timestamp = Date.now()
+    const chunkId = `chunk_${chunkIndex}_${timestamp}`
+    const webmFileName = `${chunkId}.webm`
+    const mp3FileName = `${chunkId}.mp3`
+    const webmFilePath = path.join(recordingsDir, webmFileName)
+    const mp3FilePath = path.join(recordingsDir, mp3FileName)
+
+    try {
+      // Save WebM chunk
+      fs.writeFileSync(webmFilePath, audioBuffer)
+      console.log(`💾 Chunk ${chunkIndex} saved: ${webmFilePath} (${audioBuffer.length} bytes)`)
+
+      // Convert to MP3 asynchronously
+      ffmpeg(webmFilePath)
+        .noVideo()
+        .audioBitrate('128k') // Lower bitrate for chunks
+        .audioFrequency(44100)
+        .save(mp3FilePath)
+        .on('end', () => {
+          console.log(`🎵 Chunk ${chunkIndex} converted: ${mp3FilePath}`)
+
+          // Get file size
+          const stats = fs.statSync(mp3FilePath)
+          
+          const chunk: RecordingChunk = {
+            id: chunkId,
+            path: mp3FilePath,
+            startTime: timestamp,
+            endTime: timestamp + CHUNK_DURATION_MS,
+            size: stats.size
+          }
+
+          // Clean up temporary WebM file
+          try {
+            fs.unlinkSync(webmFilePath)
+          } catch (cleanupError) {
+            console.warn('Failed to clean up WebM chunk:', cleanupError)
+          }
+
+          resolve(chunk)
+        })
+        .on('error', (err) => {
+          console.error(`❌ Chunk ${chunkIndex} conversion error: ${err.message}`)
+          // Fallback to WebM if conversion fails
+          const stats = fs.statSync(webmFilePath)
+          
+          const chunk: RecordingChunk = {
+            id: chunkId,
+            path: webmFilePath,
+            startTime: timestamp,
+            endTime: timestamp + CHUNK_DURATION_MS,
+            size: stats.size
+          }
+          
+          resolve(chunk)
+        })
+    } catch (error) {
+      console.error('Failed to create recording chunk:', error)
+      reject(error)
+    }
+  })
+}
+
+function startChunkedRecording(meetingId: number): ChunkedRecording {
+  const chunkedRecording: ChunkedRecording = {
+    meetingId,
+    chunks: [],
+    isActive: true,
+    totalDuration: 0
+  }
+  
+  activeChunkedRecordings.set(meetingId, chunkedRecording)
+  console.log(`🎬 Started chunked recording for meeting ${meetingId}`)
+  
+  return chunkedRecording
+}
+
+async function addChunkToRecording(meetingId: number, audioBuffer: Buffer): Promise<boolean> {
+  const recording = activeChunkedRecordings.get(meetingId)
+  if (!recording || !recording.isActive) {
+    return false
+  }
+
+  try {
+    const chunkIndex = recording.chunks.length
+    const chunk = await createRecordingChunk(meetingId, audioBuffer, chunkIndex)
+    recording.chunks.push(chunk)
+    
+    console.log(`✅ Added chunk ${chunkIndex} to meeting ${meetingId} (${chunk.size} bytes)`)
+    
+    // Background save to database (don't wait for completion)
+    updateMeetingChunks(meetingId, recording.chunks).catch(error => {
+      console.error('Background chunk save failed:', error)
+    })
+    
+    return true
+  } catch (error) {
+    console.error('Failed to add chunk to recording:', error)
+    return false
+  }
+}
+
+async function updateMeetingChunks(meetingId: number, chunks: RecordingChunk[]): Promise<void> {
+  try {
+    // Get current meeting
+    const meeting = await databaseService.getMeeting(meetingId)
+    if (!meeting) return
+
+    // Update with chunk paths
+    const chunkPaths = chunks.map(chunk => chunk.path)
+    await databaseService.updateMeeting(meetingId, {
+      recordingPath: chunkPaths,
+      updatedAt: new Date().toISOString()
+    })
+    
+    console.log(`💾 Background saved ${chunks.length} chunks for meeting ${meetingId}`)
+  } catch (error) {
+    console.error('Failed to update meeting chunks:', error)
+  }
+}
+
+async function stopChunkedRecording(meetingId: number): Promise<string[]> {
+  const recording = activeChunkedRecordings.get(meetingId)
+  if (!recording) {
+    return []
+  }
+
+  recording.isActive = false
+  const chunkPaths = recording.chunks.map(chunk => chunk.path)
+  
+  // Final save to database
+  await updateMeetingChunks(meetingId, recording.chunks)
+  
+  activeChunkedRecordings.delete(meetingId)
+  console.log(`🏁 Stopped chunked recording for meeting ${meetingId} (${recording.chunks.length} chunks)`)
+  
+  return chunkPaths
+}
+
 // Setup transcription IPC handlers
 function setupTranscriptionHandlers(): void {
   ipcMain.handle('transcription:start-service', async () => {
@@ -700,6 +868,63 @@ function setupTranscriptionHandlers(): void {
       return result
     } catch (error) {
       console.error('Failed to stop combined recording:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  // Chunked recording IPC handlers
+  ipcMain.handle('chunked-recording:start', async (_, meetingId: number) => {
+    try {
+      const recording = startChunkedRecording(meetingId)
+      return { success: true, recording }
+    } catch (error) {
+      console.error('Failed to start chunked recording:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('chunked-recording:add-chunk', async (_, meetingId: number, audioBuffer: ArrayBuffer) => {
+    try {
+      const buffer = Buffer.from(audioBuffer)
+      
+      // Check chunk size limit
+      if (buffer.length > CHUNK_SIZE_LIMIT) {
+        console.warn(`⚠️ Chunk size ${buffer.length} exceeds limit ${CHUNK_SIZE_LIMIT}, splitting...`)
+        // TODO: Implement chunk splitting if needed
+      }
+      
+      const success = await addChunkToRecording(meetingId, buffer)
+      return { success }
+    } catch (error) {
+      console.error('Failed to add chunk to recording:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('chunked-recording:stop', async (_, meetingId: number) => {
+    try {
+      const chunkPaths = await stopChunkedRecording(meetingId)
+      return { success: true, chunkPaths }
+    } catch (error) {
+      console.error('Failed to stop chunked recording:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('chunked-recording:load-chunks', async (_, chunkPaths: string[]) => {
+    try {
+      const chunks: ArrayBuffer[] = []
+      
+      for (const chunkPath of chunkPaths) {
+        if (fs.existsSync(chunkPath)) {
+          const buffer = fs.readFileSync(chunkPath)
+          chunks.push(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength))
+        }
+      }
+      
+      return { success: true, chunks }
+    } catch (error) {
+      console.error('Failed to load recording chunks:', error)
       return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
   })

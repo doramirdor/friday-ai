@@ -129,12 +129,20 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
   const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
 
+  // Add state for chunked recording
+  const [isChunkedRecording, setIsChunkedRecording] = useState(false)
+  const [recordingChunks, setRecordingChunks] = useState<string[]>([])
+  const [chunkIndex, setChunkIndex] = useState(0)
+  const chunkBuffers = useRef<Blob[]>([])
+  const chunkInterval = useRef<NodeJS.Timeout | null>(null)
+  const CHUNK_DURATION = 5 * 60 * 1000 // 5 minutes
+
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const recordingInterval = useRef<NodeJS.Timeout | null>(null)
   const chunkCounter = useRef<number>(0)
   const isRecordingRef = useRef<boolean>(false)
   const audioStreamRef = useRef<MediaStream | null>(null)
-  const recordingChunks = useRef<Blob[]>([])
+  const recordingChunksRef = useRef<Blob[]>([])
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
   const recordingStartTime = useRef<number>(0) // Track when recording actually started
 
@@ -163,10 +171,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         console.log('⚠️ No valid duration found in meeting data')
       }
 
-      // Load existing recording if available
+      // Load existing recording if available (handles both single and chunked)
       if (meeting.recordingPath) {
         console.log('🎵 Loading existing recording from:', meeting.recordingPath)
-        loadExistingRecording(meeting.recordingPath)
+        loadRecording(meeting.recordingPath)
       }
     }
   }, [meeting])
@@ -194,6 +202,32 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       }
     } catch (error) {
       console.error('Failed to load existing recording:', error)
+    }
+  }
+
+  // Helper function to load recording (single file or chunks)
+  const loadRecording = async (recordingPath: string | string[]): Promise<void> => {
+    try {
+      if (Array.isArray(recordingPath)) {
+        console.log('🔄 Loading chunked recording...')
+        setRecordingChunks(recordingPath)
+        
+        // Load first chunk for immediate playback
+        if (recordingPath.length > 0) {
+          const result = await window.api.chunkedRecording.loadChunks([recordingPath[0]])
+          if (result.success && result.chunks && result.chunks.length > 0) {
+            const blob = new Blob([result.chunks[0]], { type: 'audio/mpeg' })
+            const audioUrl = URL.createObjectURL(blob)
+            setRecordedAudioUrl(audioUrl)
+            console.log('✅ First chunk loaded for playback')
+          }
+        }
+      } else {
+        // Single file recording
+        await loadExistingRecording(recordingPath)
+      }
+    } catch (error) {
+      console.error('Failed to load recording:', error)
     }
   }
 
@@ -351,7 +385,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         console.log('📁 Stored combined recording path:', result.path)
         
         // Load the combined recording for playback
-        loadExistingRecording(result.path)
+        loadRecording(result.path)
       }
     }
 
@@ -702,7 +736,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       setLiveText('')
       setTranscriptionStatus('recording')
       chunkCounter.current = 0
-      recordingChunks.current = []
+      recordingChunksRef.current = []
 
       // Clear any previous recording
       if (recordedAudioUrl) {
@@ -743,7 +777,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
             if (event.data.size > 0) {
               chunks.push(event.data)
               // Also save for complete recording
-              recordingChunks.current.push(event.data)
+              recordingChunksRef.current.push(event.data)
             }
           }
 
@@ -892,7 +926,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
 
     // Create complete recording file for conversion
-    if (recordingChunks.current.length > 0) {
+    if (recordingChunksRef.current.length > 0) {
       // Use the same compatible format detection as recording
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
@@ -902,7 +936,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
             ? 'audio/mp4'
             : 'audio/wav'
 
-      const completeRecording = new Blob(recordingChunks.current, { type: mimeType })
+      const completeRecording = new Blob(recordingChunksRef.current, { type: mimeType })
 
       console.log(
         `💾 Complete recording created: ${completeRecording.size} bytes, format: ${mimeType}`
@@ -1486,7 +1520,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
             // Load the converted MP3 file for playback
             console.log('🎵 Loading converted MP3 file for playback...')
-            await loadExistingRecording(recordingPath)
+            await loadRecording(recordingPath)
           } else {
             console.error('Failed to save audio recording:', result.error)
           }
@@ -1620,6 +1654,95 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     } catch (error) {
       console.error('Error generating content:', error)
       alert('Failed to generate content. Please check your Gemini API key in settings.')
+    }
+  }
+
+  // Helper function to create a recording chunk
+  const createRecordingChunk = async (): Promise<void> => {
+    if (chunkBuffers.current.length === 0) return
+
+    try {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm'
+
+      const chunkBlob = new Blob(chunkBuffers.current, { type: mimeType })
+      const arrayBuffer = await chunkBlob.arrayBuffer()
+
+      if (meeting?.id) {
+        console.log(`💾 Saving chunk ${chunkIndex} (${chunkBlob.size} bytes)`)
+        
+        const result = await window.api.chunkedRecording.addChunk(meeting.id, arrayBuffer)
+        if (result.success) {
+          console.log(`✅ Chunk ${chunkIndex} saved successfully`)
+          setChunkIndex(prev => prev + 1)
+        } else {
+          console.error('Failed to save chunk:', result.error)
+        }
+      }
+
+      // Clear buffer for next chunk
+      chunkBuffers.current = []
+    } catch (error) {
+      console.error('Error creating recording chunk:', error)
+    }
+  }
+
+  // Start chunked recording with automatic chunk creation
+  const startChunkedRecordingWithTimer = async (): Promise<void> => {
+    if (!meeting?.id) return
+
+    try {
+      console.log('🎬 Starting chunked recording...')
+      
+      // Initialize chunked recording
+      const result = await window.api.chunkedRecording.start(meeting.id)
+      if (result.success) {
+        setIsChunkedRecording(true)
+        setChunkIndex(0)
+        chunkBuffers.current = []
+
+        // Set up periodic chunk creation
+        chunkInterval.current = setInterval(createRecordingChunk, CHUNK_DURATION)
+        
+        console.log('✅ Chunked recording started with 5-minute intervals')
+      } else {
+        console.error('Failed to start chunked recording:', result.error)
+      }
+    } catch (error) {
+      console.error('Error starting chunked recording:', error)
+    }
+  }
+
+  // Stop chunked recording
+  const stopChunkedRecordingWithTimer = async (): Promise<void> => {
+    if (!meeting?.id) return
+
+    try {
+      // Clear chunk timer
+      if (chunkInterval.current) {
+        clearInterval(chunkInterval.current)
+        chunkInterval.current = null
+      }
+
+      // Create final chunk if there's data
+      await createRecordingChunk()
+
+      // Stop chunked recording
+      const result = await window.api.chunkedRecording.stop(meeting.id)
+      if (result.success) {
+        console.log('🏁 Chunked recording stopped')
+        setIsChunkedRecording(false)
+        
+        if (result.chunkPaths) {
+          setRecordingChunks(result.chunkPaths)
+          console.log(`📁 Recording saved as ${result.chunkPaths.length} chunks`)
+        }
+      } else {
+        console.error('Failed to stop chunked recording:', result.error)
+      }
+    } catch (error) {
+      console.error('Error stopping chunked recording:', error)
     }
   }
 

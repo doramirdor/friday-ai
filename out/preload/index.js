@@ -58,6 +58,13 @@ const api = {
       electron.ipcRenderer.removeAllListeners("combined-recording-stopped");
       electron.ipcRenderer.removeAllListeners("combined-recording-failed");
     }
+  },
+  // Gemini AI API
+  gemini: {
+    // Generate comprehensive meeting content (summary, description, action items, tags)
+    generateContent: (options) => electron.ipcRenderer.invoke("gemini:generate-content", options),
+    // Generate summary only
+    generateSummary: (options) => electron.ipcRenderer.invoke("gemini:generate-summary", options)
   }
 };
 if (process.contextIsolated) {

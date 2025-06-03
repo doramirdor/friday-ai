@@ -11,6 +11,9 @@ import * as os from 'os'
 import * as net from 'net'
 import ffmpeg from 'fluent-ffmpeg'
 
+// Import services
+import { geminiService } from './gemini'
+
 let mainWindow: BrowserWindow | null = null
 let transcriptionProcess: ChildProcess | null = null
 let transcriptionSocket: net.Socket | null = null
@@ -163,7 +166,10 @@ async function startCombinedRecording(
             if (mainWindow) {
               mainWindow.webContents.send('combined-recording-started', result)
             }
-          } else if (result.code === 'RECORDING_STARTED_MIC_ONLY' && !hasStarted) {
+          } else if ((result.code === 'BLUETOOTH_LIMITATION' || 
+                      result.code === 'SCREEN_PERMISSION_REQUIRED' || 
+                      result.code === 'SYSTEM_AUDIO_UNAVAILABLE' ||
+                      result.code === 'RECORDING_STARTED_MIC_ONLY') && !hasStarted) {
             hasStarted = true
             resolve({ 
               success: true, 
@@ -728,7 +734,37 @@ function setupDatabaseHandlers(): void {
   })
 
   ipcMain.handle('db:updateSettings', async (_, settings: Partial<Settings>) => {
-    return await databaseService.updateSettings(settings)
+    const result = await databaseService.updateSettings(settings)
+    
+    // Update Gemini API key if it was changed
+    if (settings.geminiApiKey !== undefined) {
+      geminiService.setApiKey(settings.geminiApiKey)
+    }
+    
+    return result
+  })
+}
+
+// Gemini IPC handlers
+function setupGeminiHandlers(): void {
+  ipcMain.handle('gemini:generate-content', async (_, options) => {
+    try {
+      const result = await geminiService.generateMeetingContent(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate content with Gemini:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('gemini:generate-summary', async (_, options) => {
+    try {
+      const result = await geminiService.generateSummaryOnly(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate summary with Gemini:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
   })
 }
 
@@ -743,6 +779,17 @@ app.whenReady().then(async () => {
 
     // Seed database with sample data
     await seedDatabase()
+    
+    // Initialize Gemini API key from settings
+    try {
+      const settings = await databaseService.getSettings()
+      if (settings.geminiApiKey) {
+        geminiService.setApiKey(settings.geminiApiKey)
+        console.log('Gemini API key initialized from settings')
+      }
+    } catch (error) {
+      console.error('Failed to initialize Gemini API key:', error)
+    }
   } catch (error) {
     console.error('Failed to initialize database:', error)
   }
@@ -762,6 +809,7 @@ app.whenReady().then(async () => {
   // Setup IPC handlers
   setupDatabaseHandlers()
   setupTranscriptionHandlers()
+  setupGeminiHandlers()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

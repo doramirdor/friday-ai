@@ -54,6 +54,8 @@ const sampleMeetings: Omit<Meeting, 'id'>[] = [
     ],
     context:
       "This is our weekly standup meeting. We discuss what we completed yesterday, what we're working on today, and any blockers. Key participants: John (Backend Developer), Sarah (UI Designer), Mike (Frontend Developer).",
+    context_files: [],
+    notes: '',
     summary:
       'Team discussed progress on authentication system and UI components. OAuth integration completed, password reset functionality in progress.',
     createdAt: '2024-01-15T10:00:00Z',
@@ -80,6 +82,8 @@ const sampleMeetings: Omit<Meeting, 'id'>[] = [
     ],
     context:
       'Quarterly strategy session with product team to review market position and plan Q2 initiatives.',
+    context_files: [],
+    notes: '',
     summary:
       'Discussed Q2 roadmap priorities, user feedback insights, and upcoming product initiatives.',
     createdAt: '2024-01-14T14:00:00Z',
@@ -103,6 +107,8 @@ const sampleMeetings: Omit<Meeting, 'id'>[] = [
     ],
     context:
       'Client review session for mobile app design iterations. Focus on user experience and visual design feedback.',
+    context_files: [],
+    notes: '',
     summary:
       'Client provided valuable feedback on design direction. Several UI improvements requested.',
     createdAt: '2024-01-12T16:00:00Z',

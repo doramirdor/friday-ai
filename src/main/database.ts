@@ -12,6 +12,8 @@ export interface Meeting {
   tags: string[]
   actionItems: ActionItem[]
   context: string
+  context_files: string[]
+  notes: string
   summary: string
   createdAt: string
   updatedAt: string
@@ -95,6 +97,8 @@ class DatabaseService {
           tags TEXT,
           action_items TEXT,
           context TEXT,
+          context_files TEXT,
+          notes TEXT,
           summary TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -135,8 +139,70 @@ class DatabaseService {
             reject(err)
             return
           }
-          resolve()
+          
+          // Run migration to add context_files column if it doesn't exist
+          this.migrateDatabase().then(() => {
+            resolve()
+          }).catch((migrationErr) => {
+            reject(migrationErr)
+          })
         })
+      })
+    })
+  }
+
+  private async migrateDatabase(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('Database not initialized'))
+        return
+      }
+
+      // Check if context_files column exists
+      this.db.all("PRAGMA table_info(meetings)", (err, rows: any[]) => {
+        if (err) {
+          reject(err)
+          return
+        }
+
+        const hasContextFiles = rows.some(row => row.name === 'context_files')
+        const hasNotes = rows.some(row => row.name === 'notes')
+        
+        const migrations: Promise<void>[] = []
+        
+        if (!hasContextFiles) {
+          console.log('Adding context_files column to meetings table...')
+          migrations.push(new Promise((resolveInner, rejectInner) => {
+            this.db!.run("ALTER TABLE meetings ADD COLUMN context_files TEXT DEFAULT '[]'", (alterErr) => {
+              if (alterErr) {
+                rejectInner(alterErr)
+                return
+              }
+              console.log('Successfully added context_files column')
+              resolveInner()
+            })
+          }))
+        }
+        
+        if (!hasNotes) {
+          console.log('Adding notes column to meetings table...')
+          migrations.push(new Promise((resolveInner, rejectInner) => {
+            this.db!.run("ALTER TABLE meetings ADD COLUMN notes TEXT DEFAULT ''", (alterErr) => {
+              if (alterErr) {
+                rejectInner(alterErr)
+                return
+              }
+              console.log('Successfully added notes column')
+              resolveInner()
+            })
+          }))
+        }
+        
+        if (migrations.length === 0) {
+          resolve()
+        } else {
+          Promise.all(migrations).then(() => resolve()).catch(reject)
+        }
       })
     })
   }
@@ -211,8 +277,8 @@ class DatabaseService {
       const sql = `
         INSERT INTO meetings (
           recording_path, transcript, title, description, tags,
-          action_items, context, summary, created_at, updated_at, duration
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          action_items, context, context_files, notes, summary, created_at, updated_at, duration
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
 
       const values = [
@@ -223,6 +289,8 @@ class DatabaseService {
         JSON.stringify(meeting.tags),
         JSON.stringify(meeting.actionItems),
         meeting.context,
+        JSON.stringify(meeting.context_files),
+        meeting.notes,
         meeting.summary,
         meeting.createdAt,
         meeting.updatedAt,
@@ -318,6 +386,14 @@ class DatabaseService {
       if (meeting.context !== undefined) {
         fields.push('context = ?')
         values.push(meeting.context)
+      }
+      if (meeting.context_files !== undefined) {
+        fields.push('context_files = ?')
+        values.push(JSON.stringify(meeting.context_files))
+      }
+      if (meeting.notes !== undefined) {
+        fields.push('notes = ?')
+        values.push(meeting.notes)
       }
       if (meeting.summary !== undefined) {
         fields.push('summary = ?')
@@ -437,6 +513,8 @@ class DatabaseService {
       tags: JSON.parse(row.tags),
       actionItems: JSON.parse(row.action_items),
       context: row.context,
+      context_files: row.context_files ? JSON.parse(row.context_files) : [],
+      notes: row.notes,
       summary: row.summary,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

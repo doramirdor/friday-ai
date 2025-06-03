@@ -61,6 +61,8 @@ const NewMeetingDialog: React.FC<NewMeetingDialogProps> = ({ isOpen, onClose, on
         tags,
         actionItems: [],
         context: context.trim(),
+        context_files: [], // Initialize with empty array
+        notes: '', // Initialize with empty notes
         summary: '',
         createdAt: now,
         updatedAt: now,

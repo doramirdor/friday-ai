@@ -7,6 +7,8 @@ export interface Meeting {
   tags: string[]
   actionItems: ActionItem[]
   context: string
+  context_files: string[]
+  notes: string
   summary: string
   createdAt: string
   updatedAt: string

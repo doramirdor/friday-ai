@@ -211,9 +211,10 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         
         // Log audio device info
         print("Checking audio input devices on macOS:")
-        AudioDeviceManager.logAudioDiagnostics()
+        // AudioDeviceManager.logAudioDiagnostics() // Temporarily disabled to debug hanging issue
         
         // Check and adjust microphone volume if needed
+        /*
         if let micVolume = AudioDeviceManager.getMicrophoneInputLevel() {
             print("Microphone input volume: \(micVolume)%")
             if micVolume < 50 {
@@ -223,6 +224,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                 }
             }
         }
+        */
         
         // Configure recording settings with higher quality
         let settings: [String: Any] = [
@@ -318,11 +320,13 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                         print("⚠️ Please check your microphone settings or speak louder")
                         
                         // Try to adjust microphone volume
+                        /*
                         if let currentVolume = AudioDeviceManager.getMicrophoneInputLevel(), currentVolume < 90 {
                             if AudioDeviceManager.setMicrophoneInputLevel(90.0) {
                                 print("✅ Automatically increased microphone volume to 90%")
                             }
                         }
+                        */
                         
                         consecutiveLowLevels = 0 // Reset counter after warning
                     }
@@ -712,7 +716,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         
         // Log audio device info
         print("Checking audio input devices on macOS:")
-        AudioDeviceManager.logAudioDiagnostics()
+        // AudioDeviceManager.logAudioDiagnostics() // Temporarily disabled to debug hanging issue
             
         // Configure recording settings
         let settings: [String: Any] = [
@@ -1237,44 +1241,61 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         } catch {
             print("❌ Failed to initiate recording: \(error.localizedDescription)")
             
-            // If system audio capture fails and this is a combined recording, fall back to microphone-only
+            // If system audio capture fails and this is a combined recording, determine the actual cause
             if audioSource == "both" {
-                print("🔄 System audio failed, falling back to microphone-only recording...")
+                print("🔄 System audio failed, analyzing cause...")
                 
-                do {
-                    // Reset stream
-                    RecorderCLI.screenCaptureStream = nil
-                    
-                    // Change mode to microphone-only
-                    audioSource = "mic"
-                    
-                    // Update the output path to use mic-only naming
-                    if let micPath = micTempWavPath {
-                        let micOnlyMp3 = micPath.replacingOccurrences(of: "_mic.wav", with: ".mp3")
-                        finalMp3Path = micOnlyMp3
-                    }
-                    
-                    let warning = "System audio capture failed due to Bluetooth audio limitations. Recording microphone only."
-                    let recommendation = "For full audio capture, switch from Bluetooth to built-in speakers and try again."
-                    
-                    sendResponse([
-                        "code": "RECORDING_STARTED_MIC_ONLY",
-                        "path": finalMp3Path ?? outputPath,
-                        "timestamp": ISO8601DateFormatter().string(from: Date()),
-                        "warning": warning,
-                        "recommendation": recommendation
-                    ])
-                    
-                    print("✅ Successfully fell back to microphone-only recording")
-                    
-                } catch {
-                    print("❌ Microphone-only fallback also failed: \(error.localizedDescription)")
-                    sendResponse([
-                        "code": "RECORDING_FAILED",
-                        "error": "Failed to start any recording: \(error.localizedDescription)"
-                    ])
-                    throw error
+                // Check the actual cause of failure using proper device detection
+                let currentDevice = getCurrentAudioDevice()
+                let isBluetoothDevice = isCurrentDeviceBluetooth()
+                
+                // Check screen recording permission
+                let hasScreenPermission = CGPreflightScreenCaptureAccess()
+                
+                var warningMessage: String
+                var errorCode: String
+                
+                if !hasScreenPermission {
+                    warningMessage = "System audio capture failed: Screen recording permission required."
+                    errorCode = "SCREEN_PERMISSION_REQUIRED"
+                    print("   ❌ Cause: Missing screen recording permission")
+                } else if isBluetoothDevice {
+                    warningMessage = "System audio capture failed due to Bluetooth audio limitations. Recording microphone only."
+                    errorCode = "BLUETOOTH_LIMITATION"
+                    print("   ❌ Cause: Bluetooth audio device detected: \(currentDevice)")
+                } else {
+                    warningMessage = "System audio capture failed due to system limitations. Recording microphone only."
+                    errorCode = "SYSTEM_AUDIO_UNAVAILABLE"
+                    print("   ❌ Cause: System audio capture not available (Device: \(currentDevice))")
                 }
+                
+                // Reset stream
+                RecorderCLI.screenCaptureStream = nil
+                
+                // Change mode to microphone-only
+                audioSource = "mic"
+                
+                // Update the output path to use mic-only naming
+                if let micPath = micTempWavPath {
+                    let micOnlyMp3 = micPath.replacingOccurrences(of: "_mic.wav", with: ".mp3")
+                    finalMp3Path = micOnlyMp3
+                }
+                
+                let recommendation = isBluetoothDevice ? 
+                    "For full audio capture, switch from Bluetooth to built-in speakers and try again." :
+                    "Check system audio settings and permissions, then try again."
+                
+                sendResponse([
+                    "code": errorCode,
+                    "path": finalMp3Path ?? outputPath,
+                    "timestamp": ISO8601DateFormatter().string(from: Date()),
+                    "warning": warningMessage,
+                    "recommendation": recommendation,
+                    "device": currentDevice,
+                    "screen_permission": hasScreenPermission
+                ])
+                
+                print("✅ Successfully fell back to microphone-only recording")
             } else {
                 sendResponse([
                     "code": "RECORDING_FAILED",
@@ -1287,6 +1308,8 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
 
     // Helper function to get current audio device
     private func getCurrentAudioDevice() -> String {
+        print("🔍 Checking current audio output device...")
+        
         let defaultDevice = AudioObjectID(kAudioObjectSystemObject)
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -1299,21 +1322,142 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         
         let status = AudioObjectGetPropertyData(defaultDevice, &propertyAddress, 0, nil, &size, &deviceID)
         guard status == noErr else {
-            print("⚠️ Could not get default audio device")
+            print("⚠️ Could not get default audio device (status: \(status))")
             return "Unknown"
         }
         
+        print("✅ Found audio device ID: \(deviceID)")
+        
+        // Get device name
         propertyAddress.mSelector = kAudioDevicePropertyDeviceName
-        var deviceName: CFString = "" as CFString
-        size = UInt32(MemoryLayout<CFString>.size)
+        var deviceNameSize = UInt32(256)
+        var deviceNameBuffer = [UInt8](repeating: 0, count: 256)
         
-        let nameStatus = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &size, &deviceName)
+        let nameStatus = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &deviceNameSize, &deviceNameBuffer)
         guard nameStatus == noErr else {
-            print("⚠️ Could not get device name")
+            print("⚠️ Could not get device name (status: \(nameStatus))")
             return "Unknown"
         }
         
-        return deviceName as String
+        let deviceName = String(bytes: deviceNameBuffer.prefix(Int(deviceNameSize)), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown"
+        print("🔊 Current audio output device: '\(deviceName)'")
+        
+        // Additional device information
+        checkAudioDeviceDetails(deviceID: deviceID)
+        
+        return deviceName
+    }
+    
+    private func checkAudioDeviceDetails(deviceID: AudioObjectID) {
+        // Check if device has input streams (unusual for output devices)
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var size: UInt32 = 0
+        let hasInputStreams = AudioObjectGetPropertyDataSize(deviceID, &propertyAddress, 0, nil, &size) == noErr && size > 0
+        
+        // Check if device has output streams
+        propertyAddress.mScope = kAudioDevicePropertyScopeOutput
+        let hasOutputStreams = AudioObjectGetPropertyDataSize(deviceID, &propertyAddress, 0, nil, &size) == noErr && size > 0
+        
+        print("   📊 Device details: Input streams: \(hasInputStreams), Output streams: \(hasOutputStreams)")
+        
+        // Check if it supports volume control
+        propertyAddress.mSelector = kAudioDevicePropertyVolumeScalar
+        propertyAddress.mScope = kAudioDevicePropertyScopeOutput
+        propertyAddress.mElement = kAudioObjectPropertyElementMain
+        
+        let supportsVolume = AudioObjectHasProperty(deviceID, &propertyAddress)
+        print("   📊 Supports volume control: \(supportsVolume)")
+        
+        // Check transport type if available
+        propertyAddress.mSelector = kAudioDevicePropertyTransportType
+        propertyAddress.mScope = kAudioObjectPropertyScopeGlobal
+        var transportType: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        
+        if AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &size, &transportType) == noErr {
+            let transportTypeString: String
+            switch transportType {
+            case kAudioDeviceTransportTypeBuiltIn:
+                transportTypeString = "Built-in"
+            case kAudioDeviceTransportTypeAggregate:
+                transportTypeString = "Aggregate"
+            case kAudioDeviceTransportTypeVirtual:
+                transportTypeString = "Virtual"
+            case kAudioDeviceTransportTypePCI:
+                transportTypeString = "PCI"
+            case kAudioDeviceTransportTypeUSB:
+                transportTypeString = "USB"
+            case kAudioDeviceTransportTypeFireWire:
+                transportTypeString = "FireWire"
+            case kAudioDeviceTransportTypeBluetooth:
+                transportTypeString = "Bluetooth"
+            case kAudioDeviceTransportTypeBluetoothLE:
+                transportTypeString = "Bluetooth LE"
+            case kAudioDeviceTransportTypeHDMI:
+                transportTypeString = "HDMI"
+            case kAudioDeviceTransportTypeDisplayPort:
+                transportTypeString = "DisplayPort"
+            case kAudioDeviceTransportTypeAirPlay:
+                transportTypeString = "AirPlay"
+            case kAudioDeviceTransportTypeAVB:
+                transportTypeString = "AVB"
+            case kAudioDeviceTransportTypeThunderbolt:
+                transportTypeString = "Thunderbolt"
+            default:
+                transportTypeString = "Unknown (\(transportType))"
+            }
+            print("   📊 Transport type: \(transportTypeString)")
+            
+            // Log if this is definitely a Bluetooth device
+            if transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE {
+                print("   ⚠️ Confirmed: This is a Bluetooth audio device")
+            }
+        }
+    }
+
+    // Helper function to properly detect if current device is Bluetooth
+    private func isCurrentDeviceBluetooth() -> Bool {
+        let defaultDevice = AudioObjectID(kAudioObjectSystemObject)
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var deviceID: AudioObjectID = 0
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        
+        let status = AudioObjectGetPropertyData(defaultDevice, &propertyAddress, 0, nil, &size, &deviceID)
+        guard status == noErr else {
+            print("⚠️ Could not get default audio device for Bluetooth check")
+            return false
+        }
+        
+        // Check transport type
+        propertyAddress.mSelector = kAudioDevicePropertyTransportType
+        propertyAddress.mScope = kAudioObjectPropertyScopeGlobal
+        var transportType: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        
+        if AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &size, &transportType) == noErr {
+            let isBluetooth = transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE
+            if isBluetooth {
+                print("   ✅ Confirmed: Current device uses Bluetooth transport")
+            } else {
+                print("   ✅ Confirmed: Current device does NOT use Bluetooth transport")
+            }
+            return isBluetooth
+        } else {
+            print("   ⚠️ Could not determine transport type, falling back to name-based detection")
+            // Fallback to name-based detection only if transport type is unavailable
+            let deviceName = getCurrentAudioDevice()
+            return deviceName.contains("AirPods") || deviceName.contains("Bluetooth") || deviceName.lowercased().contains("bluetooth")
+        }
     }
 
     private func sendResponse(_ response: [String: Any]) {
@@ -1585,4 +1729,18 @@ func recorderMain() -> Int32 {
     // This function is just a placeholder to satisfy the linker
     // The actual functionality is called through other entry points
     return 0
+}
+
+// Main structure for command line execution
+@main
+struct RecorderMain {
+    static func main() {
+        guard #available(macOS 13.0, *) else {
+            print("This application requires macOS 13.0 or later")
+            exit(1)
+        }
+        
+        let recorder = RecorderCLI()
+        recorder.executeRecordingProcess()
+    }
 } 

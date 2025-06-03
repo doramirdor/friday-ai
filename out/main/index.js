@@ -67,6 +67,8 @@ class DatabaseService {
           tags TEXT,
           action_items TEXT,
           context TEXT,
+          context_files TEXT,
+          notes TEXT,
           summary TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -104,8 +106,60 @@ class DatabaseService {
             reject(err);
             return;
           }
-          resolve();
+          this.migrateDatabase().then(() => {
+            resolve();
+          }).catch((migrationErr) => {
+            reject(migrationErr);
+          });
         });
+      });
+    });
+  }
+  async migrateDatabase() {
+    return new Promise((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error("Database not initialized"));
+        return;
+      }
+      this.db.all("PRAGMA table_info(meetings)", (err, rows) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        const hasContextFiles = rows.some((row) => row.name === "context_files");
+        const hasNotes = rows.some((row) => row.name === "notes");
+        const migrations = [];
+        if (!hasContextFiles) {
+          console.log("Adding context_files column to meetings table...");
+          migrations.push(new Promise((resolveInner, rejectInner) => {
+            this.db.run("ALTER TABLE meetings ADD COLUMN context_files TEXT DEFAULT '[]'", (alterErr) => {
+              if (alterErr) {
+                rejectInner(alterErr);
+                return;
+              }
+              console.log("Successfully added context_files column");
+              resolveInner();
+            });
+          }));
+        }
+        if (!hasNotes) {
+          console.log("Adding notes column to meetings table...");
+          migrations.push(new Promise((resolveInner, rejectInner) => {
+            this.db.run("ALTER TABLE meetings ADD COLUMN notes TEXT DEFAULT ''", (alterErr) => {
+              if (alterErr) {
+                rejectInner(alterErr);
+                return;
+              }
+              console.log("Successfully added notes column");
+              resolveInner();
+            });
+          }));
+        }
+        if (migrations.length === 0) {
+          resolve();
+        } else {
+          Promise.all(migrations).then(() => resolve()).catch(reject);
+        }
       });
     });
   }
@@ -170,8 +224,8 @@ class DatabaseService {
       const sql = `
         INSERT INTO meetings (
           recording_path, transcript, title, description, tags,
-          action_items, context, summary, created_at, updated_at, duration
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          action_items, context, context_files, notes, summary, created_at, updated_at, duration
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
       const values = [
         meeting.recordingPath,
@@ -181,6 +235,8 @@ class DatabaseService {
         JSON.stringify(meeting.tags),
         JSON.stringify(meeting.actionItems),
         meeting.context,
+        JSON.stringify(meeting.context_files),
+        meeting.notes,
         meeting.summary,
         meeting.createdAt,
         meeting.updatedAt,
@@ -265,6 +321,14 @@ class DatabaseService {
       if (meeting.context !== void 0) {
         fields.push("context = ?");
         values.push(meeting.context);
+      }
+      if (meeting.context_files !== void 0) {
+        fields.push("context_files = ?");
+        values.push(JSON.stringify(meeting.context_files));
+      }
+      if (meeting.notes !== void 0) {
+        fields.push("notes = ?");
+        values.push(meeting.notes);
       }
       if (meeting.summary !== void 0) {
         fields.push("summary = ?");
@@ -367,6 +431,8 @@ class DatabaseService {
       tags: JSON.parse(row.tags),
       actionItems: JSON.parse(row.action_items),
       context: row.context,
+      context_files: row.context_files ? JSON.parse(row.context_files) : [],
+      notes: row.notes,
       summary: row.summary,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -457,6 +523,8 @@ const sampleMeetings = [
       { id: 4, text: "Review UI component accessibility features", completed: false }
     ],
     context: "This is our weekly standup meeting. We discuss what we completed yesterday, what we're working on today, and any blockers. Key participants: John (Backend Developer), Sarah (UI Designer), Mike (Frontend Developer).",
+    context_files: [],
+    notes: "",
     summary: "Team discussed progress on authentication system and UI components. OAuth integration completed, password reset functionality in progress.",
     createdAt: "2024-01-15T10:00:00Z",
     updatedAt: "2024-01-15T10:15:32Z",
@@ -481,6 +549,8 @@ const sampleMeetings = [
       { id: 3, text: "Update product requirements document", completed: false }
     ],
     context: "Quarterly strategy session with product team to review market position and plan Q2 initiatives.",
+    context_files: [],
+    notes: "",
     summary: "Discussed Q2 roadmap priorities, user feedback insights, and upcoming product initiatives.",
     createdAt: "2024-01-14T14:00:00Z",
     updatedAt: "2024-01-14T14:32:18Z",
@@ -501,6 +571,8 @@ const sampleMeetings = [
       { id: 3, text: "Schedule follow-up review", completed: false }
     ],
     context: "Client review session for mobile app design iterations. Focus on user experience and visual design feedback.",
+    context_files: [],
+    notes: "",
     summary: "Client provided valuable feedback on design direction. Several UI improvements requested.",
     createdAt: "2024-01-12T16:00:00Z",
     updatedAt: "2024-01-12T16:28:45Z",
@@ -524,6 +596,148 @@ async function seedDatabase() {
     console.error("Failed to seed database:", error);
   }
 }
+class GeminiService {
+  apiKey = null;
+  setApiKey(apiKey) {
+    this.apiKey = apiKey || process.env.GEMINI_API_KEY || null;
+  }
+  async makeGeminiRequest(prompt) {
+    if (!this.apiKey) {
+      return { success: false, error: "Gemini API key not configured" };
+    }
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.apiKey}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 2048
+          }
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.text();
+        return { success: false, error: `Gemini API error: ${response.status} - ${errorData}` };
+      }
+      const data = await response.json();
+      if (data.candidates && data.candidates.length > 0 && data.candidates[0].content) {
+        const content = data.candidates[0].content.parts[0].text;
+        return { success: true, content };
+      } else {
+        return { success: false, error: "No content generated by Gemini" };
+      }
+    } catch (error) {
+      return { success: false, error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async generateMeetingContent(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `You are an AI assistant helping to analyze a meeting recording. Please generate a comprehensive analysis based on the following information:
+
+MEETING CONTEXT:
+Title: ${options.existingTitle}
+Global Context: ${options.globalContext}
+Meeting-Specific Context: ${options.meetingContext}
+
+TRANSCRIPT:
+${transcriptText}
+
+NOTES:
+${options.notes}
+
+Please provide your response in the following JSON format (ensure it's valid JSON with escaped quotes):
+{
+  "summary": "A concise 2-3 sentence summary of the meeting's main points and outcomes",
+  "description": "A more detailed description of what was discussed and accomplished (2-3 paragraphs)",
+  "actionItems": [
+    {
+      "id": 1,
+      "text": "Action item description",
+      "completed": false
+    }
+  ],
+  "tags": ["tag1", "tag2", "tag3"]
+}
+
+Guidelines:
+- Summary: Keep it concise but capture the essence of the meeting
+- Description: Provide context about the meeting type, participants, and key discussions
+- Action Items: Extract clear, actionable tasks mentioned or implied in the discussion
+- Tags: Generate 3-5 relevant tags for categorization (lowercase, single words or short phrases)
+- Ensure the JSON is properly formatted and escaped`;
+      const result = await this.makeGeminiRequest(prompt);
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || "Failed to generate content" };
+      }
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          return { success: false, error: "No valid JSON found in Gemini response" };
+        }
+        const parsedData = JSON.parse(jsonMatch[0]);
+        if (!parsedData.summary || !parsedData.description || !parsedData.actionItems || !parsedData.tags) {
+          return { success: false, error: "Invalid response structure from Gemini" };
+        }
+        const actionItems = parsedData.actionItems.map((item, index) => ({
+          id: item.id || Date.now() + index,
+          text: item.text || "",
+          completed: item.completed || false
+        }));
+        return {
+          success: true,
+          data: {
+            summary: parsedData.summary,
+            description: parsedData.description,
+            actionItems,
+            tags: Array.isArray(parsedData.tags) ? parsedData.tags : []
+          }
+        };
+      } catch (parseError) {
+        return { success: false, error: `Failed to parse Gemini response: ${parseError instanceof Error ? parseError.message : "Unknown error"}` };
+      }
+    } catch (error) {
+      return { success: false, error: `Generation failed: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async generateSummaryOnly(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `Please provide a concise 2-3 sentence summary of this meeting:
+
+CONTEXT: ${options.globalContext}
+MEETING CONTEXT: ${options.meetingContext}
+TRANSCRIPT:
+${transcriptText}
+NOTES:
+${options.notes}
+
+Please respond with only the summary, no additional formatting or explanations.`;
+      const result = await this.makeGeminiRequest(prompt);
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || "Failed to generate summary" };
+      }
+      return { success: true, summary: result.content.trim() };
+    } catch (error) {
+      return { success: false, error: `Summary generation failed: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+}
+const geminiService = new GeminiService();
 let mainWindow = null;
 let transcriptionProcess = null;
 let transcriptionSocket = null;
@@ -626,7 +840,7 @@ async function startCombinedRecording(recordingPath, filename) {
             if (mainWindow) {
               mainWindow.webContents.send("combined-recording-started", result);
             }
-          } else if (result.code === "RECORDING_STARTED_MIC_ONLY" && !hasStarted) {
+          } else if ((result.code === "BLUETOOTH_LIMITATION" || result.code === "SCREEN_PERMISSION_REQUIRED" || result.code === "SYSTEM_AUDIO_UNAVAILABLE" || result.code === "RECORDING_STARTED_MIC_ONLY") && !hasStarted) {
             hasStarted = true;
             resolve({
               success: true,
@@ -1045,7 +1259,31 @@ function setupDatabaseHandlers() {
     return await databaseService.getSettings();
   });
   electron.ipcMain.handle("db:updateSettings", async (_, settings) => {
-    return await databaseService.updateSettings(settings);
+    const result = await databaseService.updateSettings(settings);
+    if (settings.geminiApiKey !== void 0) {
+      geminiService.setApiKey(settings.geminiApiKey);
+    }
+    return result;
+  });
+}
+function setupGeminiHandlers() {
+  electron.ipcMain.handle("gemini:generate-content", async (_, options) => {
+    try {
+      const result = await geminiService.generateMeetingContent(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate content with Gemini:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("gemini:generate-summary", async (_, options) => {
+    try {
+      const result = await geminiService.generateSummaryOnly(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate summary with Gemini:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 }
 electron.app.whenReady().then(async () => {
@@ -1053,6 +1291,15 @@ electron.app.whenReady().then(async () => {
     await databaseService.initialize();
     console.log("Database initialized successfully");
     await seedDatabase();
+    try {
+      const settings = await databaseService.getSettings();
+      if (settings.geminiApiKey) {
+        geminiService.setApiKey(settings.geminiApiKey);
+        console.log("Gemini API key initialized from settings");
+      }
+    } catch (error) {
+      console.error("Failed to initialize Gemini API key:", error);
+    }
   } catch (error) {
     console.error("Failed to initialize database:", error);
   }
@@ -1066,6 +1313,7 @@ electron.app.whenReady().then(async () => {
   utils.electronApp.setAppUserModelId("com.electron");
   setupDatabaseHandlers();
   setupTranscriptionHandlers();
+  setupGeminiHandlers();
   electron.app.on("browser-window-created", (_, window) => {
     utils.optimizer.watchWindowShortcuts(window);
   });

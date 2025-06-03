@@ -1,4 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
+import MDEditor from '@uiw/react-md-editor'
+import '@uiw/react-md-editor/markdown-editor.css';
+import '@uiw/react-markdown-preview/markdown.css';
 import {
   PlayIcon,
   PauseIcon,
@@ -10,7 +13,9 @@ import {
   InfoIcon,
   UploadIcon,
   MicIcon,
-  SaveIcon
+  SaveIcon,
+  SparklesIcon,
+  BookOpenIcon
 } from 'lucide-react'
 import { Meeting } from '../types/database'
 
@@ -26,7 +31,7 @@ interface TranscriptScreenProps {
   onBack: () => void
 }
 
-type SidebarTab = 'details' | 'context' | 'actions'
+type SidebarTab = 'details' | 'context' | 'actions' | 'notes' | 'summary'
 
 // Local interface definition to fix TypeScript errors
 interface TranscriptionResult {
@@ -43,6 +48,18 @@ interface TranscriptionResult {
     end: number
     confidence: number
   }>
+}
+
+interface RecordingResult {
+  success?: boolean
+  error?: string
+  code?: string
+  warning?: string
+  recommendation?: string
+  path?: string
+  timestamp?: string
+  device?: string
+  screen_permission?: boolean
 }
 
 /*
@@ -89,6 +106,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [newTag, setNewTag] = useState('')
   const [contextText, setContextText] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState<string[]>([])
+  const [notes, setNotes] = useState('')
+  const [summary, setSummary] = useState('')
+  const [isSummaryAIGenerated, setIsSummaryAIGenerated] = useState(false)
   const [actionItems, setActionItems] = useState<
     Array<{ id: number; text: string; completed: boolean }>
   >([])
@@ -107,6 +127,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [recordingMode, setRecordingMode] = useState<'microphone' | 'combined'>('microphone')
   const [isCombinedRecording, setIsCombinedRecording] = useState(false)
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
+  const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
 
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const recordingInterval = useRef<NodeJS.Timeout | null>(null)
@@ -115,6 +136,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const audioStreamRef = useRef<MediaStream | null>(null)
   const recordingChunks = useRef<Blob[]>([])
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
+  const recordingStartTime = useRef<number>(0) // Track when recording actually started
 
   // Initialize data from meeting prop
   useEffect(() => {
@@ -126,6 +148,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       setContextText(meeting.context)
       setActionItems(meeting.actionItems)
       setTranscript(meeting.transcript || [])
+      setUploadedFiles(meeting.context_files || [])
+      setNotes(meeting.notes || '')
+      setSummary(meeting.summary || '')
+      setIsSummaryAIGenerated(!!meeting.summary) // If there's already a summary, consider it AI-generated
 
       // Parse duration to seconds
       if (meeting.duration && meeting.duration !== '00:00') {
@@ -213,7 +239,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.log('📝 Received transcription:', result)
 
       if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
-        const currentTimestamp = formatTime(currentTime)
+        // Calculate proper timestamp based on recording start time
+        const recordingElapsed = Date.now() - recordingStartTime.current
+        const recordingSeconds = Math.floor(recordingElapsed / 1000)
+        const currentTimestamp = formatTime(recordingSeconds)
 
         // Add to live text for immediate feedback
         setLiveText((prev) => prev + ' ' + result.text)
@@ -246,44 +275,87 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   // Separate effect for Swift recorder event listeners
   useEffect(() => {
     // Setup Swift recorder event listeners
-    const handleCombinedRecordingStarted = (result: any): void => {
+    const handleCombinedRecordingStarted = (result: RecordingResult): void => {
       console.log('🎙️ Combined recording started:', result)
       setIsCombinedRecording(true)
       
-      // Handle different recording start types
-      if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
-        // Show warning about system audio capture failure
-        console.warn('⚠️ System audio capture failed:', result.warning)
-        
-        // Set warning message for UI display
-        setRecordingWarning(`⚠️ ${result.warning}`)
-        
-        // Update status to indicate microphone-only mode
+      // Handle different recording start types and error conditions
+      if (result.code === 'BLUETOOTH_LIMITATION') {
+        // Show warning about Bluetooth audio limitation
+        console.warn('⚠️ Bluetooth audio detected:', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
         setTranscriptionStatus('recording-mic-only')
+        
+        // Log device details if available
+        if (result.device) {
+          console.log(`🔊 Audio device: ${result.device}`)
+        }
+        
+      } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
+        // Show warning about missing screen recording permission
+        console.warn('⚠️ Screen recording permission required:', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}\n\nPlease grant screen recording permission in System Settings > Privacy & Security > Screen Recording`)
+        setTranscriptionStatus('recording-mic-only')
+        
+      } else if (result.code === 'SYSTEM_AUDIO_UNAVAILABLE') {
+        // Show warning about general system audio unavailability
+        console.warn('⚠️ System audio unavailable:', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
+        setTranscriptionStatus('recording-mic-only')
+        
+        // Log technical details if available
+        if (result.device && result.screen_permission !== undefined) {
+          console.log(`🔍 Debug info - Device: ${result.device}, Screen permission: ${result.screen_permission}`)
+        }
+        
+      } else if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
+        // Legacy fallback case
+        console.warn('⚠️ System audio capture failed (legacy):', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}`)
+        setTranscriptionStatus('recording-mic-only')
+        
       } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
-        // Handle recording failure
+        // Handle complete recording failure
         console.error('❌ Recording failed:', result.error)
         setRecordingWarning(`❌ Recording failed: ${result.error}`)
         setTranscriptionStatus('error')
         setIsCombinedRecording(false)
+        
+      } else if (result.code === 'RECORDING_STARTED') {
+        // Success case - clear any previous warnings
+        setRecordingWarning(null)
+        setTranscriptionStatus('recording')
+        
+        // Log any warnings about audio quality if present
+        if (result.warning) {
+          console.warn('⚠️ Recording quality warning:', result.warning)
+          // Show non-blocking warning for quality issues
+          setRecordingWarning(`ℹ️ ${result.warning}`)
+        }
+        
       } else {
-        // Clear any previous warnings
+        // Unknown result code
+        console.warn('⚠️ Unknown recording result code:', result.code)
         setRecordingWarning(null)
       }
     }
 
-    const handleCombinedRecordingStopped = (result: any): void => {
+    const handleCombinedRecordingStopped = (result: RecordingResult): void => {
       console.log('🎙️ Combined recording stopped:', result)
       setIsCombinedRecording(false)
       setRecordingWarning(null) // Clear warning when recording stops
 
-      // Load the combined recording for playback
+      // Store the recording path for saving to database
       if (result.path) {
+        setCombinedRecordingPath(result.path)
+        console.log('📁 Stored combined recording path:', result.path)
+        
+        // Load the combined recording for playback
         loadExistingRecording(result.path)
       }
     }
 
-    const handleCombinedRecordingFailed = (result: any): void => {
+    const handleCombinedRecordingFailed = (result: RecordingResult): void => {
       console.error('❌ Recording failed during operation:', result.error)
       
       // Clean up recording state
@@ -379,6 +451,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         setCurrentTime(0)
         setLiveText('')
         setTranscriptionStatus('recording')
+        
+        // Set recording start time for proper timestamps
+        recordingStartTime.current = Date.now()
 
         // Clear any previous recording
         if (recordedAudioUrl) {
@@ -386,6 +461,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
           setRecordedAudioUrl(null)
         }
         setRecordedAudioBlob(null)
+        setCombinedRecordingPath(null)
 
         // Start timer
         recordingInterval.current = setInterval(() => {
@@ -736,6 +812,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
       // Start the recording loop
       recordingLoop()
+      
+      // Set recording start time for proper timestamps
+      recordingStartTime.current = Date.now()
 
       console.log('✅ Microphone recording started (4-second complete segments)')
     } catch (error) {
@@ -1002,9 +1081,34 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const files = event.target.files
     if (files) {
-      const newFileNames = Array.from(files).map((file) => file.name)
+      const validExtensions = ['.pdf', '.doc', '.docx', '.txt', '.md', '.json', '.xml']
+      const remainingSlots = 5 - uploadedFiles.length
+      
+      if (remainingSlots <= 0) {
+        alert('Maximum of 5 context files allowed')
+        return
+      }
+      
+      const filesToProcess = Array.from(files).slice(0, remainingSlots)
+      const validFiles = filesToProcess.filter(file => {
+        const extension = '.' + file.name.split('.').pop()?.toLowerCase()
+        return validExtensions.includes(extension)
+      })
+      
+      if (validFiles.length !== filesToProcess.length) {
+        alert('Only text format files are supported: PDF, DOC, DOCX, TXT, MD, JSON, XML')
+      }
+      
+      // For now, store file names. In a full implementation, you would:
+      // 1. Save files to a dedicated context files directory
+      // 2. Store the actual file paths in the database
+      // 3. Implement file reading/processing for AI context
+      const newFileNames = validFiles.map((file) => file.name)
       setUploadedFiles((prev) => [...prev, ...newFileNames])
     }
+    
+    // Clear the input so the same file can be selected again
+    event.target.value = ''
   }
 
   const removeFile = (fileName: string): void => {
@@ -1119,13 +1223,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                     type="file"
                     id="context-files"
                     multiple
-                    accept=".pdf,.doc,.docx,.txt,.md"
+                    accept=".pdf,.doc,.docx,.txt,.md,.json,.xml"
                     onChange={handleFileUpload}
                     style={{ display: 'none' }}
                   />
                   <label htmlFor="context-files" className="btn btn-secondary btn-sm">
                     <UploadIcon size={16} />
-                    Upload Files
+                    Upload Files ({uploadedFiles.length}/5)
                   </label>
                 </div>
 
@@ -1195,6 +1299,96 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                 <PlusIcon size={16} />
                 Add Action Item
               </button>
+            </div>
+          </div>
+        )
+
+      case 'notes':
+        return (
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">Notes</h3>
+              <div style={{ marginLeft: 'auto' }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={generateAllContent}
+                  title="Generate all content with AI"
+                >
+                  <SparklesIcon size={16} />
+                  Generate All
+                </button>
+              </div>
+            </div>
+            <div className="card-body">
+              <div className="input-group">
+                <label className="demo-label">Notes (Markdown Editor)</label>
+                <div style={{ marginTop: '8px' }}>
+                  <MDEditor
+                    value={notes}
+                    onChange={(val) => setNotes(val || '')}
+                    preview="edit"
+                    hideToolbar={false}
+                    height={250}
+                    data-color-mode="light"
+                  />
+                </div>
+              </div>
+              <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Use the toolbar above for formatting. Switch between edit and preview modes using the toolbar buttons.
+              </div>
+            </div>
+          </div>
+        )
+
+      case 'summary':
+        return (
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">Summary</h3>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={generateSummary}
+                  title="Generate summary with AI"
+                >
+                  <SparklesIcon size={16} />
+                  Generate
+                </button>
+              </div>
+            </div>
+            <div className="card-body">
+              {!isSummaryAIGenerated && !summary ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: 'var(--spacing-xl)',
+                  color: 'var(--text-secondary)',
+                  background: 'var(--surface-tertiary)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '2px dashed var(--border-primary)'
+                }}>
+                  <SparklesIcon size={32} style={{ marginBottom: '12px', opacity: 0.5 }} />
+                  <p style={{ margin: '0 0 8px 0', fontWeight: '500' }}>No summary yet</p>
+                  <p style={{ margin: 0, fontSize: '14px' }}>
+                    Click "Generate" to create an AI-powered summary based on your transcript, context, and notes.
+                  </p>
+                </div>
+              ) : (
+                <div className="input-group">
+                  <textarea
+                    className="input textarea input-floating"
+                    placeholder=" "
+                    value={summary}
+                    onChange={(e) => setSummary(e.target.value)}
+                    style={{ minHeight: '150px' }}
+                  />
+                  <label className="input-label">Meeting Summary</label>
+                </div>
+              )}
+              {summary && (
+                <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  {isSummaryAIGenerated ? '🤖 AI-generated summary - you can edit it above' : 'Custom summary'}
+                </div>
+              )}
             </div>
           </div>
         )
@@ -1271,8 +1465,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
       let recordingPath = meeting.recordingPath || ''
 
+      // For combined recordings, use the stored path
+      if (combinedRecordingPath) {
+        recordingPath = combinedRecordingPath
+        console.log('📁 Using combined recording path:', recordingPath)
+      }
       // Save the audio file if we have recorded audio and no existing path
-      if (recordedAudioBlob && !recordingPath) {
+      else if (recordedAudioBlob && !recordingPath) {
         console.log('💾 Saving new audio recording...')
         try {
           const arrayBuffer = await recordedAudioBlob.arrayBuffer()
@@ -1305,11 +1504,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         description,
         tags,
         context: contextText,
+        context_files: uploadedFiles.slice(0, 5), // Limit to 5 files
         actionItems,
         transcript,
         duration: formatTime(totalTime),
         recordingPath,
-        summary: '', // Could be generated later
+        notes,
+        summary,
         updatedAt: new Date().toISOString()
       }
 
@@ -1344,6 +1545,81 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.error('Error saving meeting data:', error)
     } finally {
       setSavingMeeting(false)
+    }
+  }
+
+  // AI generation functions
+  const generateSummary = async (): Promise<void> => {
+    if (transcript.length === 0) {
+      alert('No transcript available to generate summary from')
+      return
+    }
+
+    try {
+      console.log('🤖 Generating summary with Gemini...')
+      const settings = await window.api.db.getSettings()
+      
+      const options = {
+        transcript,
+        globalContext: settings.globalContext || '',
+        meetingContext: contextText,
+        notes,
+        existingTitle: title
+      }
+
+      const result = await (window.api as any).gemini.generateSummary(options)
+      
+      if (result.success && result.summary) {
+        setSummary(result.summary)
+        setIsSummaryAIGenerated(true)
+        console.log('✅ Summary generated successfully')
+      } else {
+        console.error('Failed to generate summary:', result.error)
+        alert(`Failed to generate summary: ${result.error}`)
+      }
+    } catch (error) {
+      console.error('Error generating summary:', error)
+      alert('Failed to generate summary. Please check your Gemini API key in settings.')
+    }
+  }
+
+  const generateAllContent = async (): Promise<void> => {
+    if (transcript.length === 0) {
+      alert('No transcript available to generate content from')
+      return
+    }
+
+    try {
+      console.log('🤖 Generating all content with Gemini...')
+      const settings = await window.api.db.getSettings()
+      
+      const options = {
+        transcript,
+        globalContext: settings.globalContext || '',
+        meetingContext: contextText,
+        notes,
+        existingTitle: title
+      }
+
+      const result = await (window.api as any).gemini.generateContent(options)
+      
+      if (result.success && result.data) {
+        const { summary: newSummary, description: newDescription, actionItems: newActionItems, tags: newTags } = result.data
+        
+        setSummary(newSummary)
+        setIsSummaryAIGenerated(true)
+        setDescription(newDescription)
+        setActionItems(newActionItems)
+        setTags(newTags)
+        
+        console.log('✅ All content generated successfully')
+      } else {
+        console.error('Failed to generate content:', result.error)
+        alert(`Failed to generate content: ${result.error}`)
+      }
+    } catch (error) {
+      console.error('Error generating content:', error)
+      alert('Failed to generate content. Please check your Gemini API key in settings.')
     }
   }
 
@@ -1690,6 +1966,20 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
           >
             <ClipboardListIcon size={16} />
             Actions
+          </button>
+          <button
+            className={`tab ${activeSidebarTab === 'notes' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarTab('notes')}
+          >
+            <BookOpenIcon size={16} />
+            Notes
+          </button>
+          <button
+            className={`tab ${activeSidebarTab === 'summary' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarTab('summary')}
+          >
+            <FileTextIcon size={16} />
+            Summary
           </button>
         </div>
 

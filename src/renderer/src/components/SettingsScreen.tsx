@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   FolderIcon,
   MicIcon,
@@ -6,13 +6,74 @@ import {
   ExternalLinkIcon,
   HelpCircleIcon,
   Edit2Icon,
-  FileTextIcon
+  FileTextIcon,
+  SaveIcon,
+  CheckIcon
 } from 'lucide-react'
+import { Settings } from '../types/database'
 
 type TabType = 'general' | 'shortcuts' | 'transcription' | 'context' | 'about'
 
 const SettingsScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('general')
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false)
+
+  // Load settings on component mount
+  useEffect(() => {
+    const loadSettings = async (): Promise<void> => {
+      try {
+        const loadedSettings = await window.api.db.getSettings()
+        setSettings(loadedSettings)
+      } catch (error) {
+        console.error('Failed to load settings:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadSettings()
+  }, [])
+
+  // Save settings to database
+  const handleSaveSettings = async (): Promise<void> => {
+    if (!settings) return
+
+    try {
+      setSaving(true)
+      await window.api.db.updateSettings(settings)
+      setSaveSuccess(true)
+      setTimeout(() => setSaveSuccess(false), 2000)
+    } catch (error) {
+      console.error('Failed to save settings:', error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Update settings state
+  const updateSetting = (key: keyof Settings, value: unknown): void => {
+    if (!settings) return
+    setSettings(prev => prev ? { ...prev, [key]: value } : null)
+  }
+
+  if (loading) {
+    return (
+      <div style={{ padding: 'var(--spacing-xl)', textAlign: 'center' }}>
+        <p>Loading settings...</p>
+      </div>
+    )
+  }
+
+  if (!settings) {
+    return (
+      <div style={{ padding: 'var(--spacing-xl)', textAlign: 'center' }}>
+        <p>Failed to load settings</p>
+      </div>
+    )
+  }
 
   const renderTabContent = (): React.ReactNode => {
     switch (activeTab) {
@@ -34,8 +95,8 @@ const SettingsScreen: React.FC = () => {
                       <input
                         type="text"
                         className="input"
-                        value="~/Documents/Friday Recordings"
-                        readOnly
+                        value={settings.defaultSaveLocation}
+                        onChange={(e) => updateSetting('defaultSaveLocation', e.target.value)}
                         style={{ minWidth: '200px' }}
                       />
                       <button className="btn btn-secondary">
@@ -53,7 +114,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.launchAtLogin}
+                        onChange={(e) => updateSetting('launchAtLogin', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -65,7 +130,12 @@ const SettingsScreen: React.FC = () => {
                     <p>Choose your preferred appearance</p>
                   </div>
                   <div className="settings-control">
-                    <select className="input" style={{ minWidth: '150px' }}>
+                    <select 
+                      className="input" 
+                      style={{ minWidth: '150px' }}
+                      value={settings.theme}
+                      onChange={(e) => updateSetting('theme', e.target.value as 'auto' | 'light' | 'dark')}
+                    >
                       <option value="auto">Auto (System)</option>
                       <option value="light">Light</option>
                       <option value="dark">Dark</option>
@@ -80,7 +150,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.showInMenuBar}
+                        onChange={(e) => updateSetting('showInMenuBar', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -93,7 +167,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.autoSaveRecordings}
+                        onChange={(e) => updateSetting('autoSaveRecordings', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -211,7 +289,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.realtimeTranscription}
+                        onChange={(e) => updateSetting('realtimeTranscription', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -223,7 +305,12 @@ const SettingsScreen: React.FC = () => {
                     <p>Primary language for speech recognition</p>
                   </div>
                   <div className="settings-control">
-                    <select className="input" style={{ minWidth: '150px' }}>
+                    <select 
+                      className="input" 
+                      style={{ minWidth: '150px' }}
+                      value={settings.transcriptionLanguage}
+                      onChange={(e) => updateSetting('transcriptionLanguage', e.target.value)}
+                    >
                       <option value="en-US">English (US)</option>
                       <option value="en-GB">English (UK)</option>
                       <option value="es-ES">Spanish</option>
@@ -246,13 +333,16 @@ const SettingsScreen: React.FC = () => {
                         type="password"
                         className="input input-floating"
                         placeholder=" "
-                        defaultValue="sk-..."
+                        value={settings.geminiApiKey}
+                        onChange={(e) => updateSetting('geminiApiKey', e.target.value)}
                       />
                       <label className="input-label">API Key</label>
                     </div>
                     <div style={{ marginTop: '8px' }}>
                       <a
-                        href="#"
+                        href="https://makersuite.google.com/app/apikey"
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-sm"
                         style={{
                           color: 'var(--interactive-primary)',
@@ -276,7 +366,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.autoGenerateActionItems}
+                        onChange={(e) => updateSetting('autoGenerateActionItems', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -289,7 +383,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.autoSuggestTags}
+                        onChange={(e) => updateSetting('autoSuggestTags', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -321,7 +419,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.enableGlobalContext}
+                        onChange={(e) => updateSetting('enableGlobalContext', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -332,7 +434,8 @@ const SettingsScreen: React.FC = () => {
                     className="input textarea input-floating"
                     placeholder=" "
                     style={{ minHeight: '120px' }}
-                    defaultValue="I am a product manager at a tech startup. We're building a mobile app for productivity. Our team includes developers, designers, and data analysts. We use agile methodology with weekly sprints."
+                    value={settings.globalContext}
+                    onChange={(e) => updateSetting('globalContext', e.target.value)}
                   />
                   <label className="input-label">Global Context</label>
                 </div>
@@ -364,7 +467,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.includeContextInTranscriptions}
+                        onChange={(e) => updateSetting('includeContextInTranscriptions', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -377,7 +484,11 @@ const SettingsScreen: React.FC = () => {
                   </div>
                   <div className="settings-control">
                     <label className="toggle">
-                      <input type="checkbox" defaultChecked />
+                      <input 
+                        type="checkbox" 
+                        checked={settings.includeContextInActionItems}
+                        onChange={(e) => updateSetting('includeContextInActionItems', e.target.checked)}
+                      />
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
@@ -487,16 +598,16 @@ const SettingsScreen: React.FC = () => {
 
               <div
                 style={{
-                  marginTop: '32px',
+                  marginTop: '24px',
                   padding: '16px',
-                  background: 'var(--surface-secondary)',
+                  background: 'var(--gray-light)',
                   borderRadius: 'var(--radius-md)',
+                  fontSize: '12px',
+                  color: 'var(--text-secondary)',
                   textAlign: 'center'
                 }}
               >
-                <p className="text-sm text-secondary" style={{ margin: 0 }}>
-                  Made with ❤️ for productive conversations
-                </p>
+                © 2024 Friday. All rights reserved.
               </div>
             </div>
           </div>
@@ -508,7 +619,36 @@ const SettingsScreen: React.FC = () => {
   }
 
   return (
-    <div className="settings-container">
+    <div style={{ padding: 'var(--spacing-xl)' }}>
+      {/* Header */}
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        marginBottom: 'var(--spacing-xl)' 
+      }}>
+        <h1 style={{ margin: 0 }}>Settings</h1>
+        <button
+          className="btn btn-primary"
+          onClick={handleSaveSettings}
+          disabled={saving}
+        >
+          {saving ? (
+            'Saving...'
+          ) : saveSuccess ? (
+            <>
+              <CheckIcon size={16} />
+              Saved
+            </>
+          ) : (
+            <>
+              <SaveIcon size={16} />
+              Save Settings
+            </>
+          )}
+        </button>
+      </div>
+
       {/* Tab Navigation */}
       <div className="tabs">
         <button

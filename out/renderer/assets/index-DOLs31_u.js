@@ -89557,6 +89557,46 @@ Please grant screen recording permission in System Settings > Privacy & Security
 };
 const SettingsScreen = () => {
   const [activeTab, setActiveTab] = reactExports.useState("general");
+  const [settings, setSettings] = reactExports.useState(null);
+  const [loading, setLoading] = reactExports.useState(true);
+  const [saving, setSaving] = reactExports.useState(false);
+  const [saveSuccess, setSaveSuccess] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const loadedSettings = await window.api.db.getSettings();
+        setSettings(loadedSettings);
+      } catch (error) {
+        console.error("Failed to load settings:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadSettings();
+  }, []);
+  const handleSaveSettings = async () => {
+    if (!settings) return;
+    try {
+      setSaving(true);
+      await window.api.db.updateSettings(settings);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2e3);
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const updateSetting = (key2, value) => {
+    if (!settings) return;
+    setSettings((prev) => prev ? { ...prev, [key2]: value } : null);
+  };
+  if (loading) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { padding: "var(--spacing-xl)", textAlign: "center" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Loading settings..." }) });
+  }
+  if (!settings) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { padding: "var(--spacing-xl)", textAlign: "center" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Failed to load settings" }) });
+  }
   const renderTabContent = () => {
     switch (activeTab) {
       case "general":
@@ -89574,8 +89614,8 @@ const SettingsScreen = () => {
                   {
                     type: "text",
                     className: "input",
-                    value: "~/Documents/Friday Recordings",
-                    readOnly: true,
+                    value: settings.defaultSaveLocation,
+                    onChange: (e) => updateSetting("defaultSaveLocation", e.target.value),
                     style: { minWidth: "200px" }
                   }
                 ),
@@ -89591,7 +89631,14 @@ const SettingsScreen = () => {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Automatically start Friday when you log in to your Mac" })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "input",
+                  {
+                    type: "checkbox",
+                    checked: settings.launchAtLogin,
+                    onChange: (e) => updateSetting("launchAtLogin", e.target.checked)
+                  }
+                ),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
               ] }) })
             ] }),
@@ -89600,11 +89647,20 @@ const SettingsScreen = () => {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: "Theme" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Choose your preferred appearance" })
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "input", style: { minWidth: "150px" }, children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "auto", children: "Auto (System)" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "light", children: "Light" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "dark", children: "Dark" })
-              ] }) })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "select",
+                {
+                  className: "input",
+                  style: { minWidth: "150px" },
+                  value: settings.theme,
+                  onChange: (e) => updateSetting("theme", e.target.value),
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "auto", children: "Auto (System)" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "light", children: "Light" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "dark", children: "Dark" })
+                  ]
+                }
+              ) })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-row", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-label", children: [
@@ -89612,7 +89668,14 @@ const SettingsScreen = () => {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Display Friday icon in the macOS menu bar" })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "input",
+                  {
+                    type: "checkbox",
+                    checked: settings.showInMenuBar,
+                    onChange: (e) => updateSetting("showInMenuBar", e.target.checked)
+                  }
+                ),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
               ] }) })
             ] }),
@@ -89622,7 +89685,14 @@ const SettingsScreen = () => {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Automatically save recordings when they stop" })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "input",
+                  {
+                    type: "checkbox",
+                    checked: settings.autoSaveRecordings,
+                    onChange: (e) => updateSetting("autoSaveRecordings", e.target.checked)
+                  }
+                ),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
               ] }) })
             ] })
@@ -89727,7 +89797,14 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Generate transcript while recording (requires internet)" })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: settings.realtimeTranscription,
+                      onChange: (e) => updateSetting("realtimeTranscription", e.target.checked)
+                    }
+                  ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
                 ] }) })
               ] }),
@@ -89736,15 +89813,24 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: "Transcription Language" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Primary language for speech recognition" })
                 ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "input", style: { minWidth: "150px" }, children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "en-US", children: "English (US)" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "en-GB", children: "English (UK)" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "es-ES", children: "Spanish" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "fr-FR", children: "French" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "de-DE", children: "German" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "ja-JP", children: "Japanese" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "zh-CN", children: "Chinese (Simplified)" })
-                ] }) })
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "select",
+                  {
+                    className: "input",
+                    style: { minWidth: "150px" },
+                    value: settings.transcriptionLanguage,
+                    onChange: (e) => updateSetting("transcriptionLanguage", e.target.value),
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "en-US", children: "English (US)" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "en-GB", children: "English (UK)" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "es-ES", children: "Spanish" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "fr-FR", children: "French" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "de-DE", children: "German" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "ja-JP", children: "Japanese" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "zh-CN", children: "Chinese (Simplified)" })
+                    ]
+                  }
+                ) })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-row", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-label", children: [
@@ -89759,7 +89845,8 @@ const SettingsScreen = () => {
                         type: "password",
                         className: "input input-floating",
                         placeholder: " ",
-                        defaultValue: "sk-..."
+                        value: settings.geminiApiKey,
+                        onChange: (e) => updateSetting("geminiApiKey", e.target.value)
                       }
                     ),
                     /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "input-label", children: "API Key" })
@@ -89767,7 +89854,9 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { marginTop: "8px" }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
                     "a",
                     {
-                      href: "#",
+                      href: "https://makersuite.google.com/app/apikey",
+                      target: "_blank",
+                      rel: "noopener noreferrer",
                       className: "text-sm",
                       style: {
                         color: "var(--interactive-primary)",
@@ -89790,7 +89879,14 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Automatically extract action items from transcripts" })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: settings.autoGenerateActionItems,
+                      onChange: (e) => updateSetting("autoGenerateActionItems", e.target.checked)
+                    }
+                  ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
                 ] }) })
               ] }),
@@ -89800,7 +89896,14 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Suggest relevant tags based on transcript content" })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: settings.autoSuggestTags,
+                      onChange: (e) => updateSetting("autoSuggestTags", e.target.checked)
+                    }
+                  ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
                 ] }) })
               ] })
@@ -89822,7 +89925,14 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Add persistent context information to all recordings" })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: settings.enableGlobalContext,
+                      onChange: (e) => updateSetting("enableGlobalContext", e.target.checked)
+                    }
+                  ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
                 ] }) })
               ] }),
@@ -89833,7 +89943,8 @@ const SettingsScreen = () => {
                     className: "input textarea input-floating",
                     placeholder: " ",
                     style: { minHeight: "120px" },
-                    defaultValue: "I am a product manager at a tech startup. We're building a mobile app for productivity. Our team includes developers, designers, and data analysts. We use agile methodology with weekly sprints."
+                    value: settings.globalContext,
+                    onChange: (e) => updateSetting("globalContext", e.target.value)
                   }
                 ),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "input-label", children: "Global Context" })
@@ -89866,7 +89977,14 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Automatically include context when generating transcripts" })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: settings.includeContextInTranscriptions,
+                      onChange: (e) => updateSetting("includeContextInTranscriptions", e.target.checked)
+                    }
+                  ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
                 ] }) })
               ] }),
@@ -89876,7 +89994,14 @@ const SettingsScreen = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Use context when extracting action items from recordings" })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-control", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "toggle", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", defaultChecked: true }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: settings.includeContextInActionItems,
+                      onChange: (e) => updateSetting("includeContextInActionItems", e.target.checked)
+                    }
+                  ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toggle-slider" })
                 ] }) })
               ] })
@@ -89969,13 +90094,15 @@ const SettingsScreen = () => {
               "div",
               {
                 style: {
-                  marginTop: "32px",
+                  marginTop: "24px",
                   padding: "16px",
-                  background: "var(--surface-secondary)",
+                  background: "var(--gray-light)",
                   borderRadius: "var(--radius-md)",
+                  fontSize: "12px",
+                  color: "var(--text-secondary)",
                   textAlign: "center"
                 },
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-secondary", style: { margin: 0 }, children: "Made with ❤️ for productive conversations" })
+                children: "© 2024 Friday. All rights reserved."
               }
             )
           ] })
@@ -89984,7 +90111,30 @@ const SettingsScreen = () => {
         return null;
     }
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-container", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { padding: "var(--spacing-xl)" }, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: "var(--spacing-xl)"
+    }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { style: { margin: 0 }, children: "Settings" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "btn btn-primary",
+          onClick: handleSaveSettings,
+          disabled: saving,
+          children: saving ? "Saving..." : saveSuccess ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 16 }),
+            "Saved"
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Save, { size: 16 }),
+            "Save Settings"
+          ] })
+        }
+      )
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tabs", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",

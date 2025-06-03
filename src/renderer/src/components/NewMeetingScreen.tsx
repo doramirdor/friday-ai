@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ArrowLeftIcon, SaveIcon, MicIcon, XIcon } from 'lucide-react'
+import { ArrowLeftIcon, SaveIcon, XIcon } from 'lucide-react'
 import { Meeting } from '../types/database'
 
 interface NewMeetingScreenProps {
@@ -227,26 +227,6 @@ const NewMeetingScreen: React.FC<NewMeetingScreenProps> = ({ onBack, onSave }) =
             <label className="input-label">Context</label>
           </div>
         </div>
-      </div>
-
-      {/* Help Text */}
-      <div
-        style={{
-          marginTop: 'var(--spacing-lg)',
-          padding: 'var(--spacing-lg)',
-          background: 'var(--surface-secondary)',
-          borderRadius: 'var(--radius-md)'
-        }}
-      >
-        <div className="flex gap-sm items-center mb-sm">
-          <MicIcon size={16} color="var(--text-secondary)" />
-          <span className="text-sm font-medium text-secondary">Quick Start</span>
-        </div>
-        <p className="text-sm text-secondary" style={{ margin: 0, lineHeight: '1.4' }}>
-          Create your meeting details and you&apos;ll be taken to the recording screen where you can
-          start recording immediately. Only the title is required - you can always add more
-          information later.
-        </p>
       </div>
     </div>
   )

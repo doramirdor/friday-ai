@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { SaveIcon, MicIcon, XIcon } from 'lucide-react'
+import { SaveIcon, XIcon } from 'lucide-react'
 import { Meeting } from '../types/database'
 
 interface NewMeetingDialogProps {
@@ -126,10 +126,16 @@ const NewMeetingDialog: React.FC<NewMeetingDialogProps> = ({ isOpen, onClose, on
       <div
         className="modal"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '600px', width: '90vw' }}
+        style={{ 
+          maxWidth: '600px', 
+          width: '90vw',
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
       >
         {/* Modal Header */}
-        <div className="modal-header">
+        <div className="modal-header" style={{ flexShrink: 0 }}>
           <h3 className="modal-title">New Meeting</h3>
           <button className="btn btn-ghost btn-icon" onClick={handleClose}>
             <XIcon size={20} />
@@ -137,7 +143,11 @@ const NewMeetingDialog: React.FC<NewMeetingDialogProps> = ({ isOpen, onClose, on
         </div>
 
         {/* Modal Body */}
-        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+        <div className="modal-body" style={{ 
+          flex: 1, 
+          overflowY: 'auto',
+          paddingBottom: 'var(--spacing-md)'
+        }}>
           {/* Title - Required */}
           <div className="input-group">
             <input
@@ -226,30 +236,14 @@ const NewMeetingDialog: React.FC<NewMeetingDialogProps> = ({ isOpen, onClose, on
             />
             <label className="input-label">Context</label>
           </div>
-
-          {/* Help Text */}
-          <div
-            style={{
-              marginTop: 'var(--spacing-lg)',
-              padding: 'var(--spacing-md)',
-              background: 'var(--surface-secondary)',
-              borderRadius: 'var(--radius-md)'
-            }}
-          >
-            <div className="flex gap-sm items-center mb-sm">
-              <MicIcon size={16} color="var(--text-secondary)" />
-              <span className="text-sm font-medium text-secondary">Quick Start</span>
-            </div>
-            <p className="text-sm text-secondary" style={{ margin: 0, lineHeight: '1.4' }}>
-              Create your meeting details and you&apos;ll be taken to the recording screen where you
-              can start recording immediately. Only the title is required - you can always add more
-              information later.
-            </p>
-          </div>
         </div>
 
         {/* Modal Footer */}
-        <div className="modal-footer">
+        <div className="modal-footer" style={{ 
+          flexShrink: 0,
+          borderTop: '1px solid var(--border-primary)',
+          marginTop: 'auto'
+        }}>
           <button className="btn btn-secondary" onClick={handleClose}>
             Cancel
           </button>

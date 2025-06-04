@@ -923,7 +923,7 @@ async function startCombinedRecording(recordingPath, filename) {
           }
           resolve({ success: false, error: "Recording start timeout" });
         }
-      }, 1e4);
+      }, 3e4);
     }).catch((error) => {
       console.error("Failed to get settings:", error);
       resolve({ success: false, error: "Failed to get settings" });

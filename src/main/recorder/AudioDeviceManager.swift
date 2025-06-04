@@ -349,17 +349,58 @@ class AudioDeviceManager {
             &propAddr, 0, nil, &dataSize, &ids)
 
         for id in ids {
+            // Check if it's a built-in device
             var transport: UInt32 = 0
             var size = UInt32(MemoryLayout<UInt32>.size)
             var tProp = AudioObjectPropertyAddress(
                 mSelector: kAudioDevicePropertyTransportType,
                 mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMain)
-            if AudioObjectGetPropertyData(id, &tProp, 0, nil, &size, &transport) == noErr,
-               transport == kAudioDeviceTransportTypeBuiltIn {
-                return id
+            
+            guard AudioObjectGetPropertyData(id, &tProp, 0, nil, &size, &transport) == noErr,
+                  transport == kAudioDeviceTransportTypeBuiltIn else {
+                continue
+            }
+            
+            // Check if device has OUTPUT streams (not input)
+            var outputChannelsAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreamConfiguration,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            
+            var propsize = UInt32(MemoryLayout<AudioBufferList>.size)
+            var bufferList = AudioBufferList()
+            
+            let result = AudioObjectGetPropertyData(
+                id,
+                &outputChannelsAddress,
+                0,
+                nil,
+                &propsize,
+                &bufferList
+            )
+            
+            // Only return devices that have output capability
+            if result == noErr && bufferList.mNumberBuffers > 0 {
+                // Additional check: make sure it's not a microphone by checking the name
+                if let deviceName = getDeviceName(id) {
+                    print("   🔍 Found built-in output device: '\(deviceName)' (ID: \(id))")
+                    
+                    // Skip microphone devices
+                    if deviceName.lowercased().contains("microphone") || 
+                       deviceName.lowercased().contains("mic") {
+                        print("   ⏭️ Skipping microphone device")
+                        continue
+                    }
+                    
+                    print("   ✅ Selected built-in output device: '\(deviceName)'")
+                    return id
+                }
             }
         }
+        
+        print("   ❌ No built-in output speakers found")
         return nil
     }
     

@@ -1101,15 +1101,54 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
             print("✅ Configured minimal screen content filter for microphone-only")
         }
 
+        // For combined recording, send success response early since microphone is already working
+        if audioSource == "both" {
+            let currentDevice = getCurrentAudioDevice()
+            let outputPath = finalMp3Path ?? tempWavPath ?? ""
+            
+            if bluetoothWorkaroundEnabled {
+                print("✅ Combined recording ready (Bluetooth workaround enabled)")
+                sendResponse([
+                    "code": "RECORDING_STARTED",
+                    "path": outputPath,
+                    "timestamp": ISO8601DateFormatter().string(from: Date()),
+                    "warning": "Recording with Bluetooth workaround enabled - system audio routed through built-in speakers",
+                    "recommendation": "You will continue hearing audio through Bluetooth while system audio is captured"
+                ])
+            } else if currentDevice.contains("AirPods") || currentDevice.contains("Bluetooth") {
+                print("✅ Combined recording ready (Bluetooth limitations noted)")
+                sendResponse([
+                    "code": "RECORDING_STARTED",
+                    "path": outputPath,
+                    "timestamp": ISO8601DateFormatter().string(from: Date()),
+                    "warning": "Recording both microphone and system audio, but system audio quality may be limited with Bluetooth devices",
+                    "recommendation": "For optimal system audio quality, consider switching to built-in speakers"
+                ])
+            } else {
+                print("✅ Combined recording ready (full system audio)")
+                sendResponse([
+                    "code": "RECORDING_STARTED",
+                    "path": outputPath,
+                    "timestamp": ISO8601DateFormatter().string(from: Date())
+                ])
+            }
+        }
+
         Task { 
             do {
                 try await initiateRecording(with: screenContentFilter)
             } catch {
                 print("❌ Failed to initiate recording: \(error.localizedDescription)")
-                ResponseHandler.returnResponse([
-                    "code": "RECORDING_FAILED",
-                    "error": "Failed to initiate recording: \(error.localizedDescription)"
-                ])
+                
+                // Only send error response if we haven't already sent a success response for combined recording
+                if audioSource != "both" {
+                    ResponseHandler.returnResponse([
+                        "code": "RECORDING_FAILED",
+                        "error": "Failed to initiate recording: \(error.localizedDescription)"
+                    ])
+                } else {
+                    print("⚠️ System audio failed for combined recording, but microphone recording continues")
+                }
             }
         }
     }
@@ -1251,30 +1290,11 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
             
             // System audio capture succeeded!
             if audioSource == "both" {
-                // Check current audio device for potential issues but continue with full recording
-                let currentDevice = getCurrentAudioDevice()
-                if currentDevice.contains("AirPods") || currentDevice.contains("Bluetooth") {
-                    print("⚠️  Bluetooth audio device detected: \(currentDevice)")
-                    print("💡 Note: Both microphone and system audio are recording, but system audio quality may be limited")
-                    
-                    let warning = "Recording both microphone and system audio, but system audio quality may be limited with Bluetooth devices."
-                    let recommendation = "For optimal system audio quality, consider switching to built-in speakers."
-                    
-                    sendResponse([
-                        "code": "RECORDING_STARTED",
-                        "path": outputPath,
-                        "timestamp": ISO8601DateFormatter().string(from: Date()),
-                        "warning": warning,
-                        "recommendation": recommendation
-                    ])
-                } else {
-                    sendResponse([
-                        "code": "RECORDING_STARTED", 
-                        "path": outputPath,
-                        "timestamp": ISO8601DateFormatter().string(from: Date())
-                    ])
-                }
+                // For combined recording, success response was already sent in setupRecordingEnvironment
+                // Just log the system audio success
+                print("✅ System audio stream started successfully for combined recording")
             } else {
+                // For system-only recording, send the success response now
                 sendResponse([
                     "code": "RECORDING_STARTED", 
                     "path": outputPath,

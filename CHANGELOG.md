@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added graceful fallback to microphone-only for combined recording when system audio fails
   - Enhanced user feedback with clear error messages, causes, and actionable recommendations
 
+- **Recording Startup Timeout Issue**: Fixed "Recording start timeout" error for Bluetooth audio setups
+  - Increased recording startup timeout from 10 seconds to 30 seconds
+  - Bluetooth workaround setup (multi-output device creation) can take 10-15 seconds to properly initialize
+  - Prevents timeout errors when using AirPods or other Bluetooth audio devices
+  - Allows sufficient time for audio device configuration and system audio routing setup
+
 ### Added
 - **Comprehensive System Audio Troubleshooting Guide**
   - Detailed documentation of common system audio capture issues

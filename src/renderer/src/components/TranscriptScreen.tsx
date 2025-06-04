@@ -1,7 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import MDEditor from '@uiw/react-md-editor'
-import '@uiw/react-md-editor/markdown-editor.css';
-import '@uiw/react-markdown-preview/markdown.css';
+import QuillEditor from './QuillEditor'
 import {
   PlayIcon,
   PauseIcon,
@@ -1414,20 +1412,18 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
             </div>
             <div className="card-body">
               <div className="input-group">
-                <label className="demo-label">Notes (Markdown Editor)</label>
+                <label className="demo-label">Notes (Rich Text Editor)</label>
                 <div style={{ marginTop: '8px' }}>
-                  <MDEditor
+                  <QuillEditor
                     value={notes}
                     onChange={(val) => setNotes(val || '')}
-                    preview="edit"
-                    hideToolbar={false}
+                    placeholder="Write your notes here..."
                     height={250}
-                    data-color-mode="light"
                   />
                 </div>
               </div>
               <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Use the toolbar above for formatting. Switch between edit and preview modes using the toolbar buttons.
+                Use the toolbar above for rich text formatting. Bold, italic, headers, lists, and more are available.
               </div>
             </div>
           </div>
@@ -1467,12 +1463,11 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
                 </div>
               ) : (
                 <div className="input-group">
-                  <textarea
-                    className="input textarea input-floating"
-                    placeholder=" "
+                  <QuillEditor
                     value={summary}
-                    onChange={(e) => setSummary(e.target.value)}
-                    style={{ minHeight: '150px' }}
+                    onChange={(content) => setSummary(content)}
+                    placeholder="Meeting summary will appear here..."
+                    height={150}
                   />
                   <label className="input-label">Meeting Summary</label>
                 </div>

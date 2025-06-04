@@ -54,6 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced queue processing with adaptive wait times based on service state
   - Detailed logging for transcription service debugging and troubleshooting
 
+- **Global Keyboard Shortcuts for Recording Control**
+  - `⌘+L` (Cmd+L): Start/Stop Recording
+    - Creates new meeting and starts recording if not in transcript view
+    - Toggles recording state when in transcript view
+  - `⌘+Shift+N` (Cmd+Shift+N): Quick Note
+    - Adds timestamped note during recording
+    - Switches to notes tab and inserts `[MM:SS] ` timestamp
+    - Only works when in transcript view
+  - `⌘+P` (Cmd+P): Pause/Resume Recording
+    - Placeholder functionality (logs message for now)
+    - Will be implemented in future version for streaming transcription
+
 ### Changed
 - **React Component Optimization**
   - Moved transcription result listener to one-time initialization effect to prevent duplicates

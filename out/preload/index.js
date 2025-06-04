@@ -38,7 +38,7 @@ const api = {
   swiftRecorder: {
     // Check if Swift recorder is available
     checkAvailability: () => electron.ipcRenderer.invoke("swift-recorder:check-availability"),
-    // Start combined recording (system audio + microphone)
+    // Start combined recording (system + microphone)
     startCombinedRecording: (recordingPath, filename) => electron.ipcRenderer.invoke("swift-recorder:start-combined-recording", recordingPath, filename),
     // Stop combined recording
     stopCombinedRecording: () => electron.ipcRenderer.invoke("swift-recorder:stop-combined-recording"),
@@ -59,12 +59,28 @@ const api = {
       electron.ipcRenderer.removeAllListeners("combined-recording-failed");
     }
   },
+  // Chunked Recording API for large recordings
+  chunkedRecording: {
+    // Start chunked recording for a meeting
+    start: (meetingId) => electron.ipcRenderer.invoke("chunked-recording:start", meetingId),
+    // Add a chunk to the recording
+    addChunk: (meetingId, audioBuffer) => electron.ipcRenderer.invoke("chunked-recording:add-chunk", meetingId, audioBuffer),
+    // Stop chunked recording
+    stop: (meetingId) => electron.ipcRenderer.invoke("chunked-recording:stop", meetingId),
+    // Load chunks for playback
+    loadChunks: (chunkPaths) => electron.ipcRenderer.invoke("chunked-recording:load-chunks", chunkPaths)
+  },
   // Gemini AI API
   gemini: {
     // Generate comprehensive meeting content (summary, description, action items, tags)
     generateContent: (options) => electron.ipcRenderer.invoke("gemini:generate-content", options),
     // Generate summary only
     generateSummary: (options) => electron.ipcRenderer.invoke("gemini:generate-summary", options)
+  },
+  electron: {
+    dialog: {
+      showOpenDialog: (options) => electron.ipcRenderer.invoke("dialog:showOpenDialog", options)
+    }
   }
 };
 if (process.contextIsolated) {

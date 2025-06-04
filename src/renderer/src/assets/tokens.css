@@ -110,6 +110,11 @@
   --gray-900: #ffffff;
 
   /* Green Accent Colors remain the same for consistency */
+  --green-primary: #28c76f;
+  --green-hover: #5bd48d;
+  --green-dark: #1d9f55;
+  --green-light: rgba(40, 199, 111, 0.1);
+  --green-light-hover: rgba(40, 199, 111, 0.15);
 
   /* Semantic Colors */
   --surface: var(--gray-50);
@@ -119,6 +124,7 @@
 
   --border: var(--gray-100);
   --border-secondary: var(--gray-200);
+  --border-focus: var(--green-primary);
 
   --text-primary: var(--gray-900);
   --text-secondary: var(--gray-500);
@@ -126,8 +132,17 @@
   --text-inverse: var(--gray-50);
 
   /* Interactive Colors */
+  --interactive-primary: var(--green-primary);
+  --interactive-primary-hover: var(--green-hover);
+  --interactive-primary-active: var(--green-dark);
   --interactive-secondary: var(--gray-100);
   --interactive-secondary-hover: var(--gray-200);
+
+  /* Status Colors */
+  --status-success: var(--green-primary);
+  --status-error: #ff3b30;
+  --status-warning: #ff9500;
+  --status-info: #007aff;
 
   /* Overlays */
   --overlay: rgba(0, 0, 0, 0.8);

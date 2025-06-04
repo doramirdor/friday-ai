@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -142,139 +142,150 @@ async function startCombinedRecording(
       return
     }
 
-    // Resolve home directory if path starts with ~
-    const resolvedPath = recordingPath.startsWith('~/') 
-      ? path.join(os.homedir(), recordingPath.slice(2))
-      : recordingPath
+    // Get settings to use default save location if none provided
+    databaseService.getSettings()
+      .then(settings => {
+        // Use provided path or default from settings
+        const finalPath = recordingPath || settings.defaultSaveLocation || path.join(os.homedir(), 'Friday Recordings')
+        
+        // Resolve home directory if path starts with ~
+        const resolvedPath = finalPath.startsWith('~/') 
+          ? path.join(os.homedir(), finalPath.slice(2))
+          : finalPath
 
-    // Ensure the directory exists
-    if (!fs.existsSync(resolvedPath)) {
-      fs.mkdirSync(resolvedPath, { recursive: true })
-    }
+        // Ensure the directory exists
+        if (!fs.existsSync(resolvedPath)) {
+          fs.mkdirSync(resolvedPath, { recursive: true })
+        }
 
-    const recorderPath = path.join(process.cwd(), 'Recorder')
-    const args = ['--record', resolvedPath, '--source', 'both']
+        const recorderPath = path.join(process.cwd(), 'Recorder')
+        const args = ['--record', resolvedPath, '--source', 'both']
 
-    if (filename) {
-      args.push('--filename', filename)
-    }
+        if (filename) {
+          args.push('--filename', filename)
+        }
 
-    console.log('🎙️ Starting combined recording with Swift recorder...')
-    console.log('Command:', recorderPath, args.join(' '))
+        console.log('🎙️ Starting combined recording with Swift recorder...')
+        console.log('Command:', recorderPath, args.join(' '))
 
-    swiftRecorderProcess = spawn(recorderPath, args, {
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+        swiftRecorderProcess = spawn(recorderPath, args, {
+          stdio: ['pipe', 'pipe', 'pipe']
+        })
 
-    let hasStarted = false
+        let hasStarted = false
 
-    swiftRecorderProcess.stdout?.on('data', (data) => {
-      const lines = data
-        .toString()
-        .split('\n')
-        .filter((line) => line.trim())
+        swiftRecorderProcess.stdout?.on('data', (data) => {
+          const lines = data
+            .toString()
+            .split('\n')
+            .filter((line) => line.trim())
 
-      for (const line of lines) {
-        try {
-          const result = JSON.parse(line)
-          console.log('📝 Swift recorder output:', result)
+          for (const line of lines) {
+            try {
+              const result = JSON.parse(line)
+              console.log('📝 Swift recorder output:', result)
 
-          if (result.code === 'RECORDING_STARTED' && !hasStarted) {
-            hasStarted = true
-            resolve({ success: true, path: result.path })
+              if (result.code === 'RECORDING_STARTED' && !hasStarted) {
+                hasStarted = true
+                resolve({ success: true, path: result.path })
 
-            // Notify renderer about recording start
-            if (mainWindow) {
-              mainWindow.webContents.send('combined-recording-started', result)
-            }
-          } else if ((result.code === 'BLUETOOTH_LIMITATION' || 
-                      result.code === 'SCREEN_PERMISSION_REQUIRED' || 
-                      result.code === 'SYSTEM_AUDIO_UNAVAILABLE' ||
-                      result.code === 'RECORDING_STARTED_MIC_ONLY') && !hasStarted) {
-            hasStarted = true
-            resolve({ 
-              success: true, 
-              path: result.path, 
-              warning: result.warning,
-              recommendation: result.recommendation
-            })
+                // Notify renderer about recording start
+                if (mainWindow) {
+                  mainWindow.webContents.send('combined-recording-started', result)
+                }
+              } else if ((result.code === 'BLUETOOTH_LIMITATION' || 
+                          result.code === 'SCREEN_PERMISSION_REQUIRED' || 
+                          result.code === 'SYSTEM_AUDIO_UNAVAILABLE' ||
+                          result.code === 'RECORDING_STARTED_MIC_ONLY') && !hasStarted) {
+                hasStarted = true
+                resolve({ 
+                  success: true, 
+                  path: result.path, 
+                  warning: result.warning,
+                  recommendation: result.recommendation
+                })
 
-            // Notify renderer about recording start with warning
-            if (mainWindow) {
-              mainWindow.webContents.send('combined-recording-started', result)
-            }
-            
-            // Important: Keep the process tracked so we can stop it later
-            console.log('✅ Microphone-only recording started, process still tracked for stopping')
-          } else if (result.code === 'SYSTEM_AUDIO_FAILED' && !hasStarted) {
-            hasStarted = true
-            resolve({ 
-              success: false, 
-              error: result.error,
-              cause: result.cause,
-              solution: result.solution
-            })
-          } else if (result.code === 'RECORDING_STOPPED') {
-            // Notify renderer about recording completion
-            if (mainWindow) {
-              mainWindow.webContents.send('combined-recording-stopped', result)
-            }
-          } else if (result.code === 'RECORDING_ERROR' && !hasStarted) {
-            resolve({ success: false, error: result.error })
-          } else if (result.code === 'RECORDING_FAILED') {
-            // Handle recording failure even after it has started
-            console.error('❌ Recording failed after start:', result.error)
-            
-            // Notify renderer about the failure
-            if (mainWindow) {
-              mainWindow.webContents.send('combined-recording-failed', result)
-            }
-            
-            // If this happens after hasStarted, we need to clean up
-            if (hasStarted) {
-              swiftRecorderProcess = null // Process will exit, so clear reference
-            } else {
-              hasStarted = true
-              resolve({ success: false, error: result.error })
+                // Notify renderer about recording start with warning
+                if (mainWindow) {
+                  mainWindow.webContents.send('combined-recording-started', result)
+                }
+                
+                // Important: Keep the process tracked so we can stop it later
+                console.log('✅ Microphone-only recording started, process still tracked for stopping')
+              } else if (result.code === 'SYSTEM_AUDIO_FAILED' && !hasStarted) {
+                hasStarted = true
+                resolve({ 
+                  success: false, 
+                  error: result.error,
+                  cause: result.cause,
+                  solution: result.solution
+                })
+              } else if (result.code === 'RECORDING_STOPPED') {
+                // Notify renderer about recording completion
+                if (mainWindow) {
+                  mainWindow.webContents.send('combined-recording-stopped', result)
+                }
+              } else if (result.code === 'RECORDING_ERROR' && !hasStarted) {
+                resolve({ success: false, error: result.error })
+              } else if (result.code === 'RECORDING_FAILED') {
+                // Handle recording failure even after it has started
+                console.error('❌ Recording failed after start:', result.error)
+                
+                // Notify renderer about the failure
+                if (mainWindow) {
+                  mainWindow.webContents.send('combined-recording-failed', result)
+                }
+                
+                // If this happens after hasStarted, we need to clean up
+                if (hasStarted) {
+                  swiftRecorderProcess = null // Process will exit, so clear reference
+                } else {
+                  hasStarted = true
+                  resolve({ success: false, error: result.error })
+                }
+              }
+            } catch {
+              // Non-JSON output, just log it
+              console.log('Swift recorder log:', line)
             }
           }
-        } catch {
-          // Non-JSON output, just log it
-          console.log('Swift recorder log:', line)
-        }
-      }
-    })
+        })
 
-    swiftRecorderProcess.stderr?.on('data', (data) => {
-      console.log('Swift recorder stderr:', data.toString())
-    })
+        swiftRecorderProcess.stderr?.on('data', (data) => {
+          console.log('Swift recorder stderr:', data.toString())
+        })
 
-    swiftRecorderProcess.on('close', (code) => {
-      console.log(`Swift recorder process exited with code ${code}`)
-      swiftRecorderProcess = null
-
-      if (!hasStarted) {
-        resolve({ success: false, error: `Recorder exited with code ${code}` })
-      }
-    })
-
-    swiftRecorderProcess.on('error', (error) => {
-      console.error('Swift recorder error:', error)
-      if (!hasStarted) {
-        resolve({ success: false, error: error.message })
-      }
-    })
-
-    // Timeout after 10 seconds if recording doesn't start
-    setTimeout(() => {
-      if (!hasStarted) {
-        if (swiftRecorderProcess) {
-          swiftRecorderProcess.kill('SIGTERM')
+        swiftRecorderProcess.on('close', (code) => {
+          console.log(`Swift recorder process exited with code ${code}`)
           swiftRecorderProcess = null
-        }
-        resolve({ success: false, error: 'Recording start timeout' })
-      }
-    }, 10000)
+
+          if (!hasStarted) {
+            resolve({ success: false, error: `Recorder exited with code ${code}` })
+          }
+        })
+
+        swiftRecorderProcess.on('error', (error) => {
+          console.error('Swift recorder error:', error)
+          if (!hasStarted) {
+            resolve({ success: false, error: error.message })
+          }
+        })
+
+        // Timeout after 10 seconds if recording doesn't start
+        setTimeout(() => {
+          if (!hasStarted) {
+            if (swiftRecorderProcess) {
+              swiftRecorderProcess.kill('SIGTERM')
+              swiftRecorderProcess = null
+            }
+            resolve({ success: false, error: 'Recording start timeout' })
+          }
+        }, 10000)
+      })
+      .catch(error => {
+        console.error('Failed to get settings:', error)
+        resolve({ success: false, error: 'Failed to get settings' })
+      })
   })
 }
 
@@ -532,54 +543,63 @@ function saveAudioChunk(audioBuffer: Buffer): string {
 
 function saveCompleteRecording(audioBuffer: Buffer, meetingId: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    // Create recordings directory if it doesn't exist
-    const recordingsDir = path.join(os.homedir(), 'Friday Recordings')
-    if (!fs.existsSync(recordingsDir)) {
-      fs.mkdirSync(recordingsDir, { recursive: true })
-    }
+    // Get settings to use default save location
+    databaseService.getSettings()
+      .then(settings => {
+        const recordingsDir = settings.defaultSaveLocation || path.join(os.homedir(), 'Friday Recordings')
+        
+        // Ensure the directory exists
+        if (!fs.existsSync(recordingsDir)) {
+          fs.mkdirSync(recordingsDir, { recursive: true })
+        }
 
-    // Create filename with timestamp and meeting ID
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const webmFileName = `meeting_${meetingId}_${timestamp}.webm`
-    const mp3FileName = `meeting_${meetingId}_${timestamp}.mp3`
-    const webmFilePath = path.join(recordingsDir, webmFileName)
-    const mp3FilePath = path.join(recordingsDir, mp3FileName)
+        // Create filename with timestamp and meeting ID
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const webmFileName = `meeting_${meetingId}_${timestamp}.webm`
+        const mp3FileName = `meeting_${meetingId}_${timestamp}.mp3`
+        const webmFilePath = path.join(recordingsDir, webmFileName)
+        const mp3FilePath = path.join(recordingsDir, mp3FileName)
 
-    try {
-      // First save the WebM file
-      fs.writeFileSync(webmFilePath, audioBuffer)
-      console.log(`💾 WebM recording saved to: ${webmFilePath}`)
+        try {
+          // First save the WebM file
+          fs.writeFileSync(webmFilePath, audioBuffer)
+          console.log(`💾 WebM recording saved to: ${webmFilePath}`)
 
-      // Convert WebM to MP3 using ffmpeg
-      ffmpeg(webmFilePath)
-        .noVideo()
-        .audioBitrate('192k')
-        .audioFrequency(44100)
-        .save(mp3FilePath)
-        .on('end', () => {
-          console.log(`🎵 Conversion finished: ${mp3FilePath}`)
+          // Convert WebM to MP3 using ffmpeg
+          ffmpeg(webmFilePath)
+            .noVideo()
+            .audioBitrate('192k')
+            .audioFrequency(44100)
+            .save(mp3FilePath)
+            .on('end', () => {
+              console.log(`🎵 Conversion finished: ${mp3FilePath}`)
 
-          // Clean up the temporary WebM file
-          try {
-            fs.unlinkSync(webmFilePath)
-            console.log(`🗑️ Cleaned up temporary WebM file`)
-          } catch (cleanupError) {
-            console.warn('Failed to clean up WebM file:', cleanupError)
-          }
+              // Clean up the temporary WebM file
+              try {
+                fs.unlinkSync(webmFilePath)
+                console.log(`🗑️ Cleaned up temporary WebM file`)
+              } catch (cleanupError) {
+                console.warn('Failed to clean up WebM file:', cleanupError)
+              }
 
-          resolve(mp3FilePath)
-        })
-        .on('error', (err) => {
-          console.error(`❌ FFmpeg conversion error: ${err.message}`)
+              resolve(mp3FilePath)
+            })
+            .on('error', (err) => {
+              console.error(`❌ FFmpeg conversion error: ${err.message}`)
 
-          // If conversion fails, return the WebM file as fallback
-          console.log('📁 Falling back to WebM file')
-          resolve(webmFilePath)
-        })
-    } catch (error) {
-      console.error('Failed to save recording:', error)
-      reject(error)
-    }
+              // If conversion fails, return the WebM file as fallback
+              console.log('📁 Falling back to WebM file')
+              resolve(webmFilePath)
+            })
+        } catch (error) {
+          console.error('Failed to save recording:', error)
+          reject(error)
+        }
+      })
+      .catch(error => {
+        console.error('Failed to get settings:', error)
+        reject(error)
+      })
   })
 }
 
@@ -993,6 +1013,58 @@ function setupGeminiHandlers(): void {
   })
 }
 
+// Handle dialog requests
+ipcMain.handle('dialog:showOpenDialog', async (_, options: Electron.OpenDialogOptions) => {
+  return dialog.showOpenDialog(options)
+})
+
+// Add keyboard shortcut registration
+function registerGlobalShortcuts(): void {
+  // Start/Stop Recording - Cmd+L
+  globalShortcut.register('CmdOrCtrl+L', () => {
+    console.log('🎙️ Global shortcut: Start/Stop Recording')
+    if (mainWindow) {
+      mainWindow.webContents.send('shortcut:toggle-recording')
+    }
+  })
+
+  // Quick Note - Cmd+Shift+N
+  globalShortcut.register('CmdOrCtrl+Shift+N', () => {
+    console.log('📝 Global shortcut: Quick Note')
+    if (mainWindow) {
+      mainWindow.webContents.send('shortcut:quick-note')
+    }
+  })
+
+  // Show/Hide Window - Cmd+Shift+F
+  globalShortcut.register('CmdOrCtrl+Shift+F', () => {
+    console.log('👁️ Global shortcut: Show/Hide Window')
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide()
+      } else {
+        mainWindow.show()
+      }
+    }
+  })
+
+  // Pause/Resume Recording - Cmd+P
+  globalShortcut.register('CmdOrCtrl+P', () => {
+    console.log('⏸️ Global shortcut: Pause/Resume Recording')
+    if (mainWindow) {
+      mainWindow.webContents.send('shortcut:pause-resume')
+    }
+  })
+
+  console.log('✅ Global shortcuts registered')
+}
+
+// Add shortcut unregistration
+function unregisterGlobalShortcuts(): void {
+  globalShortcut.unregisterAll()
+  console.log('🗑️ Global shortcuts unregistered')
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -1036,6 +1108,9 @@ app.whenReady().then(async () => {
   setupTranscriptionHandlers()
   setupGeminiHandlers()
 
+  // Register global shortcuts
+  registerGlobalShortcuts()
+
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
@@ -1062,6 +1137,9 @@ app.on('window-all-closed', async () => {
   // Stop transcription service
   stopTranscriptionService()
 
+  // Unregister global shortcuts
+  unregisterGlobalShortcuts()
+
   // Close database connection
   await databaseService.close()
 
@@ -1073,6 +1151,7 @@ app.on('window-all-closed', async () => {
 // Handle app termination
 app.on('before-quit', async () => {
   stopTranscriptionService()
+  unregisterGlobalShortcuts()
   await databaseService.close()
 })
 

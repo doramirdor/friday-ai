@@ -34,18 +34,34 @@ function App(): React.JSX.Element {
     localStorage.setItem('friday-theme', newTheme)
   }
 
-  // Handle keyboard shortcuts
+  // Handle global keyboard shortcuts
   useEffect(() => {
-    const handleKeyboard = (event: KeyboardEvent): void => {
-      if (event.metaKey && event.key === 'l') {
-        event.preventDefault()
-        // Handle recording toggle - could emit to main process
-        console.log('Recording toggle shortcut pressed')
+    const handleShortcuts = {
+      'shortcut:toggle-recording': () => {
+        console.log('Toggle recording shortcut triggered')
+        // TODO: Implement recording toggle logic
+      },
+      'shortcut:quick-note': () => {
+        console.log('Quick note shortcut triggered')
+        // TODO: Implement quick note logic
+      },
+      'shortcut:pause-resume': () => {
+        console.log('Pause/resume shortcut triggered')
+        // TODO: Implement pause/resume logic
       }
     }
 
-    document.addEventListener('keydown', handleKeyboard)
-    return () => document.removeEventListener('keydown', handleKeyboard)
+    // Add listeners for all shortcuts
+    Object.entries(handleShortcuts).forEach(([event, handler]) => {
+      window.electron?.ipcRenderer.on(event, handler)
+    })
+
+    // Cleanup function
+    return () => {
+      Object.keys(handleShortcuts).forEach(event => {
+        window.electron?.ipcRenderer.removeAllListeners(event)
+      })
+    }
   }, [])
 
   const handleOpenTranscript = (meeting: Meeting): void => {

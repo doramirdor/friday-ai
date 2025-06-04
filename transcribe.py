@@ -35,7 +35,7 @@ class TranscriptionSocketServer:
         print("🎤 Initializing Whisper model...", file=sys.stderr, flush=True)
         
         # Initialize Whisper model - using base model for balance of speed and accuracy
-        self.model = WhisperModel("base", device="cpu", compute_type="int8")
+        self.model = WhisperModel("small", device="cpu", compute_type="int8")
         
         self.temp_dir = tempfile.mkdtemp()
         self.chunk_counter = 0

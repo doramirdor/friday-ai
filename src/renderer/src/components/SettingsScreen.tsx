@@ -20,6 +20,8 @@ const SettingsScreen: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null)
 
   // Load settings on component mount
   useEffect(() => {
@@ -58,6 +60,73 @@ const SettingsScreen: React.FC = () => {
     if (!settings) return
     setSettings(prev => prev ? { ...prev, [key]: value } : null)
   }
+
+  // Handle browse button click for default save location
+  const handleBrowseSaveLocation = async (): Promise<void> => {
+    if (!settings) return
+
+    try {
+      const result = await window.api.electron.dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: 'Select Default Save Location',
+        defaultPath: settings.defaultSaveLocation
+      })
+
+      if (!result.canceled && result.filePaths.length > 0) {
+        updateSetting('defaultSaveLocation', result.filePaths[0])
+      }
+    } catch (error) {
+      console.error('Failed to open directory picker:', error)
+    }
+  }
+
+  // Test Gemini API connection
+  const handleTestConnection = async (): Promise<void> => {
+    if (!settings?.geminiApiKey) {
+      setConnectionResult({ success: false, message: 'Please enter an API key first' })
+      return
+    }
+
+    setTestingConnection(true)
+    setConnectionResult(null)
+
+    try {
+      // Test with a simple prompt
+      const result = await window.api.gemini.generateSummaryOnly({
+        transcript: 'This is a test message.',
+        context: '',
+        meetingContext: '',
+        notes: '',
+        title: 'Test'
+      })
+
+      if (result.success) {
+        setConnectionResult({ success: true, message: 'Connection successful! API key is valid.' })
+      } else {
+        setConnectionResult({ success: false, message: result.error || 'Connection failed' })
+      }
+    } catch (error) {
+      setConnectionResult({ 
+        success: false, 
+        message: error instanceof Error ? error.message : 'Unknown error occurred' 
+      })
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Apply settings in real-time (for toggles that should work immediately)
+  useEffect(() => {
+    if (!settings) return
+
+    // Apply theme changes immediately
+    if (settings.theme === 'auto') {
+      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      document.documentElement.setAttribute('data-theme', systemTheme)
+    } else {
+      document.documentElement.setAttribute('data-theme', settings.theme)
+    }
+  }, [settings?.theme])
 
   if (loading) {
     return (
@@ -99,7 +168,10 @@ const SettingsScreen: React.FC = () => {
                         onChange={(e) => updateSetting('defaultSaveLocation', e.target.value)}
                         style={{ minWidth: '200px' }}
                       />
-                      <button className="btn btn-secondary">
+                      <button 
+                        className="btn btn-secondary"
+                        onClick={handleBrowseSaveLocation}
+                      >
                         <FolderIcon size={16} />
                         Browse
                       </button>
@@ -395,10 +467,29 @@ const SettingsScreen: React.FC = () => {
               </div>
 
               <div style={{ marginTop: '24px' }}>
-                <button className="btn btn-secondary">
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={handleTestConnection}
+                  disabled={testingConnection || !settings.geminiApiKey}
+                >
                   <DownloadIcon size={16} />
-                  Test Connection
+                  {testingConnection ? 'Testing...' : 'Test Connection'}
                 </button>
+                
+                {connectionResult && (
+                  <div 
+                    style={{ 
+                      marginTop: '12px',
+                      padding: '12px',
+                      borderRadius: 'var(--radius-md)',
+                      background: connectionResult.success ? 'var(--green-light)' : 'rgba(255, 59, 48, 0.1)',
+                      color: connectionResult.success ? 'var(--green-dark)' : 'var(--status-error)',
+                      fontSize: 'var(--font-size-sm)'
+                    }}
+                  >
+                    {connectionResult.message}
+                  </div>
+                )}
               </div>
             </div>
           </div>

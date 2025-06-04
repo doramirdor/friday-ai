@@ -227,8 +227,9 @@ class DatabaseService {
           action_items, context, context_files, notes, summary, created_at, updated_at, duration
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
+      const recordingPathValue = Array.isArray(meeting.recordingPath) ? JSON.stringify(meeting.recordingPath) : meeting.recordingPath;
       const values = [
-        meeting.recordingPath,
+        recordingPathValue,
         JSON.stringify(meeting.transcript),
         meeting.title,
         meeting.description,
@@ -296,7 +297,8 @@ class DatabaseService {
       const values = [];
       if (meeting.recordingPath !== void 0) {
         fields.push("recording_path = ?");
-        values.push(meeting.recordingPath);
+        const recordingPathValue = Array.isArray(meeting.recordingPath) ? JSON.stringify(meeting.recordingPath) : meeting.recordingPath;
+        values.push(recordingPathValue);
       }
       if (meeting.transcript !== void 0) {
         fields.push("transcript = ?");
@@ -422,9 +424,18 @@ class DatabaseService {
     });
   }
   rowToMeeting(row) {
+    const parseRecordingPath = (pathData) => {
+      if (!pathData) return "";
+      try {
+        const parsed = JSON.parse(pathData);
+        return Array.isArray(parsed) ? parsed : pathData;
+      } catch {
+        return pathData;
+      }
+    };
     return {
       id: row.id,
-      recordingPath: row.recording_path,
+      recordingPath: parseRecordingPath(row.recording_path),
       transcript: JSON.parse(row.transcript),
       title: row.title,
       description: row.description,
@@ -746,6 +757,9 @@ let isTranscriptionStarting = false;
 let actualTranscriptionPort = 9001;
 let swiftRecorderProcess = null;
 let isSwiftRecorderAvailable = false;
+const activeChunkedRecordings = /* @__PURE__ */ new Map();
+const CHUNK_DURATION_MS = 5 * 60 * 1e3;
+const CHUNK_SIZE_LIMIT = 50 * 1024 * 1024;
 function createWindow() {
   mainWindow = new electron.BrowserWindow({
     width: 1200,
@@ -813,101 +827,107 @@ async function startCombinedRecording(recordingPath, filename) {
       resolve({ success: false, error: "Swift recorder not available" });
       return;
     }
-    const resolvedPath = recordingPath.startsWith("~/") ? path__namespace.join(os__namespace.homedir(), recordingPath.slice(2)) : recordingPath;
-    if (!fs__namespace.existsSync(resolvedPath)) {
-      fs__namespace.mkdirSync(resolvedPath, { recursive: true });
-    }
-    const recorderPath = path__namespace.join(process.cwd(), "Recorder");
-    const args = ["--record", resolvedPath, "--source", "both"];
-    if (filename) {
-      args.push("--filename", filename);
-    }
-    console.log("🎙️ Starting combined recording with Swift recorder...");
-    console.log("Command:", recorderPath, args.join(" "));
-    swiftRecorderProcess = child_process.spawn(recorderPath, args, {
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    let hasStarted = false;
-    swiftRecorderProcess.stdout?.on("data", (data) => {
-      const lines = data.toString().split("\n").filter((line) => line.trim());
-      for (const line of lines) {
-        try {
-          const result = JSON.parse(line);
-          console.log("📝 Swift recorder output:", result);
-          if (result.code === "RECORDING_STARTED" && !hasStarted) {
-            hasStarted = true;
-            resolve({ success: true, path: result.path });
-            if (mainWindow) {
-              mainWindow.webContents.send("combined-recording-started", result);
-            }
-          } else if ((result.code === "BLUETOOTH_LIMITATION" || result.code === "SCREEN_PERMISSION_REQUIRED" || result.code === "SYSTEM_AUDIO_UNAVAILABLE" || result.code === "RECORDING_STARTED_MIC_ONLY") && !hasStarted) {
-            hasStarted = true;
-            resolve({
-              success: true,
-              path: result.path,
-              warning: result.warning,
-              recommendation: result.recommendation
-            });
-            if (mainWindow) {
-              mainWindow.webContents.send("combined-recording-started", result);
-            }
-            console.log("✅ Microphone-only recording started, process still tracked for stopping");
-          } else if (result.code === "SYSTEM_AUDIO_FAILED" && !hasStarted) {
-            hasStarted = true;
-            resolve({
-              success: false,
-              error: result.error,
-              cause: result.cause,
-              solution: result.solution
-            });
-          } else if (result.code === "RECORDING_STOPPED") {
-            if (mainWindow) {
-              mainWindow.webContents.send("combined-recording-stopped", result);
-            }
-          } else if (result.code === "RECORDING_ERROR" && !hasStarted) {
-            resolve({ success: false, error: result.error });
-          } else if (result.code === "RECORDING_FAILED") {
-            console.error("❌ Recording failed after start:", result.error);
-            if (mainWindow) {
-              mainWindow.webContents.send("combined-recording-failed", result);
-            }
-            if (hasStarted) {
-              swiftRecorderProcess = null;
-            } else {
+    databaseService.getSettings().then((settings) => {
+      const finalPath = recordingPath || settings.defaultSaveLocation || path__namespace.join(os__namespace.homedir(), "Friday Recordings");
+      const resolvedPath = finalPath.startsWith("~/") ? path__namespace.join(os__namespace.homedir(), finalPath.slice(2)) : finalPath;
+      if (!fs__namespace.existsSync(resolvedPath)) {
+        fs__namespace.mkdirSync(resolvedPath, { recursive: true });
+      }
+      const recorderPath = path__namespace.join(process.cwd(), "Recorder");
+      const args = ["--record", resolvedPath, "--source", "both"];
+      if (filename) {
+        args.push("--filename", filename);
+      }
+      console.log("🎙️ Starting combined recording with Swift recorder...");
+      console.log("Command:", recorderPath, args.join(" "));
+      swiftRecorderProcess = child_process.spawn(recorderPath, args, {
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      let hasStarted = false;
+      swiftRecorderProcess.stdout?.on("data", (data) => {
+        const lines = data.toString().split("\n").filter((line) => line.trim());
+        for (const line of lines) {
+          try {
+            const result = JSON.parse(line);
+            console.log("📝 Swift recorder output:", result);
+            if (result.code === "RECORDING_STARTED" && !hasStarted) {
               hasStarted = true;
+              resolve({ success: true, path: result.path });
+              if (mainWindow) {
+                mainWindow.webContents.send("combined-recording-started", result);
+              }
+            } else if ((result.code === "BLUETOOTH_LIMITATION" || result.code === "SCREEN_PERMISSION_REQUIRED" || result.code === "SYSTEM_AUDIO_UNAVAILABLE" || result.code === "RECORDING_STARTED_MIC_ONLY") && !hasStarted) {
+              hasStarted = true;
+              resolve({
+                success: true,
+                path: result.path,
+                warning: result.warning,
+                recommendation: result.recommendation
+              });
+              if (mainWindow) {
+                mainWindow.webContents.send("combined-recording-started", result);
+              }
+              console.log("✅ Microphone-only recording started, process still tracked for stopping");
+            } else if (result.code === "SYSTEM_AUDIO_FAILED" && !hasStarted) {
+              hasStarted = true;
+              resolve({
+                success: false,
+                error: result.error,
+                cause: result.cause,
+                solution: result.solution
+              });
+            } else if (result.code === "RECORDING_STOPPED") {
+              if (mainWindow) {
+                mainWindow.webContents.send("combined-recording-stopped", result);
+              }
+            } else if (result.code === "RECORDING_ERROR" && !hasStarted) {
               resolve({ success: false, error: result.error });
+            } else if (result.code === "RECORDING_FAILED") {
+              console.error("❌ Recording failed after start:", result.error);
+              if (mainWindow) {
+                mainWindow.webContents.send("combined-recording-failed", result);
+              }
+              if (hasStarted) {
+                swiftRecorderProcess = null;
+              } else {
+                hasStarted = true;
+                resolve({ success: false, error: result.error });
+              }
             }
+          } catch {
+            console.log("Swift recorder log:", line);
           }
-        } catch {
-          console.log("Swift recorder log:", line);
         }
-      }
-    });
-    swiftRecorderProcess.stderr?.on("data", (data) => {
-      console.log("Swift recorder stderr:", data.toString());
-    });
-    swiftRecorderProcess.on("close", (code) => {
-      console.log(`Swift recorder process exited with code ${code}`);
-      swiftRecorderProcess = null;
-      if (!hasStarted) {
-        resolve({ success: false, error: `Recorder exited with code ${code}` });
-      }
-    });
-    swiftRecorderProcess.on("error", (error) => {
-      console.error("Swift recorder error:", error);
-      if (!hasStarted) {
-        resolve({ success: false, error: error.message });
-      }
-    });
-    setTimeout(() => {
-      if (!hasStarted) {
-        if (swiftRecorderProcess) {
-          swiftRecorderProcess.kill("SIGTERM");
-          swiftRecorderProcess = null;
+      });
+      swiftRecorderProcess.stderr?.on("data", (data) => {
+        console.log("Swift recorder stderr:", data.toString());
+      });
+      swiftRecorderProcess.on("close", (code) => {
+        console.log(`Swift recorder process exited with code ${code}`);
+        swiftRecorderProcess = null;
+        if (!hasStarted) {
+          resolve({ success: false, error: `Recorder exited with code ${code}` });
         }
-        resolve({ success: false, error: "Recording start timeout" });
-      }
-    }, 1e4);
+      });
+      swiftRecorderProcess.on("error", (error) => {
+        console.error("Swift recorder error:", error);
+        if (!hasStarted) {
+          resolve({ success: false, error: error.message });
+        }
+      });
+      setTimeout(() => {
+        if (!hasStarted) {
+          if (swiftRecorderProcess) {
+            swiftRecorderProcess.kill("SIGTERM");
+            swiftRecorderProcess = null;
+          }
+          resolve({ success: false, error: "Recording start timeout" });
+        }
+      }, 1e4);
+    }).catch((error) => {
+      console.error("Failed to get settings:", error);
+      resolve({ success: false, error: "Failed to get settings" });
+    });
   });
 }
 async function stopCombinedRecording() {
@@ -1089,37 +1109,147 @@ function saveAudioChunk(audioBuffer) {
 }
 function saveCompleteRecording(audioBuffer, meetingId) {
   return new Promise((resolve, reject) => {
-    const recordingsDir = path__namespace.join(os__namespace.homedir(), "Friday Recordings");
+    databaseService.getSettings().then((settings) => {
+      const recordingsDir = settings.defaultSaveLocation || path__namespace.join(os__namespace.homedir(), "Friday Recordings");
+      if (!fs__namespace.existsSync(recordingsDir)) {
+        fs__namespace.mkdirSync(recordingsDir, { recursive: true });
+      }
+      const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const webmFileName = `meeting_${meetingId}_${timestamp}.webm`;
+      const mp3FileName = `meeting_${meetingId}_${timestamp}.mp3`;
+      const webmFilePath = path__namespace.join(recordingsDir, webmFileName);
+      const mp3FilePath = path__namespace.join(recordingsDir, mp3FileName);
+      try {
+        fs__namespace.writeFileSync(webmFilePath, audioBuffer);
+        console.log(`💾 WebM recording saved to: ${webmFilePath}`);
+        ffmpeg(webmFilePath).noVideo().audioBitrate("192k").audioFrequency(44100).save(mp3FilePath).on("end", () => {
+          console.log(`🎵 Conversion finished: ${mp3FilePath}`);
+          try {
+            fs__namespace.unlinkSync(webmFilePath);
+            console.log(`🗑️ Cleaned up temporary WebM file`);
+          } catch (cleanupError) {
+            console.warn("Failed to clean up WebM file:", cleanupError);
+          }
+          resolve(mp3FilePath);
+        }).on("error", (err) => {
+          console.error(`❌ FFmpeg conversion error: ${err.message}`);
+          console.log("📁 Falling back to WebM file");
+          resolve(webmFilePath);
+        });
+      } catch (error) {
+        console.error("Failed to save recording:", error);
+        reject(error);
+      }
+    }).catch((error) => {
+      console.error("Failed to get settings:", error);
+      reject(error);
+    });
+  });
+}
+function createRecordingChunk(meetingId, audioBuffer, chunkIndex) {
+  return new Promise((resolve, reject) => {
+    const recordingsDir = path__namespace.join(os__namespace.homedir(), "Friday Recordings", `meeting_${meetingId}_chunks`);
     if (!fs__namespace.existsSync(recordingsDir)) {
       fs__namespace.mkdirSync(recordingsDir, { recursive: true });
     }
-    const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-    const webmFileName = `meeting_${meetingId}_${timestamp}.webm`;
-    const mp3FileName = `meeting_${meetingId}_${timestamp}.mp3`;
+    const timestamp = Date.now();
+    const chunkId = `chunk_${chunkIndex}_${timestamp}`;
+    const webmFileName = `${chunkId}.webm`;
+    const mp3FileName = `${chunkId}.mp3`;
     const webmFilePath = path__namespace.join(recordingsDir, webmFileName);
     const mp3FilePath = path__namespace.join(recordingsDir, mp3FileName);
     try {
       fs__namespace.writeFileSync(webmFilePath, audioBuffer);
-      console.log(`💾 WebM recording saved to: ${webmFilePath}`);
-      ffmpeg(webmFilePath).noVideo().audioBitrate("192k").audioFrequency(44100).save(mp3FilePath).on("end", () => {
-        console.log(`🎵 Conversion finished: ${mp3FilePath}`);
+      console.log(`💾 Chunk ${chunkIndex} saved: ${webmFilePath} (${audioBuffer.length} bytes)`);
+      ffmpeg(webmFilePath).noVideo().audioBitrate("128k").audioFrequency(44100).save(mp3FilePath).on("end", () => {
+        console.log(`🎵 Chunk ${chunkIndex} converted: ${mp3FilePath}`);
+        const stats = fs__namespace.statSync(mp3FilePath);
+        const chunk = {
+          id: chunkId,
+          path: mp3FilePath,
+          startTime: timestamp,
+          endTime: timestamp + CHUNK_DURATION_MS,
+          size: stats.size
+        };
         try {
           fs__namespace.unlinkSync(webmFilePath);
-          console.log(`🗑️ Cleaned up temporary WebM file`);
         } catch (cleanupError) {
-          console.warn("Failed to clean up WebM file:", cleanupError);
+          console.warn("Failed to clean up WebM chunk:", cleanupError);
         }
-        resolve(mp3FilePath);
+        resolve(chunk);
       }).on("error", (err) => {
-        console.error(`❌ FFmpeg conversion error: ${err.message}`);
-        console.log("📁 Falling back to WebM file");
-        resolve(webmFilePath);
+        console.error(`❌ Chunk ${chunkIndex} conversion error: ${err.message}`);
+        const stats = fs__namespace.statSync(webmFilePath);
+        const chunk = {
+          id: chunkId,
+          path: webmFilePath,
+          startTime: timestamp,
+          endTime: timestamp + CHUNK_DURATION_MS,
+          size: stats.size
+        };
+        resolve(chunk);
       });
     } catch (error) {
-      console.error("Failed to save recording:", error);
+      console.error("Failed to create recording chunk:", error);
       reject(error);
     }
   });
+}
+function startChunkedRecording(meetingId) {
+  const chunkedRecording = {
+    meetingId,
+    chunks: [],
+    isActive: true,
+    totalDuration: 0
+  };
+  activeChunkedRecordings.set(meetingId, chunkedRecording);
+  console.log(`🎬 Started chunked recording for meeting ${meetingId}`);
+  return chunkedRecording;
+}
+async function addChunkToRecording(meetingId, audioBuffer) {
+  const recording = activeChunkedRecordings.get(meetingId);
+  if (!recording || !recording.isActive) {
+    return false;
+  }
+  try {
+    const chunkIndex = recording.chunks.length;
+    const chunk = await createRecordingChunk(meetingId, audioBuffer, chunkIndex);
+    recording.chunks.push(chunk);
+    console.log(`✅ Added chunk ${chunkIndex} to meeting ${meetingId} (${chunk.size} bytes)`);
+    updateMeetingChunks(meetingId, recording.chunks).catch((error) => {
+      console.error("Background chunk save failed:", error);
+    });
+    return true;
+  } catch (error) {
+    console.error("Failed to add chunk to recording:", error);
+    return false;
+  }
+}
+async function updateMeetingChunks(meetingId, chunks) {
+  try {
+    const meeting = await databaseService.getMeeting(meetingId);
+    if (!meeting) return;
+    const chunkPaths = chunks.map((chunk) => chunk.path);
+    await databaseService.updateMeeting(meetingId, {
+      recordingPath: chunkPaths,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    console.log(`💾 Background saved ${chunks.length} chunks for meeting ${meetingId}`);
+  } catch (error) {
+    console.error("Failed to update meeting chunks:", error);
+  }
+}
+async function stopChunkedRecording(meetingId) {
+  const recording = activeChunkedRecordings.get(meetingId);
+  if (!recording) {
+    return [];
+  }
+  recording.isActive = false;
+  const chunkPaths = recording.chunks.map((chunk) => chunk.path);
+  await updateMeetingChunks(meetingId, recording.chunks);
+  activeChunkedRecordings.delete(meetingId);
+  console.log(`🏁 Stopped chunked recording for meeting ${meetingId} (${recording.chunks.length} chunks)`);
+  return chunkPaths;
 }
 function setupTranscriptionHandlers() {
   electron.ipcMain.handle("transcription:start-service", async () => {
@@ -1238,6 +1368,52 @@ function setupTranscriptionHandlers() {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
+  electron.ipcMain.handle("chunked-recording:start", async (_, meetingId) => {
+    try {
+      const recording = startChunkedRecording(meetingId);
+      return { success: true, recording };
+    } catch (error) {
+      console.error("Failed to start chunked recording:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("chunked-recording:add-chunk", async (_, meetingId, audioBuffer) => {
+    try {
+      const buffer = Buffer.from(audioBuffer);
+      if (buffer.length > CHUNK_SIZE_LIMIT) {
+        console.warn(`⚠️ Chunk size ${buffer.length} exceeds limit ${CHUNK_SIZE_LIMIT}, splitting...`);
+      }
+      const success = await addChunkToRecording(meetingId, buffer);
+      return { success };
+    } catch (error) {
+      console.error("Failed to add chunk to recording:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("chunked-recording:stop", async (_, meetingId) => {
+    try {
+      const chunkPaths = await stopChunkedRecording(meetingId);
+      return { success: true, chunkPaths };
+    } catch (error) {
+      console.error("Failed to stop chunked recording:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("chunked-recording:load-chunks", async (_, chunkPaths) => {
+    try {
+      const chunks = [];
+      for (const chunkPath of chunkPaths) {
+        if (fs__namespace.existsSync(chunkPath)) {
+          const buffer = fs__namespace.readFileSync(chunkPath);
+          chunks.push(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+        }
+      }
+      return { success: true, chunks };
+    } catch (error) {
+      console.error("Failed to load recording chunks:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 }
 function setupDatabaseHandlers() {
   electron.ipcMain.handle("db:createMeeting", async (_, meeting) => {
@@ -1286,6 +1462,9 @@ function setupGeminiHandlers() {
     }
   });
 }
+electron.ipcMain.handle("dialog:showOpenDialog", async (_, options) => {
+  return electron.dialog.showOpenDialog(options);
+});
 electron.app.whenReady().then(async () => {
   try {
     await databaseService.initialize();

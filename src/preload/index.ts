@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import { DatabaseAPI } from '../main/database'
 
 // Custom APIs for renderer
 const api = {
@@ -102,6 +103,13 @@ const api = {
 
     // Generate summary only
     generateSummary: (options: any) => ipcRenderer.invoke('gemini:generate-summary', options)
+  },
+
+  electron: {
+    dialog: {
+      showOpenDialog: (options: Electron.OpenDialogOptions) => 
+        ipcRenderer.invoke('dialog:showOpenDialog', options)
+    }
   }
 }
 

@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added content width constraints for better readability
   - Enhanced overall visual consistency across the application
 
+- **Bluetooth Audio Recording Support**: Fixed "System audio capture failed due to Bluetooth audio limitations" error
+  - Implemented proactive Bluetooth workaround that creates multi-output devices before recording starts
+  - Enhanced multi-output device creation with proper clock synchronization and drift compensation
+  - Added robust device verification and comprehensive error handling with detailed diagnostics
+  - Improved Bluetooth device detection using proper transport type checking instead of name-based detection
+  - Users can now record full system audio while using Bluetooth headphones/speakers
+  - Added graceful fallback to microphone-only for combined recording when system audio fails
+  - Enhanced user feedback with clear error messages, causes, and actionable recommendations
+
 ### Added
 - **Comprehensive System Audio Troubleshooting Guide**
   - Detailed documentation of common system audio capture issues

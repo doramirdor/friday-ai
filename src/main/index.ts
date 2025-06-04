@@ -271,7 +271,7 @@ async function startCombinedRecording(
           }
         })
 
-        // Timeout after 10 seconds if recording doesn't start
+        // Timeout after 30 seconds if recording doesn't start (increased for Bluetooth workaround)
         setTimeout(() => {
           if (!hasStarted) {
             if (swiftRecorderProcess) {
@@ -280,7 +280,7 @@ async function startCombinedRecording(
             }
             resolve({ success: false, error: 'Recording start timeout' })
           }
-        }, 10000)
+        }, 30000)
       })
       .catch(error => {
         console.error('Failed to get settings:', error)

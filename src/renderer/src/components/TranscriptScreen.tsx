@@ -33,6 +33,15 @@ interface TranscriptScreenProps {
 
 type SidebarTab = 'details' | 'context' | 'actions' | 'notes' | 'summary'
 
+// Global recording control interface - moved from App.tsx for consistency
+interface RecordingControl {
+  toggleRecording: () => void
+  addQuickNote: () => void
+  pauseResumeRecording: () => void
+  isRecording: boolean
+  canRecord: boolean
+}
+
 // Local interface definition to fix TypeScript errors
 interface TranscriptionResult {
   type: 'transcript' | 'error' | 'pong' | 'shutdown'
@@ -95,7 +104,7 @@ declare global {
 }
 */
 
-const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
+const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -129,10 +138,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
   const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
 
-  // Add state for chunked recording
-  const [isChunkedRecording, setIsChunkedRecording] = useState(false)
-  const [recordingChunks, setRecordingChunks] = useState<string[]>([])
-  const [chunkIndex, setChunkIndex] = useState(0)
+  // Remove unused chunked recording state variables
   const chunkBuffers = useRef<Blob[]>([])
   const chunkInterval = useRef<NodeJS.Timeout | null>(null)
   const CHUNK_DURATION = 5 * 60 * 1000 // 5 minutes
@@ -145,6 +151,58 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const recordingChunksRef = useRef<Blob[]>([])
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
   const recordingStartTime = useRef<number>(0) // Track when recording actually started
+
+  // Handle global shortcut events
+  useEffect(() => {
+    const handleToggleRecording = () => {
+      console.log('📱 TranscriptScreen: Toggle recording event received')
+      if (isRecording) {
+        stopRecording()
+      } else {
+        startRecording()
+      }
+    }
+
+    const handleQuickNote = () => {
+      console.log('📱 TranscriptScreen: Quick note event received')
+      // Switch to notes tab and add timestamp
+      setActiveSidebarTab('notes')
+      const timestamp = formatTime(currentTime)
+      const quickNote = `[${timestamp}] `
+      setNotes(prev => prev ? `${prev}\n${quickNote}` : quickNote)
+    }
+
+    const handlePauseResume = () => {
+      console.log('📱 TranscriptScreen: Pause/resume event received')
+      // For now, just log since pause/resume is complex with streaming transcription
+      if (isRecording) {
+        console.log('⏸️ Recording is active - pause functionality not yet implemented')
+      } else {
+        console.log('▶️ No active recording to pause/resume')
+      }
+    }
+
+    const handleAutoStartRecording = () => {
+      console.log('📱 TranscriptScreen: Auto-start recording event received')
+      if (!isRecording && (transcriptionStatus === 'ready' || isSwiftRecorderAvailable)) {
+        startRecording()
+      }
+    }
+
+    // Add event listeners
+    window.addEventListener('friday-toggle-recording', handleToggleRecording)
+    window.addEventListener('friday-quick-note', handleQuickNote)
+    window.addEventListener('friday-pause-resume', handlePauseResume)
+    window.addEventListener('friday-auto-start-recording', handleAutoStartRecording)
+
+    // Cleanup function
+    return () => {
+      window.removeEventListener('friday-toggle-recording', handleToggleRecording)
+      window.removeEventListener('friday-quick-note', handleQuickNote)
+      window.removeEventListener('friday-pause-resume', handlePauseResume)
+      window.removeEventListener('friday-auto-start-recording', handleAutoStartRecording)
+    }
+  }, [isRecording, transcriptionStatus, isSwiftRecorderAvailable, currentTime])
 
   // Initialize data from meeting prop
   useEffect(() => {
@@ -210,17 +268,18 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     try {
       if (Array.isArray(recordingPath)) {
         console.log('🔄 Loading chunked recording...')
-        setRecordingChunks(recordingPath)
+        // setRecordingChunks(recordingPath) // Commented out - chunked recording not implemented
         
         // Load first chunk for immediate playback
         if (recordingPath.length > 0) {
-          const result = await window.api.chunkedRecording.loadChunks([recordingPath[0]])
-          if (result.success && result.chunks && result.chunks.length > 0) {
-            const blob = new Blob([result.chunks[0]], { type: 'audio/mpeg' })
-            const audioUrl = URL.createObjectURL(blob)
-            setRecordedAudioUrl(audioUrl)
-            console.log('✅ First chunk loaded for playback')
-          }
+          // const result = await window.api.chunkedRecording.loadChunks([recordingPath[0]]) // Commented out
+          // if (result.success && result.chunks && result.chunks.length > 0) {
+          //   const blob = new Blob([result.chunks[0]], { type: 'audio/mpeg' })
+          //   const audioUrl = URL.createObjectURL(blob)
+          //   setRecordedAudioUrl(audioUrl)
+          //   console.log('✅ First chunk loaded for playback')
+          // }
+          console.log('⚠️ Chunked recording playback not yet implemented')
         }
       } else {
         // Single file recording

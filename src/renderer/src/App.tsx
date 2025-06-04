@@ -38,16 +38,32 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const handleShortcuts = {
       'shortcut:toggle-recording': () => {
-        console.log('Toggle recording shortcut triggered')
-        // TODO: Implement recording toggle logic
+        console.log('🎙️ Global shortcut: Toggle Recording')
+        if (currentScreen === 'transcript') {
+          // Send a custom event to the transcript screen to handle recording toggle
+          window.dispatchEvent(new CustomEvent('friday-toggle-recording'))
+        } else {
+          // Create a new meeting and start recording
+          handleCreateAndStartRecording()
+        }
       },
       'shortcut:quick-note': () => {
-        console.log('Quick note shortcut triggered')
-        // TODO: Implement quick note logic
+        console.log('📝 Global shortcut: Quick Note')
+        if (currentScreen === 'transcript') {
+          // Send a custom event to the transcript screen to handle quick note
+          window.dispatchEvent(new CustomEvent('friday-quick-note'))
+        } else {
+          console.log('ℹ️ Quick note is only available during recording')
+        }
       },
       'shortcut:pause-resume': () => {
-        console.log('Pause/resume shortcut triggered')
-        // TODO: Implement pause/resume logic
+        console.log('⏸️ Global shortcut: Pause/Resume Recording')
+        if (currentScreen === 'transcript') {
+          // Send a custom event to the transcript screen to handle pause/resume
+          window.dispatchEvent(new CustomEvent('friday-pause-resume'))
+        } else {
+          console.log('ℹ️ Pause/resume is only available during recording')
+        }
       }
     }
 
@@ -62,7 +78,49 @@ function App(): React.JSX.Element {
         window.electron?.ipcRenderer.removeAllListeners(event)
       })
     }
-  }, [])
+  }, [currentScreen])
+
+  const handleCreateAndStartRecording = async (): Promise<void> => {
+    try {
+      // Create a new meeting with default values
+      const timestamp = new Date().toISOString()
+      const defaultMeeting: Omit<Meeting, 'id'> = {
+        title: `Recording ${new Date().toLocaleString()}`,
+        description: 'Quick recording started with global shortcut',
+        transcript: [],
+        summary: '',
+        actionItems: [],
+        tags: [],
+        context: '',
+        context_files: [],
+        notes: '',
+        recordingPath: '',
+        duration: '00:00',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+
+      const meetingId = await window.api.db.createMeeting(defaultMeeting)
+      const createdMeeting = await window.api.db.getMeeting(meetingId)
+      
+      if (createdMeeting) {
+        setCurrentMeeting(createdMeeting)
+        setCurrentScreen('transcript')
+        setRefreshTrigger((prev) => prev + 1)
+        
+        console.log('✅ Created meeting for global recording shortcut:', createdMeeting.title)
+        
+        // After switching to transcript screen, trigger recording start
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('friday-auto-start-recording'))
+        }, 100)
+      } else {
+        console.error('Failed to retrieve created meeting')
+      }
+    } catch (error) {
+      console.error('Failed to create meeting for global recording:', error)
+    }
+  }
 
   const handleOpenTranscript = (meeting: Meeting): void => {
     setCurrentMeeting(meeting)
@@ -85,9 +143,11 @@ function App(): React.JSX.Element {
 
       // Get the created meeting and navigate to transcript screen
       const createdMeeting = await window.api.db.getMeeting(meetingId)
-      setCurrentMeeting(createdMeeting)
-      setCurrentScreen('transcript')
-      setRefreshTrigger((prev) => prev + 1)
+      if (createdMeeting) {
+        setCurrentMeeting(createdMeeting)
+        setCurrentScreen('transcript')
+        setRefreshTrigger((prev) => prev + 1)
+      }
     } catch (error) {
       console.error('Failed to create meeting:', error)
       throw error
@@ -105,7 +165,12 @@ function App(): React.JSX.Element {
           />
         )
       case 'transcript':
-        return <TranscriptScreen meeting={currentMeeting} onBack={handleBackToLibrary} />
+        return (
+          <TranscriptScreen 
+            meeting={currentMeeting} 
+            onBack={handleBackToLibrary}
+          />
+        )
       case 'settings':
         return <SettingsScreen />
       default:

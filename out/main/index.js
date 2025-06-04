@@ -1465,6 +1465,41 @@ function setupGeminiHandlers() {
 electron.ipcMain.handle("dialog:showOpenDialog", async (_, options) => {
   return electron.dialog.showOpenDialog(options);
 });
+function registerGlobalShortcuts() {
+  electron.globalShortcut.register("CmdOrCtrl+L", () => {
+    console.log("🎙️ Global shortcut: Start/Stop Recording");
+    if (mainWindow) {
+      mainWindow.webContents.send("shortcut:toggle-recording");
+    }
+  });
+  electron.globalShortcut.register("CmdOrCtrl+Shift+N", () => {
+    console.log("📝 Global shortcut: Quick Note");
+    if (mainWindow) {
+      mainWindow.webContents.send("shortcut:quick-note");
+    }
+  });
+  electron.globalShortcut.register("CmdOrCtrl+Shift+F", () => {
+    console.log("👁️ Global shortcut: Show/Hide Window");
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide();
+      } else {
+        mainWindow.show();
+      }
+    }
+  });
+  electron.globalShortcut.register("CmdOrCtrl+P", () => {
+    console.log("⏸️ Global shortcut: Pause/Resume Recording");
+    if (mainWindow) {
+      mainWindow.webContents.send("shortcut:pause-resume");
+    }
+  });
+  console.log("✅ Global shortcuts registered");
+}
+function unregisterGlobalShortcuts() {
+  electron.globalShortcut.unregisterAll();
+  console.log("🗑️ Global shortcuts unregistered");
+}
 electron.app.whenReady().then(async () => {
   try {
     await databaseService.initialize();
@@ -1493,6 +1528,7 @@ electron.app.whenReady().then(async () => {
   setupDatabaseHandlers();
   setupTranscriptionHandlers();
   setupGeminiHandlers();
+  registerGlobalShortcuts();
   electron.app.on("browser-window-created", (_, window) => {
     utils.optimizer.watchWindowShortcuts(window);
   });
@@ -1504,6 +1540,7 @@ electron.app.whenReady().then(async () => {
 });
 electron.app.on("window-all-closed", async () => {
   stopTranscriptionService();
+  unregisterGlobalShortcuts();
   await databaseService.close();
   if (process.platform !== "darwin") {
     electron.app.quit();
@@ -1511,5 +1548,6 @@ electron.app.on("window-all-closed", async () => {
 });
 electron.app.on("before-quit", async () => {
   stopTranscriptionService();
+  unregisterGlobalShortcuts();
   await databaseService.close();
 });

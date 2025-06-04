@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced error handling to distinguish between connection and operational errors
   - Better service readiness detection during queue processing
 
+- **Settings Screen Layout**: Updated Settings screen design to match Library screen consistency
+  - Changed container styling to use consistent library-container class
+  - Improved header styling with proper font sizes and spacing
+  - Added content width constraints for better readability
+  - Enhanced overall visual consistency across the application
+
 ### Added
 - **Comprehensive System Audio Troubleshooting Guide**
   - Detailed documentation of common system audio capture issues

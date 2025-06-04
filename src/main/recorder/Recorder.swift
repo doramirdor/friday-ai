@@ -1163,8 +1163,8 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                 if (deviceName.contains("AirPods") || deviceName.contains("Bluetooth")) && (audioSource == "system" || audioSource == "both") {
                     print("⚠️ Warning: Bluetooth audio device detected")
                     print("   System audio capture may be limited with Bluetooth devices")
-                    print("   For best results, consider switching to built-in speakers")
-                    
+                    print("   Attempting to enable Bluetooth workaround before recording...")
+
                     // Enable Bluetooth workaround for system audio capture
                     print("🔧 Attempting to enable Bluetooth workaround...")
                     if AudioDeviceManager.enableBluetoothWorkaround() {
@@ -1172,9 +1172,27 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                         print("✅ Bluetooth workaround enabled successfully")
                         print("   Users will continue hearing audio through Bluetooth")
                         print("   System audio will be captured from built-in speakers")
+                        
+                        // Wait a moment for the audio system to settle
+                        Thread.sleep(forTimeInterval: 1.0)
                     } else {
                         print("❌ Failed to enable Bluetooth workaround")
                         print("   Recording will continue with standard Bluetooth limitations")
+                        
+                        // For combined recording, warn but continue with mic-only if system audio fails
+                        if audioSource == "both" {
+                            print("   Will attempt system audio capture, but may fall back to microphone-only")
+                        } else {
+                            // For system-only recording with Bluetooth, return error early
+                            ResponseHandler.returnResponse([
+                                "code": "BLUETOOTH_LIMITATION",
+                                "error": "System audio recording not supported with Bluetooth devices",
+                                "warning": "Bluetooth audio devices do not support system audio capture",
+                                "recommendation": "Switch to built-in speakers for system audio recording, or use microphone-only mode",
+                                "device": deviceName
+                            ])
+                            return
+                        }
                     }
                 }
                 
@@ -1316,7 +1334,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                     "path": finalMp3Path ?? outputPath,
                     "timestamp": ISO8601DateFormatter().string(from: Date()),
                     "warning": warningMessage,
-                    "recommendation": '',
+                    "recommendation": recommendation,
                     "device": currentDevice,
                     "screen_permission": hasScreenPermission
                 ])

@@ -1463,11 +1463,12 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
                 </div>
               ) : (
                 <div className="input-group">
-                  <QuillEditor
+                  <textarea
+                    className="input textarea input-floating"
+                    placeholder=" "
+                    style={{ minHeight: '150px' }}
                     value={summary}
-                    onChange={(content) => setSummary(content)}
-                    placeholder="Meeting summary will appear here..."
-                    height={150}
+                    onChange={(e) => setSummary(e.target.value)}
                   />
                   <label className="input-label">Meeting Summary</label>
                 </div>
@@ -1723,17 +1724,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
       const chunkBlob = new Blob(chunkBuffers.current, { type: mimeType })
       const arrayBuffer = await chunkBlob.arrayBuffer()
 
-      if (meeting?.id) {
-        console.log(`💾 Saving chunk ${chunkIndex} (${chunkBlob.size} bytes)`)
-        
-        const result = await window.api.chunkedRecording.addChunk(meeting.id, arrayBuffer)
-        if (result.success) {
-          console.log(`✅ Chunk ${chunkIndex} saved successfully`)
-          setChunkIndex(prev => prev + 1)
-        } else {
-          console.error('Failed to save chunk:', result.error)
-        }
-      }
+      console.log(`💾 Processing chunk (${chunkBlob.size} bytes)`)
 
       // Clear buffer for next chunk
       chunkBuffers.current = []

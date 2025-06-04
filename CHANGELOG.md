@@ -66,6 +66,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Placeholder functionality (logs message for now)
     - Will be implemented in future version for streaming transcription
 
+- **Rich Text Editor Integration**
+  - **Replaced MDEditor with Quill**: Modern WYSIWYG editor for notes and summary fields
+  - **Enhanced Text Formatting**: Full rich text editing capabilities including:
+    - Headers (H1, H2, H3)
+    - Bold, italic, underline, strikethrough
+    - Ordered and unordered lists
+    - Blockquotes and code blocks
+    - Links and clean formatting options
+  - **Improved User Experience**: 
+    - Real-time formatting preview (no more raw markdown)
+    - Intuitive toolbar with familiar word processor controls
+    - Better visual feedback and easier content creation
+  - **Theme Integration**: Custom styling that matches Friday app's design system
+  - **React Integration**: Proper component lifecycle management and state synchronization
+
 ### Changed
 - **React Component Optimization**
   - Moved transcription result listener to one-time initialization effect to prevent duplicates

@@ -710,15 +710,21 @@ const SettingsScreen: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: 'var(--spacing-xl)' }}>
+    <div className="library-container">
       {/* Header */}
       <div style={{ 
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'space-between', 
-        marginBottom: 'var(--spacing-xl)' 
+        marginBottom: 'var(--spacing-lg)' 
       }}>
-        <h1 style={{ margin: 0 }}>Settings</h1>
+        <h2 style={{ 
+          margin: 0,
+          fontSize: 'var(--font-size-xl)',
+          fontWeight: 'var(--font-weight-semibold)'
+        }}>
+          Settings
+        </h2>
         <button
           className="btn btn-primary"
           onClick={handleSaveSettings}
@@ -741,7 +747,7 @@ const SettingsScreen: React.FC = () => {
       </div>
 
       {/* Tab Navigation */}
-      <div className="tabs">
+      <div className="tabs" style={{ marginBottom: 'var(--spacing-lg)' }}>
         <button
           className={`tab ${activeTab === 'general' ? 'active' : ''}`}
           onClick={() => setActiveTab('general')}
@@ -775,7 +781,9 @@ const SettingsScreen: React.FC = () => {
       </div>
 
       {/* Tab Content */}
-      {renderTabContent()}
+      <div style={{ maxWidth: '800px' }}>
+        {renderTabContent()}
+      </div>
     </div>
   )
 }

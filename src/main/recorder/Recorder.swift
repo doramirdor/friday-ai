@@ -229,11 +229,16 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         }
         */
         
-        // Configure recording settings with higher quality
+        // Determine microphone capabilities dynamically
+        let sampleRate = AudioDeviceManager.getDefaultInputDeviceSampleRate() ?? 44100.0
+        let channelCount = AudioDeviceManager.getDefaultInputDeviceChannelCount() ?? 1
+        print("Using microphone sample rate: \(sampleRate) Hz, channels: \(channelCount)")
+
+        // Configure recording settings using detected values
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: 48000.0,
-            AVNumberOfChannelsKey: 2,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: channelCount,
             AVEncoderAudioQualityKey: AVAudioQuality.max.rawValue,
             AVLinearPCMBitDepthKey: 24,
             AVLinearPCMIsFloatKey: true,
@@ -721,11 +726,16 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
         print("Checking audio input devices on macOS:")
         // AudioDeviceManager.logAudioDiagnostics() // Temporarily disabled to debug hanging issue
             
-        // Configure recording settings
+        // Determine microphone capabilities dynamically
+        let sampleRate = AudioDeviceManager.getDefaultInputDeviceSampleRate() ?? 44100.0
+        let channelCount = AudioDeviceManager.getDefaultInputDeviceChannelCount() ?? 1
+        print("Using microphone sample rate: \(sampleRate) Hz, channels: \(channelCount)")
+
+        // Configure recording settings using detected values
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: 44100.0,
-            AVNumberOfChannelsKey: 2,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: channelCount,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
         
@@ -1804,4 +1814,4 @@ func recorderMain() -> Int32 {
     // This function is just a placeholder to satisfy the linker
     // The actual functionality is called through other entry points
     return 0
-} 
+}

@@ -175,20 +175,57 @@ async function startCombinedRecording(
 
         let hasStarted = false
         let outputReceived = false
+        let lastOutputTime = Date.now()
 
-        // Add timeout to detect if we're not receiving any output at all
+        // Enhanced timeout to detect if we're not receiving any output at all
         const outputTimeoutId = setTimeout(() => {
           if (!outputReceived) {
-            console.log('⚠️ No output received from Swift recorder after 10 seconds - process may be hanging')
+            console.log('❌ HANG DETECTION: No output received from Swift recorder after 10 seconds')
+            console.log('   Process may be hanging in Electron app context vs manual terminal execution')
             if (swiftRecorderProcess) {
-              console.log('Process PID:', swiftRecorderProcess.pid)
-              console.log('Process killed:', swiftRecorderProcess.killed)
+              console.log('   Process PID:', swiftRecorderProcess.pid)
+              console.log('   Process killed status:', swiftRecorderProcess.killed)
+              console.log('   Terminating hanging process...')
+              swiftRecorderProcess.kill('SIGKILL') // Force kill hanging process
+            }
+            if (!hasStarted) {
+              resolve({ 
+                success: false, 
+                error: 'Swift recorder process hanging - no output received after 10 seconds',
+                cause: 'Process spawned but appears to be stuck in initialization',
+                solution: 'This may indicate permission issues or Swift recorder compatibility problems in app context'
+              })
             }
           }
         }, 10000)
 
+        // Periodic hang detection - check if output has stopped flowing
+        const hangDetectionInterval = setInterval(() => {
+          const now = Date.now()
+          const timeSinceLastOutput = now - lastOutputTime
+          
+          if (outputReceived && timeSinceLastOutput > 15000 && !hasStarted) {
+            console.log('❌ HANG DETECTION: Output stopped flowing for 15+ seconds during initialization')
+            console.log(`   Last output was ${timeSinceLastOutput}ms ago`)
+            if (swiftRecorderProcess && !swiftRecorderProcess.killed) {
+              console.log('   Terminating stalled process...')
+              swiftRecorderProcess.kill('SIGKILL')
+            }
+            clearInterval(hangDetectionInterval)
+            if (!hasStarted) {
+              resolve({ 
+                success: false, 
+                error: 'Swift recorder initialization stalled - output stopped during startup',
+                cause: 'Process started but became unresponsive during initialization phase',
+                solution: 'This may indicate Core Audio device conflicts or system audio routing issues'
+              })
+            }
+          }
+        }, 5000)
+
         swiftRecorderProcess.stdout?.on('data', (data) => {
           outputReceived = true
+          lastOutputTime = Date.now()
           clearTimeout(outputTimeoutId)
           
           console.log('📥 Raw Swift recorder stdout:', data.toString())
@@ -205,6 +242,7 @@ async function startCombinedRecording(
 
               if (result.code === 'RECORDING_STARTED' && !hasStarted) {
                 hasStarted = true
+                clearInterval(hangDetectionInterval)
                 resolve({ success: true, path: result.path })
 
                 // Notify renderer about recording start
@@ -216,6 +254,7 @@ async function startCombinedRecording(
                           result.code === 'SYSTEM_AUDIO_UNAVAILABLE' ||
                           result.code === 'RECORDING_STARTED_MIC_ONLY') && !hasStarted) {
                 hasStarted = true
+                clearInterval(hangDetectionInterval)
                 resolve({ 
                   success: true, 
                   path: result.path, 
@@ -228,10 +267,10 @@ async function startCombinedRecording(
                   mainWindow.webContents.send('combined-recording-started', result)
                 }
                 
-                // Important: Keep the process tracked so we can stop it later
                 console.log('✅ Microphone-only recording started, process still tracked for stopping')
               } else if (result.code === 'SYSTEM_AUDIO_FAILED' && !hasStarted) {
                 hasStarted = true
+                clearInterval(hangDetectionInterval)
                 resolve({ 
                   success: false, 
                   error: result.error,
@@ -244,6 +283,7 @@ async function startCombinedRecording(
                   mainWindow.webContents.send('combined-recording-stopped', result)
                 }
               } else if (result.code === 'RECORDING_ERROR' && !hasStarted) {
+                clearInterval(hangDetectionInterval)
                 resolve({ success: false, error: result.error })
               } else if (result.code === 'RECORDING_FAILED') {
                 // Handle recording failure even after it has started
@@ -259,6 +299,7 @@ async function startCombinedRecording(
                   swiftRecorderProcess = null // Process will exit, so clear reference
                 } else {
                   hasStarted = true
+                  clearInterval(hangDetectionInterval)
                   resolve({ success: false, error: result.error })
                 }
               }
@@ -271,27 +312,35 @@ async function startCombinedRecording(
 
         swiftRecorderProcess.stderr?.on('data', (data) => {
           outputReceived = true
+          lastOutputTime = Date.now()
           clearTimeout(outputTimeoutId)
           console.log('📥 Swift recorder stderr:', data.toString())
         })
 
         swiftRecorderProcess.on('spawn', () => {
-          console.log('🚀 Swift recorder process spawned successfully')
+          console.log('🚀 Swift recorder process spawned successfully (PID: ' + swiftRecorderProcess?.pid + ')')
         })
 
         swiftRecorderProcess.on('close', (code, signal) => {
           console.log(`Swift recorder process exited with code ${code}, signal: ${signal}`)
           clearTimeout(outputTimeoutId)
+          clearInterval(hangDetectionInterval)
           swiftRecorderProcess = null
 
           if (!hasStarted) {
-            resolve({ success: false, error: `Recorder exited with code ${code}` })
+            resolve({ 
+              success: false, 
+              error: `Recorder exited unexpectedly with code ${code}`,
+              cause: signal ? `Process terminated by signal: ${signal}` : `Exit code: ${code}`,
+              solution: 'Check console logs for detailed error information'
+            })
           }
         })
 
         swiftRecorderProcess.on('error', (error) => {
           console.error('Swift recorder error:', error)
           clearTimeout(outputTimeoutId)
+          clearInterval(hangDetectionInterval)
           if (!hasStarted) {
             resolve({ success: false, error: error.message })
           }
@@ -300,11 +349,18 @@ async function startCombinedRecording(
         // Timeout after 30 seconds if recording doesn't start (increased for Bluetooth workaround)
         setTimeout(() => {
           if (!hasStarted) {
+            clearInterval(hangDetectionInterval)
             if (swiftRecorderProcess) {
-              swiftRecorderProcess.kill('SIGTERM')
+              console.log('❌ TIMEOUT: Force terminating Swift recorder after 30 seconds')
+              swiftRecorderProcess.kill('SIGKILL') // Use SIGKILL for force termination
               swiftRecorderProcess = null
             }
-            resolve({ success: false, error: 'Recording start timeout' })
+            resolve({ 
+              success: false, 
+              error: 'Recording start timeout after 30 seconds',
+              cause: 'Swift recorder failed to initialize within timeout period',
+              solution: 'This may indicate system audio routing conflicts or permission issues. Try restarting the app or switching audio devices.'
+            })
           }
         }, 30000)
       })
@@ -1091,6 +1147,48 @@ function unregisterGlobalShortcuts(): void {
   console.log('🗑️ Global shortcuts unregistered')
 }
 
+// Add process cleanup function
+function cleanupHangingRecorderProcesses(): void {
+  console.log('🧹 Checking for hanging Swift recorder processes...')
+  
+  const ps = spawn('ps', ['aux'])
+  let output = ''
+  
+  ps.stdout.on('data', (data: Buffer) => {
+    output += data.toString()
+  })
+  
+  ps.on('close', () => {
+    const lines = output.split('\n')
+    const recorderProcesses = lines.filter(line => 
+      line.includes('Recorder') && 
+      line.includes('--record') && 
+      !line.includes('grep')
+    )
+    
+    if (recorderProcesses.length > 0) {
+      console.log(`🔍 Found ${recorderProcesses.length} hanging recorder process(es):`)
+      
+      recorderProcesses.forEach(line => {
+        const parts = line.trim().split(/\s+/)
+        if (parts.length >= 2) {
+          const pid = parts[1]
+          console.log(`   PID ${pid}: ${line.substring(line.indexOf('Recorder'))}`)
+          
+          try {
+            process.kill(parseInt(pid), 'SIGKILL')
+            console.log(`   ✅ Killed hanging process ${pid}`)
+          } catch (error) {
+            console.log(`   ⚠️ Could not kill process ${pid}: ${error}`)
+          }
+        }
+      })
+    } else {
+      console.log('✅ No hanging recorder processes found')
+    }
+  })
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -1119,6 +1217,9 @@ app.whenReady().then(async () => {
 
   // Check Swift recorder availability
   try {
+    // Clean up any hanging processes first
+    cleanupHangingRecorderProcesses()
+    
     isSwiftRecorderAvailable = await checkSwiftRecorderAvailability()
     console.log(`Swift recorder availability: ${isSwiftRecorderAvailable}`)
   } catch (error) {

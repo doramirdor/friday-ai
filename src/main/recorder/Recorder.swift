@@ -1062,8 +1062,8 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     func setupRecordingEnvironment() {
         print("🔧 Setting up recording environment...")
         
-        // First, check current audio routing
-        checkSystemAudioRouting()
+        // First, check current audio routing and enable Bluetooth workaround if needed
+        checkAndEnableBluetoothWorkaround()
         
         guard let firstDisplay = contentEligibleForSharing?.displays.first else {
             print("❌ No display found for recording")
@@ -1076,16 +1076,15 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
 
         print("✅ Using display: width=\(firstDisplay.width), height=\(firstDisplay.height)")
         
-        // Create a more comprehensive content filter for better system audio capture
+        // Create a comprehensive content filter for better system audio capture
         let screenContentFilter: SCContentFilter
         
         if audioSource == "system" || audioSource == "both" {
-            // For system audio capture, we need to include more content
-            // Try to capture all available displays and applications for better audio routing
+            // For system audio capture, include all displays and running applications
             let allDisplays = contentEligibleForSharing?.displays ?? [firstDisplay]
             let runningApps = contentEligibleForSharing?.applications ?? []
             
-            // Create filter that includes all displays and excludes fewer apps for better audio capture
+            // Create filter that includes all displays and minimal exclusions
             screenContentFilter = SCContentFilter(
                 display: firstDisplay,
                 excludingApplications: [],
@@ -1096,49 +1095,56 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
             print("   - Displays: \(allDisplays.count)")
             print("   - Applications available: \(runningApps.count)")
         } else {
-            // For microphone-only recording, minimal filter is fine
+            // For microphone-only recording, minimal filter is sufficient
             screenContentFilter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
             print("✅ Configured minimal screen content filter for microphone-only")
         }
 
-        // For combined recording, send success response early since microphone is already working
+        // For combined recording, send success response IMMEDIATELY since microphone is already working
+        // This prevents timeout issues in the Electron app
         if audioSource == "both" {
             let currentDevice = getCurrentAudioDevice()
             let outputPath = finalMp3Path ?? tempWavPath ?? ""
             
+            let successResponse: [String: Any]
+            
             if bluetoothWorkaroundEnabled {
                 print("✅ Combined recording ready (Bluetooth workaround enabled)")
-                sendResponse([
+                successResponse = [
                     "code": "RECORDING_STARTED",
                     "path": outputPath,
                     "timestamp": ISO8601DateFormatter().string(from: Date()),
-                    "warning": "Recording with Bluetooth workaround enabled - system audio routed through built-in speakers",
-                    "recommendation": "You will continue hearing audio through Bluetooth while system audio is captured"
-                ])
+                    "warning": "Recording with Bluetooth workaround - audio routes through multiple devices",
+                    "recommendation": "You will hear through Bluetooth while system audio is captured from built-in speakers"
+                ]
             } else if currentDevice.contains("AirPods") || currentDevice.contains("Bluetooth") {
                 print("✅ Combined recording ready (Bluetooth limitations noted)")
-                sendResponse([
-                    "code": "RECORDING_STARTED",
+                successResponse = [
+                    "code": "RECORDING_STARTED", 
                     "path": outputPath,
                     "timestamp": ISO8601DateFormatter().string(from: Date()),
-                    "warning": "Recording both microphone and system audio, but system audio quality may be limited with Bluetooth devices",
-                    "recommendation": "For optimal system audio quality, consider switching to built-in speakers"
-                ])
+                    "warning": "System audio capture may be limited with Bluetooth devices",
+                    "recommendation": "Microphone recording active, system audio quality depends on device compatibility"
+                ]
             } else {
                 print("✅ Combined recording ready (full system audio)")
-                sendResponse([
+                successResponse = [
                     "code": "RECORDING_STARTED",
                     "path": outputPath,
                     "timestamp": ISO8601DateFormatter().string(from: Date())
-                ])
+                ]
             }
+            
+            // Send response immediately to prevent timeout
+            sendResponse(successResponse)
         }
 
+        // Start system audio recording asynchronously
         Task { 
             do {
                 try await initiateRecording(with: screenContentFilter)
             } catch {
-                print("❌ Failed to initiate recording: \(error.localizedDescription)")
+                print("❌ Failed to initiate system audio recording: \(error.localizedDescription)")
                 
                 // Only send error response if we haven't already sent a success response for combined recording
                 if audioSource != "both" {
@@ -1148,105 +1154,39 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
                     ])
                 } else {
                     print("⚠️ System audio failed for combined recording, but microphone recording continues")
+                    // Combined recording can continue with just microphone
                 }
             }
         }
     }
 
-    private func checkSystemAudioRouting() {
-        print("🔍 Checking system audio routing...")
+    private func checkAndEnableBluetoothWorkaround() {
+        print("🔍 Checking if Bluetooth workaround is needed...")
         
-        // Get current audio output device
-        var defaultOutputDeviceID: AudioDeviceID = 0
-        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
+        // Log detailed audio device information for debugging
+        AudioDeviceManager.logDetailedAudioDeviceInfo()
         
-        let result = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &propertySize,
-            &defaultOutputDeviceID
-        )
+        // Check if current audio output is Bluetooth
+        let isBluetoothActive = isCurrentDeviceBluetooth()
         
-        if result == noErr {
-            // Get device name
-            var deviceNameProperty = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceName,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
+        if isBluetoothActive {
+            print("📱 Bluetooth audio device detected - attempting workaround...")
             
-            var deviceNameSize = UInt32(256)
-            var deviceNameBuffer = [UInt8](repeating: 0, count: 256)
-            
-            let nameResult = AudioObjectGetPropertyData(
-                defaultOutputDeviceID,
-                &deviceNameProperty,
-                0,
-                nil,
-                &deviceNameSize,
-                &deviceNameBuffer
-            )
-            
-            if nameResult == noErr {
-                let deviceName = String(bytes: deviceNameBuffer.prefix(Int(deviceNameSize)), encoding: .utf8) ?? "Unknown"
-                print("🔊 Current audio output device: \(deviceName)")
+            // Try to enable Bluetooth workaround
+            if AudioDeviceManager.enableBluetoothWorkaround() {
+                bluetoothWorkaroundEnabled = true
+                print("✅ Bluetooth workaround enabled successfully")
                 
-                // Check if it's a Bluetooth device and enable workaround if needed
-                if (deviceName.contains("AirPods") || deviceName.contains("Bluetooth")) && (audioSource == "system" || audioSource == "both") {
-                    print("⚠️ Warning: Bluetooth audio device detected")
-                    print("   System audio capture may be limited with Bluetooth devices")
-                    print("   Attempting to enable Bluetooth workaround before recording...")
-
-                    // Enable Bluetooth workaround for system audio capture
-                    print("🔧 Attempting to enable Bluetooth workaround...")
-                    if AudioDeviceManager.enableBluetoothWorkaround() {
-                        bluetoothWorkaroundEnabled = true
-                        print("✅ Bluetooth workaround enabled successfully")
-                        print("   Users will continue hearing audio through Bluetooth")
-                        print("   System audio will be captured from built-in speakers")
-                        
-                        // Wait a moment for the audio system to settle
-                        Thread.sleep(forTimeInterval: 1.0)
-                    } else {
-                        print("❌ Failed to enable Bluetooth workaround")
-                        print("   Recording will continue with standard Bluetooth limitations")
-                        
-                        // For combined recording, warn but continue with mic-only if system audio fails
-                        if audioSource == "both" {
-                            print("   Will attempt system audio capture, but may fall back to microphone-only")
-                        } else {
-                            // For system-only recording with Bluetooth, return error early
-                            ResponseHandler.returnResponse([
-                                "code": "BLUETOOTH_LIMITATION",
-                                "error": "System audio recording not supported with Bluetooth devices",
-                                "warning": "Bluetooth audio devices do not support system audio capture",
-                                "recommendation": "Switch to built-in speakers for system audio recording, or use microphone-only mode",
-                                "device": deviceName
-                            ])
-                            return
-                        }
-                    }
-                }
-                
-                // Check if device supports volume control (indicator of proper routing)
-                var volumeProperty = AudioObjectPropertyAddress(
-                    mSelector: kAudioDevicePropertyVolumeScalar,
-                    mScope: kAudioDevicePropertyScopeOutput,
-                    mElement: kAudioObjectPropertyElementMain
-                )
-                
-                let hasVolume = AudioObjectHasProperty(defaultOutputDeviceID, &volumeProperty)
-                print("🎚️ Device supports volume control: \(hasVolume)")
+                // Add a small delay to let the system stabilize
+                usleep(500000) // 0.5 seconds
+            } else {
+                print("❌ Bluetooth workaround failed - recording will proceed with limitations")
+                print("   System audio quality may be reduced or unavailable")
+                bluetoothWorkaroundEnabled = false
             }
         } else {
-            print("❌ Could not get default audio output device")
+            print("🔊 Built-in or wired audio detected - no workaround needed")
+            bluetoothWorkaroundEnabled = false
         }
     }
 

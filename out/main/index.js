@@ -841,10 +841,25 @@ async function startCombinedRecording(recordingPath, filename) {
       console.log("🎙️ Starting combined recording with Swift recorder...");
       console.log("Command:", recorderPath, args.join(" "));
       swiftRecorderProcess = child_process.spawn(recorderPath, args, {
-        stdio: ["pipe", "pipe", "pipe"]
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, NSUnbufferedIO: "YES" }
+        // Force unbuffered output
       });
       let hasStarted = false;
+      let outputReceived = false;
+      const outputTimeoutId = setTimeout(() => {
+        if (!outputReceived) {
+          console.log("⚠️ No output received from Swift recorder after 10 seconds - process may be hanging");
+          if (swiftRecorderProcess) {
+            console.log("Process PID:", swiftRecorderProcess.pid);
+            console.log("Process killed:", swiftRecorderProcess.killed);
+          }
+        }
+      }, 1e4);
       swiftRecorderProcess.stdout?.on("data", (data) => {
+        outputReceived = true;
+        clearTimeout(outputTimeoutId);
+        console.log("📥 Raw Swift recorder stdout:", data.toString());
         const lines = data.toString().split("\n").filter((line) => line.trim());
         for (const line of lines) {
           try {
@@ -900,10 +915,16 @@ async function startCombinedRecording(recordingPath, filename) {
         }
       });
       swiftRecorderProcess.stderr?.on("data", (data) => {
-        console.log("Swift recorder stderr:", data.toString());
+        outputReceived = true;
+        clearTimeout(outputTimeoutId);
+        console.log("📥 Swift recorder stderr:", data.toString());
       });
-      swiftRecorderProcess.on("close", (code) => {
-        console.log(`Swift recorder process exited with code ${code}`);
+      swiftRecorderProcess.on("spawn", () => {
+        console.log("🚀 Swift recorder process spawned successfully");
+      });
+      swiftRecorderProcess.on("close", (code, signal) => {
+        console.log(`Swift recorder process exited with code ${code}, signal: ${signal}`);
+        clearTimeout(outputTimeoutId);
         swiftRecorderProcess = null;
         if (!hasStarted) {
           resolve({ success: false, error: `Recorder exited with code ${code}` });
@@ -911,6 +932,7 @@ async function startCombinedRecording(recordingPath, filename) {
       });
       swiftRecorderProcess.on("error", (error) => {
         console.error("Swift recorder error:", error);
+        clearTimeout(outputTimeoutId);
         if (!hasStarted) {
           resolve({ success: false, error: error.message });
         }

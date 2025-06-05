@@ -152,7 +152,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
 
   // Handle global shortcut events
   useEffect(() => {
-    const handleToggleRecording = () => {
+    const handleToggleRecording = (): void => {
       console.log('📱 TranscriptScreen: Toggle recording event received')
       if (isRecording) {
         stopRecording()
@@ -161,13 +161,15 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
       }
     }
 
-    const handleQuickNote = () => {
+    const handleQuickNote = (): void => {
       console.log('📱 TranscriptScreen: Quick note event received')
-      // Switch to notes tab and add timestamp
-      setActiveSidebarTab('notes')
-      const timestamp = formatTime(currentTime)
-      const quickNote = `[${timestamp}] `
-      setNotes(prev => prev ? `${prev}\n${quickNote}` : quickNote)
+      if (isRecording && currentTime > 0) {
+        // Format timestamp as [MM:SS]
+        const minutes = Math.floor(currentTime / 60)
+        const seconds = Math.floor(currentTime % 60)
+        const timestamp = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+        setNotes(prev => prev ? `${prev}\n[${timestamp}] ` : `[${timestamp}] `)
+      }
     }
 
     const handlePauseResume = () => {

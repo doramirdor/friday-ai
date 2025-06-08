@@ -75,7 +75,9 @@ const api = {
     // Generate comprehensive meeting content (summary, description, action items, tags)
     generateContent: (options) => electron.ipcRenderer.invoke("gemini:generate-content", options),
     // Generate summary only
-    generateSummary: (options) => electron.ipcRenderer.invoke("gemini:generate-summary", options)
+    generateSummary: (options) => electron.ipcRenderer.invoke("gemini:generate-summary", options),
+    // Generate Slack or Email messages
+    generateMessage: (options) => electron.ipcRenderer.invoke("gemini:generate-message", options)
   },
   electron: {
     dialog: {

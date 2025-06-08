@@ -21,15 +21,16 @@
     "build:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {
+    "@blocknote/core": "^0.32.0-hackdays.0",
+    "@blocknote/mantine": "^0.32.0-hackdays.0",
+    "@blocknote/react": "^0.32.0-hackdays.0",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
-    "@types/quill": "^2.0.14",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/sqlite3": "^5.1.0",
     "electron-updater": "^6.3.9",
     "fluent-ffmpeg": "^2.1.3",
     "lucide-react": "^0.511.0",
-    "quill": "^2.0.3",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^15.6.1",
     "sqlite3": "^5.1.7"

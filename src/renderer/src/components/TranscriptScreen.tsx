@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import QuillEditor from './QuillEditor'
+import BlockNoteEditor from './BlockNoteEditor'
 import {
   PlayIcon,
   PauseIcon,
@@ -13,7 +13,11 @@ import {
   MicIcon,
   SaveIcon,
   SparklesIcon,
-  BookOpenIcon
+  BookOpenIcon,
+  BotIcon,
+  MailIcon,
+  MessageSquareIcon,
+  CopyIcon
 } from 'lucide-react'
 import { Meeting } from '../types/database'
 
@@ -29,7 +33,15 @@ interface TranscriptScreenProps {
   onBack: () => void
 }
 
-type SidebarTab = 'details' | 'context' | 'actions' | 'notes' | 'summary'
+type SidebarTab = 'details' | 'context' | 'actions' | 'notes' | 'summary' | 'ai'
+
+interface AIDataSelection {
+  notes: boolean
+  summary: boolean
+  transcript: boolean
+  description: boolean
+  title: boolean
+}
 
 // Global recording control interface - moved from App.tsx for consistency
 interface RecordingControl {
@@ -136,10 +148,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
   const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
 
-  // Remove unused chunked recording state variables
-  const chunkBuffers = useRef<Blob[]>([])
-  const chunkInterval = useRef<NodeJS.Timeout | null>(null)
-  const CHUNK_DURATION = 5 * 60 * 1000 // 5 minutes
+  // Chunked recording state
+  const [isChunkedRecording, setIsChunkedRecording] = useState(false)
+  const [recordingChunks, setRecordingChunks] = useState<string[]>([])
 
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const recordingInterval = useRef<NodeJS.Timeout | null>(null)
@@ -1365,23 +1376,25 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
               <h3 className="card-title">Action Items</h3>
             </div>
             <div className="card-body">
-              <div className="action-items">
-                {actionItems.map((item) => (
-                  <div key={item.id} className="action-item">
-                    <input
-                      type="checkbox"
-                      id={`action-${item.id}`}
-                      checked={item.completed}
-                      onChange={() => toggleActionItem(item.id)}
-                    />
-                    <label
-                      htmlFor={`action-${item.id}`}
-                      className={`action-item-text ${item.completed ? 'completed' : ''}`}
-                    >
-                      {item.text}
-                    </label>
-                  </div>
-                ))}
+              <div className="action-items-container">
+                <div className="action-items">
+                  {actionItems.map((item) => (
+                    <div key={item.id} className="action-item">
+                      <input
+                        type="checkbox"
+                        id={`action-${item.id}`}
+                        checked={item.completed}
+                        onChange={() => toggleActionItem(item.id)}
+                      />
+                      <label
+                        htmlFor={`action-${item.id}`}
+                        className={`action-item-text ${item.completed ? 'completed' : ''}`}
+                      >
+                        {item.text}
+                      </label>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <button
@@ -1416,7 +1429,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
               <div className="input-group">
                 <label className="demo-label">Notes (Rich Text Editor)</label>
                 <div style={{ marginTop: '8px' }}>
-                  <QuillEditor
+                  <BlockNoteEditor
                     value={notes}
                     onChange={(val) => setNotes(val || '')}
                     placeholder="Write your notes here..."
@@ -1426,6 +1439,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
               </div>
               <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                 Use the toolbar above for rich text formatting. Bold, italic, headers, lists, and more are available.
+              </div>
+              <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Use "/" to open the command menu for blocks, headings, lists, and more. Drag blocks to reorder them.
               </div>
             </div>
           </div>
@@ -1480,6 +1496,97 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
                   {isSummaryAIGenerated ? '🤖 AI-generated summary - you can edit it above' : 'Custom summary'}
                 </div>
               )}
+            </div>
+          </div>
+        )
+
+      case 'ai':
+        return (
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">AI Message Generator</h3>
+            </div>
+            <div className="card-body">
+              <div className="ai-content-container">
+                {/* Data Selection */}
+                <div className="input-group">
+                  <label className="demo-label">Include Data</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {Object.entries(aiDataSelection).map(([key, value]) => (
+                      <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                          type="checkbox"
+                          checked={value}
+                          onChange={() => toggleDataSelection(key as keyof AIDataSelection)}
+                        />
+                        <span style={{ textTransform: 'capitalize' }}>{key}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Global context and meeting context are always included
+                  </div>
+                </div>
+
+                {/* Message Type Selection */}
+                <div className="input-group">
+                  <label className="demo-label">Message Type</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      className={`btn btn-sm ${messageType === 'slack' ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setMessageType('slack')}
+                    >
+                      <MessageSquareIcon size={16} />
+                      Slack Message
+                    </button>
+                    <button
+                      className={`btn btn-sm ${messageType === 'email' ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setMessageType('email')}
+                    >
+                      <MailIcon size={16} />
+                      Email Message
+                    </button>
+                  </div>
+                </div>
+
+                {/* Generate Button */}
+                <div className="input-group">
+                  <button
+                    className="btn btn-primary w-full"
+                    onClick={() => generateAIMessage(messageType)}
+                    disabled={isGeneratingMessage}
+                  >
+                    <SparklesIcon size={16} />
+                    {isGeneratingMessage ? 'Generating...' : `Generate ${messageType === 'slack' ? 'Slack' : 'Email'} Message`}
+                  </button>
+                </div>
+
+                {/* Generated Message Output */}
+                {generatedMessage && (
+                  <div className="input-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <label className="demo-label">Generated Message</label>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={copyToClipboard}
+                        title="Copy to clipboard"
+                      >
+                        <CopyIcon size={16} />
+                        Copy
+                      </button>
+                    </div>
+                    <BlockNoteEditor
+                      value={generatedMessage}
+                      onChange={setGeneratedMessage}
+                      placeholder="Generated message will appear here..."
+                      height={300}
+                    />
+                    <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      You can edit the message above and copy it to your clipboard
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )
@@ -1716,20 +1823,20 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
 
   // Helper function to create a recording chunk
   const createRecordingChunk = async (): Promise<void> => {
-    if (chunkBuffers.current.length === 0) return
+    if (recordingChunks.length === 0) return
 
     try {
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm'
 
-      const chunkBlob = new Blob(chunkBuffers.current, { type: mimeType })
+      const chunkBlob = new Blob(recordingChunks, { type: mimeType })
       const arrayBuffer = await chunkBlob.arrayBuffer()
 
       console.log(`💾 Processing chunk (${chunkBlob.size} bytes)`)
 
       // Clear buffer for next chunk
-      chunkBuffers.current = []
+      recordingChunks.length = 0
     } catch (error) {
       console.error('Error creating recording chunk:', error)
     }
@@ -1746,11 +1853,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
       const result = await window.api.chunkedRecording.start(meeting.id)
       if (result.success) {
         setIsChunkedRecording(true)
-        setChunkIndex(0)
-        chunkBuffers.current = []
+        setRecordingChunks([])
 
         // Set up periodic chunk creation
-        chunkInterval.current = setInterval(createRecordingChunk, CHUNK_DURATION)
+        recordingInterval.current = setInterval(createRecordingChunk, 5 * 60 * 1000) // 5 minutes
         
         console.log('✅ Chunked recording started with 5-minute intervals')
       } else {
@@ -1767,9 +1873,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
 
     try {
       // Clear chunk timer
-      if (chunkInterval.current) {
-        clearInterval(chunkInterval.current)
-        chunkInterval.current = null
+      if (recordingInterval.current) {
+        clearInterval(recordingInterval.current)
+        recordingInterval.current = null
       }
 
       // Create final chunk if there's data
@@ -1791,6 +1897,85 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     } catch (error) {
       console.error('Error stopping chunked recording:', error)
     }
+  }
+
+  // AI generation state
+  const [aiDataSelection, setAiDataSelection] = useState<AIDataSelection>({
+    notes: true,
+    summary: true,
+    transcript: true,
+    description: true,
+    title: true
+  })
+  const [generatedMessage, setGeneratedMessage] = useState('')
+  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
+  const [messageType, setMessageType] = useState<'slack' | 'email'>('slack')
+
+  // AI generation functions
+  const generateAIMessage = async (type: 'slack' | 'email'): Promise<void> => {
+    if (!meeting?.id) {
+      alert('No meeting data available for AI generation')
+      return
+    }
+
+    try {
+      setIsGeneratingMessage(true)
+      console.log(`🤖 Generating ${type} message with Gemini...`)
+      
+      const settings = await window.api.db.getSettings()
+      
+      // Build the context data based on user selection
+      const selectedData: any = {
+        globalContext: settings.globalContext || '',
+        meetingContext: contextText, // Always included
+      }
+
+      // Add selected data
+      if (aiDataSelection.title && title) selectedData.title = title
+      if (aiDataSelection.description && description) selectedData.description = description
+      if (aiDataSelection.notes && notes) selectedData.notes = notes
+      if (aiDataSelection.summary && summary) selectedData.summary = summary
+      if (aiDataSelection.transcript && transcript.length > 0) {
+        selectedData.transcript = transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
+      }
+
+      const result = await (window.api as any).gemini.generateMessage({
+        type,
+        data: selectedData,
+        model: 'gemini-2.5-pro-preview-06-05'
+      })
+      
+      if (result.success && result.message) {
+        setGeneratedMessage(result.message)
+        console.log(`✅ ${type} message generated successfully`)
+      } else {
+        console.error(`Failed to generate ${type} message:`, result.error)
+        alert(`Failed to generate ${type} message: ${result.error}`)
+      }
+    } catch (error) {
+      console.error(`Error generating ${type} message:`, error)
+      alert(`Failed to generate ${type} message. Please check your Gemini API key in settings.`)
+    } finally {
+      setIsGeneratingMessage(false)
+    }
+  }
+
+  const copyToClipboard = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(generatedMessage)
+      console.log('✅ Message copied to clipboard')
+      // You could add a toast notification here
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error)
+      alert('Failed to copy to clipboard')
+    }
+  }
+
+  const toggleDataSelection = (key: keyof AIDataSelection): void => {
+    setAiDataSelection(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }))
   }
 
   return (
@@ -2150,6 +2335,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
           >
             <FileTextIcon size={16} />
             Summary
+          </button>
+          <button
+            className={`tab ${activeSidebarTab === 'ai' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarTab('ai')}
+          >
+            <BotIcon size={16} />
+            AI
           </button>
         </div>
 

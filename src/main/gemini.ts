@@ -19,6 +19,20 @@ interface GeminiGenerationResult {
   error?: string
 }
 
+interface GeminiMessageOptions {
+  type: 'slack' | 'email'
+  data: {
+    globalContext: string
+    meetingContext: string
+    title?: string
+    description?: string
+    notes?: string
+    summary?: string
+    transcript?: string
+  }
+  model?: string
+}
+
 class GeminiService {
   private apiKey: string | null = null
 
@@ -26,13 +40,13 @@ class GeminiService {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || null
   }
 
-  private async makeGeminiRequest(prompt: string): Promise<{ success: boolean; content?: string; error?: string }> {
+  private async makeGeminiRequest(prompt: string, model: string = 'gemini-2.5-pro-preview-06-05'): Promise<{ success: boolean; content?: string; error?: string }> {
     if (!this.apiKey) {
       return { success: false, error: 'Gemini API key not configured' }
     }
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -185,6 +199,89 @@ Please respond with only the summary, no additional formatting or explanations.`
       return { success: true, summary: result.content.trim() }
     } catch (error) {
       return { success: false, error: `Summary generation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }
+    }
+  }
+
+  async generateMessage(options: GeminiMessageOptions): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const { type, data } = options
+      const model = options.model || 'gemini-2.5-pro-preview-06-05'
+
+      // Build the context sections that are provided
+      const contextSections: string[] = []
+      
+      if (data.globalContext) {
+        contextSections.push(`GLOBAL CONTEXT:\n${data.globalContext}`)
+      }
+      
+      if (data.meetingContext) {
+        contextSections.push(`MEETING CONTEXT:\n${data.meetingContext}`)
+      }
+      
+      if (data.title) {
+        contextSections.push(`TITLE:\n${data.title}`)
+      }
+      
+      if (data.description) {
+        contextSections.push(`DESCRIPTION:\n${data.description}`)
+      }
+      
+      if (data.summary) {
+        contextSections.push(`SUMMARY:\n${data.summary}`)
+      }
+      
+      if (data.notes) {
+        contextSections.push(`NOTES:\n${data.notes}`)
+      }
+      
+      if (data.transcript) {
+        contextSections.push(`TRANSCRIPT:\n${data.transcript}`)
+      }
+
+      const contextText = contextSections.join('\n\n')
+
+      let prompt = ''
+      
+      if (type === 'slack') {
+        prompt = `You are an AI assistant helping to create a Slack message about a meeting. Please generate a professional Slack message based on the following information:
+
+${contextText}
+
+Please create a well-formatted Slack message that:
+- Is professional yet conversational for team communication
+- Highlights key points and outcomes
+- Includes action items if any
+- Uses appropriate Slack formatting (bold for emphasis, bullet points for lists)
+- Is concise but informative
+- Suitable for posting in a team channel
+
+Generate only the message content in rich text format, no additional explanations.`
+      } else {
+        prompt = `You are an AI assistant helping to create an email about a meeting. Please generate a professional email based on the following information:
+
+${contextText}
+
+Please create a well-formatted email message that:
+- Has a professional tone suitable for business communication
+- Includes a clear structure with paragraphs
+- Highlights key points and outcomes
+- Includes action items if any
+- Uses appropriate formatting for email (headings, bullet points)
+- Is comprehensive but well-organized
+- Suitable for sending to stakeholders or team members
+
+Generate only the email body content in rich text format, no subject line or additional explanations.`
+      }
+
+      const result = await this.makeGeminiRequest(prompt, model)
+      
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || 'Failed to generate message' }
+      }
+
+      return { success: true, message: result.content.trim() }
+    } catch (error) {
+      return { success: false, error: `Message generation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }
     }
   }
 }

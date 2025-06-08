@@ -239,3 +239,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This addresses the core issue of large recording limitations and provides a foundation for enterprise-scale recording capabilities.
 
 ### Fixed
+
+## [Unreleased] - 2025-01-05
+
+### Fixed - Bluetooth Recording Audio Issues
+- **Core Audio Error 2003332927**: Fixed the "who?" error in multi-output device creation by implementing proper HAL API usage with plugin detection and fallback mechanisms
+- **Swift Recorder Process Hanging**: Added comprehensive process monitoring with hang detection, timeout management, and force termination for unresponsive processes
+- **Recording Start Timeouts**: Implemented immediate response for combined recording to prevent Electron app timeouts, with microphone recording starting first
+- **Process Accumulation**: Added automatic cleanup of hanging Swift recorder processes to prevent resource consumption
+- **Built-in Device Detection**: Fixed device detection to properly identify speakers vs microphones for Bluetooth workaround
+- **Bluetooth Workaround Timing**: Improved system stabilization timing and workaround triggering logic
+
+### Added - Audio Device Optimization
+- **Detailed Audio Device Logging**: Added comprehensive audio device information logging including sample rates, channel counts, and transport types
+- **Sample Rate Detection**: Added `getDeviceSampleRate()` function to detect optimal sample rates for audio devices
+- **Channel Count Detection**: Added `getDeviceChannelCount()` function to detect channel configuration for input/output optimization
+- **Device Information API**: Added `getDeviceAudioInfo()` function for comprehensive device analysis
+- **Enhanced Error Reporting**: Added ASCII error code translation and detailed error context for Core Audio failures
+
+### Improved - Process Management
+- **Hang Detection**: Added periodic monitoring to detect when Swift recorder output stops flowing during initialization
+- **Force Termination**: Implemented SIGKILL for unresponsive processes after timeout periods
+- **Process Tracking**: Enhanced process lifecycle management with PID tracking and status monitoring
+- **Error Context**: Added detailed error causes and solutions for troubleshooting recording failures
+
+### Technical Details
+- Fixed Core Audio aggregate device creation using proper `kAudioPlugInCreateAggregateDevice` API
+- Implemented HAL plugin detection with fallback to system object for device creation
+- Added comprehensive error handling for Core Audio error codes including the notorious 2003332927 ("who?")
+- Enhanced Swift recorder with immediate JSON response for combined recording to prevent app timeouts
+- Added process cleanup function that runs at startup to eliminate hanging recorder processes
+- Improved Bluetooth device detection using transport type instead of name-based detection
+- Added detailed audio device information logging for debugging Bluetooth compatibility issues

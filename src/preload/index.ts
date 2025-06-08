@@ -102,7 +102,10 @@ const api = {
     generateContent: (options: any) => ipcRenderer.invoke('gemini:generate-content', options),
 
     // Generate summary only
-    generateSummary: (options: any) => ipcRenderer.invoke('gemini:generate-summary', options)
+    generateSummary: (options: any) => ipcRenderer.invoke('gemini:generate-summary', options),
+
+    // Generate Slack or Email messages
+    generateMessage: (options: any) => ipcRenderer.invoke('gemini:generate-message', options)
   },
 
   electron: {

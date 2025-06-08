@@ -482,129 +482,16 @@ class DatabaseService {
   }
 }
 const databaseService = new DatabaseService();
-const sampleMeetings = [
-  {
-    recordingPath: "/path/to/recording1.m4a",
-    transcript: [
-      {
-        time: "00:15",
-        text: "Okay, let's start today's standup meeting. We have several important topics to cover."
-      },
-      {
-        time: "00:28",
-        text: "First, let me go over what we accomplished yesterday and what we're planning for today."
-      },
-      {
-        time: "00:42",
-        text: "John, would you like to share your updates on the authentication system?"
-      },
-      {
-        time: "01:05",
-        text: "Sure! Yesterday I finished implementing the OAuth integration with Google and GitHub."
-      },
-      {
-        time: "01:18",
-        text: "Today I'm planning to work on the password reset functionality and write some tests."
-      },
-      { time: "01:32", text: "Great work! Any blockers or challenges you're facing?" },
-      {
-        time: "01:45",
-        text: "Not really, everything is going smoothly. The API documentation was really helpful."
-      },
-      {
-        time: "02:02",
-        text: "Perfect. Sarah, what about the UI components you've been working on?"
-      },
-      {
-        time: "02:15",
-        text: "I've completed the design system foundation and implemented the core button components."
-      },
-      {
-        time: "02:28",
-        text: "The focus states and accessibility features are all working as expected."
-      }
-    ],
-    title: "Team Standup Meeting",
-    description: "Weekly team standup to discuss progress, blockers, and upcoming tasks. Covered authentication system updates and UI component progress.",
-    tags: ["meeting", "standup", "team"],
-    actionItems: [
-      { id: 1, text: "Implement password reset functionality", completed: false },
-      { id: 2, text: "Complete OAuth integration with Google and GitHub", completed: true },
-      { id: 3, text: "Write tests for authentication system", completed: false },
-      { id: 4, text: "Review UI component accessibility features", completed: false }
-    ],
-    context: "This is our weekly standup meeting. We discuss what we completed yesterday, what we're working on today, and any blockers. Key participants: John (Backend Developer), Sarah (UI Designer), Mike (Frontend Developer).",
-    context_files: [],
-    notes: "",
-    summary: "Team discussed progress on authentication system and UI components. OAuth integration completed, password reset functionality in progress.",
-    createdAt: "2024-01-15T10:00:00Z",
-    updatedAt: "2024-01-15T10:15:32Z",
-    duration: "15:32"
-  },
-  {
-    recordingPath: "/path/to/recording2.m4a",
-    transcript: [
-      { time: "00:00", text: "Welcome everyone to our product strategy discussion." },
-      {
-        time: "00:10",
-        text: "Today we'll be reviewing our roadmap for Q2 and discussing priorities."
-      },
-      { time: "00:25", text: "Let's start with our current market position and user feedback." }
-    ],
-    title: "Product Strategy Discussion",
-    description: "Quarterly product strategy meeting to align on roadmap and priorities for Q2.",
-    tags: ["strategy", "product", "planning"],
-    actionItems: [
-      { id: 1, text: "Finalize Q2 roadmap priorities", completed: false },
-      { id: 2, text: "Schedule user research sessions", completed: false },
-      { id: 3, text: "Update product requirements document", completed: false }
-    ],
-    context: "Quarterly strategy session with product team to review market position and plan Q2 initiatives.",
-    context_files: [],
-    notes: "",
-    summary: "Discussed Q2 roadmap priorities, user feedback insights, and upcoming product initiatives.",
-    createdAt: "2024-01-14T14:00:00Z",
-    updatedAt: "2024-01-14T14:32:18Z",
-    duration: "32:18"
-  },
-  {
-    recordingPath: "/path/to/recording3.m4a",
-    transcript: [
-      { time: "00:00", text: "Thank you for joining our feedback session today." },
-      { time: "00:12", text: "We're excited to share our latest designs and get your thoughts." }
-    ],
-    title: "Client Feedback Session",
-    description: "Design review session with client to gather feedback on latest mockups and prototypes.",
-    tags: ["client", "feedback", "design"],
-    actionItems: [
-      { id: 1, text: "Incorporate client feedback into designs", completed: false },
-      { id: 2, text: "Update prototypes based on discussion", completed: false },
-      { id: 3, text: "Schedule follow-up review", completed: false }
-    ],
-    context: "Client review session for mobile app design iterations. Focus on user experience and visual design feedback.",
-    context_files: [],
-    notes: "",
-    summary: "Client provided valuable feedback on design direction. Several UI improvements requested.",
-    createdAt: "2024-01-12T16:00:00Z",
-    updatedAt: "2024-01-12T16:28:45Z",
-    duration: "28:45"
-  }
-];
 async function seedDatabase() {
   try {
     const existingMeetings = await databaseService.getAllMeetings();
     if (existingMeetings.length === 0) {
-      console.log("Seeding database with sample meetings...");
-      for (const meeting of sampleMeetings) {
-        await databaseService.createMeeting(meeting);
-        console.log(`Created meeting: ${meeting.title}`);
-      }
-      console.log("Database seeding completed successfully");
+      console.log("Database initialized successfully");
     } else {
       console.log("Database already contains meetings, skipping seed");
     }
   } catch (error) {
-    console.error("Failed to seed database:", error);
+    console.error("Failed to check database status:", error);
   }
 }
 class GeminiService {
@@ -612,12 +499,12 @@ class GeminiService {
   setApiKey(apiKey) {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || null;
   }
-  async makeGeminiRequest(prompt) {
+  async makeGeminiRequest(prompt, model = "gemini-2.5-pro-preview-06-05") {
     if (!this.apiKey) {
       return { success: false, error: "Gemini API key not configured" };
     }
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -747,6 +634,80 @@ Please respond with only the summary, no additional formatting or explanations.`
       return { success: false, error: `Summary generation failed: ${error instanceof Error ? error.message : "Unknown error"}` };
     }
   }
+  async generateMessage(options) {
+    try {
+      const { type, data } = options;
+      const model = options.model || "gemini-2.5-pro-preview-06-05";
+      const contextSections = [];
+      if (data.globalContext) {
+        contextSections.push(`GLOBAL CONTEXT:
+${data.globalContext}`);
+      }
+      if (data.meetingContext) {
+        contextSections.push(`MEETING CONTEXT:
+${data.meetingContext}`);
+      }
+      if (data.title) {
+        contextSections.push(`TITLE:
+${data.title}`);
+      }
+      if (data.description) {
+        contextSections.push(`DESCRIPTION:
+${data.description}`);
+      }
+      if (data.summary) {
+        contextSections.push(`SUMMARY:
+${data.summary}`);
+      }
+      if (data.notes) {
+        contextSections.push(`NOTES:
+${data.notes}`);
+      }
+      if (data.transcript) {
+        contextSections.push(`TRANSCRIPT:
+${data.transcript}`);
+      }
+      const contextText = contextSections.join("\n\n");
+      let prompt = "";
+      if (type === "slack") {
+        prompt = `You are an AI assistant helping to create a Slack message about a meeting. Please generate a professional Slack message based on the following information:
+
+${contextText}
+
+Please create a well-formatted Slack message that:
+- Is professional yet conversational for team communication
+- Highlights key points and outcomes
+- Includes action items if any
+- Uses appropriate Slack formatting (bold for emphasis, bullet points for lists)
+- Is concise but informative
+- Suitable for posting in a team channel
+
+Generate only the message content in rich text format, no additional explanations.`;
+      } else {
+        prompt = `You are an AI assistant helping to create an email about a meeting. Please generate a professional email based on the following information:
+
+${contextText}
+
+Please create a well-formatted email message that:
+- Has a professional tone suitable for business communication
+- Includes a clear structure with paragraphs
+- Highlights key points and outcomes
+- Includes action items if any
+- Uses appropriate formatting for email (headings, bullet points)
+- Is comprehensive but well-organized
+- Suitable for sending to stakeholders or team members
+
+Generate only the email body content in rich text format, no subject line or additional explanations.`;
+      }
+      const result = await this.makeGeminiRequest(prompt, model);
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || "Failed to generate message" };
+      }
+      return { success: true, message: result.content.trim() };
+    } catch (error) {
+      return { success: false, error: `Message generation failed: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
 }
 const geminiService = new GeminiService();
 let mainWindow = null;
@@ -847,17 +808,51 @@ async function startCombinedRecording(recordingPath, filename) {
       });
       let hasStarted = false;
       let outputReceived = false;
+      let lastOutputTime = Date.now();
       const outputTimeoutId = setTimeout(() => {
         if (!outputReceived) {
-          console.log("⚠️ No output received from Swift recorder after 10 seconds - process may be hanging");
+          console.log("❌ HANG DETECTION: No output received from Swift recorder after 10 seconds");
+          console.log("   Process may be hanging in Electron app context vs manual terminal execution");
           if (swiftRecorderProcess) {
-            console.log("Process PID:", swiftRecorderProcess.pid);
-            console.log("Process killed:", swiftRecorderProcess.killed);
+            console.log("   Process PID:", swiftRecorderProcess.pid);
+            console.log("   Process killed status:", swiftRecorderProcess.killed);
+            console.log("   Terminating hanging process...");
+            swiftRecorderProcess.kill("SIGKILL");
+          }
+          if (!hasStarted) {
+            resolve({
+              success: false,
+              error: "Swift recorder process hanging - no output received after 10 seconds",
+              cause: "Process spawned but appears to be stuck in initialization",
+              solution: "This may indicate permission issues or Swift recorder compatibility problems in app context"
+            });
           }
         }
       }, 1e4);
+      const hangDetectionInterval = setInterval(() => {
+        const now = Date.now();
+        const timeSinceLastOutput = now - lastOutputTime;
+        if (outputReceived && timeSinceLastOutput > 15e3 && !hasStarted) {
+          console.log("❌ HANG DETECTION: Output stopped flowing for 15+ seconds during initialization");
+          console.log(`   Last output was ${timeSinceLastOutput}ms ago`);
+          if (swiftRecorderProcess && !swiftRecorderProcess.killed) {
+            console.log("   Terminating stalled process...");
+            swiftRecorderProcess.kill("SIGKILL");
+          }
+          clearInterval(hangDetectionInterval);
+          if (!hasStarted) {
+            resolve({
+              success: false,
+              error: "Swift recorder initialization stalled - output stopped during startup",
+              cause: "Process started but became unresponsive during initialization phase",
+              solution: "This may indicate Core Audio device conflicts or system audio routing issues"
+            });
+          }
+        }
+      }, 5e3);
       swiftRecorderProcess.stdout?.on("data", (data) => {
         outputReceived = true;
+        lastOutputTime = Date.now();
         clearTimeout(outputTimeoutId);
         console.log("📥 Raw Swift recorder stdout:", data.toString());
         const lines = data.toString().split("\n").filter((line) => line.trim());
@@ -867,12 +862,14 @@ async function startCombinedRecording(recordingPath, filename) {
             console.log("📝 Swift recorder output:", result);
             if (result.code === "RECORDING_STARTED" && !hasStarted) {
               hasStarted = true;
+              clearInterval(hangDetectionInterval);
               resolve({ success: true, path: result.path });
               if (mainWindow) {
                 mainWindow.webContents.send("combined-recording-started", result);
               }
             } else if ((result.code === "BLUETOOTH_LIMITATION" || result.code === "SCREEN_PERMISSION_REQUIRED" || result.code === "SYSTEM_AUDIO_UNAVAILABLE" || result.code === "RECORDING_STARTED_MIC_ONLY") && !hasStarted) {
               hasStarted = true;
+              clearInterval(hangDetectionInterval);
               resolve({
                 success: true,
                 path: result.path,
@@ -885,6 +882,7 @@ async function startCombinedRecording(recordingPath, filename) {
               console.log("✅ Microphone-only recording started, process still tracked for stopping");
             } else if (result.code === "SYSTEM_AUDIO_FAILED" && !hasStarted) {
               hasStarted = true;
+              clearInterval(hangDetectionInterval);
               resolve({
                 success: false,
                 error: result.error,
@@ -896,6 +894,7 @@ async function startCombinedRecording(recordingPath, filename) {
                 mainWindow.webContents.send("combined-recording-stopped", result);
               }
             } else if (result.code === "RECORDING_ERROR" && !hasStarted) {
+              clearInterval(hangDetectionInterval);
               resolve({ success: false, error: result.error });
             } else if (result.code === "RECORDING_FAILED") {
               console.error("❌ Recording failed after start:", result.error);
@@ -906,6 +905,7 @@ async function startCombinedRecording(recordingPath, filename) {
                 swiftRecorderProcess = null;
               } else {
                 hasStarted = true;
+                clearInterval(hangDetectionInterval);
                 resolve({ success: false, error: result.error });
               }
             }
@@ -916,34 +916,49 @@ async function startCombinedRecording(recordingPath, filename) {
       });
       swiftRecorderProcess.stderr?.on("data", (data) => {
         outputReceived = true;
+        lastOutputTime = Date.now();
         clearTimeout(outputTimeoutId);
         console.log("📥 Swift recorder stderr:", data.toString());
       });
       swiftRecorderProcess.on("spawn", () => {
-        console.log("🚀 Swift recorder process spawned successfully");
+        console.log("🚀 Swift recorder process spawned successfully (PID: " + swiftRecorderProcess?.pid + ")");
       });
       swiftRecorderProcess.on("close", (code, signal) => {
         console.log(`Swift recorder process exited with code ${code}, signal: ${signal}`);
         clearTimeout(outputTimeoutId);
+        clearInterval(hangDetectionInterval);
         swiftRecorderProcess = null;
         if (!hasStarted) {
-          resolve({ success: false, error: `Recorder exited with code ${code}` });
+          resolve({
+            success: false,
+            error: `Recorder exited unexpectedly with code ${code}`,
+            cause: signal ? `Process terminated by signal: ${signal}` : `Exit code: ${code}`,
+            solution: "Check console logs for detailed error information"
+          });
         }
       });
       swiftRecorderProcess.on("error", (error) => {
         console.error("Swift recorder error:", error);
         clearTimeout(outputTimeoutId);
+        clearInterval(hangDetectionInterval);
         if (!hasStarted) {
           resolve({ success: false, error: error.message });
         }
       });
       setTimeout(() => {
         if (!hasStarted) {
+          clearInterval(hangDetectionInterval);
           if (swiftRecorderProcess) {
-            swiftRecorderProcess.kill("SIGTERM");
+            console.log("❌ TIMEOUT: Force terminating Swift recorder after 30 seconds");
+            swiftRecorderProcess.kill("SIGKILL");
             swiftRecorderProcess = null;
           }
-          resolve({ success: false, error: "Recording start timeout" });
+          resolve({
+            success: false,
+            error: "Recording start timeout after 30 seconds",
+            cause: "Swift recorder failed to initialize within timeout period",
+            solution: "This may indicate system audio routing conflicts or permission issues. Try restarting the app or switching audio devices."
+          });
         }
       }, 3e4);
     }).catch((error) => {
@@ -1483,6 +1498,15 @@ function setupGeminiHandlers() {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
+  electron.ipcMain.handle("gemini:generate-message", async (_, options) => {
+    try {
+      const result = await geminiService.generateMessage(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate message with Gemini:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 }
 electron.ipcMain.handle("dialog:showOpenDialog", async (_, options) => {
   return electron.dialog.showOpenDialog(options);
@@ -1522,6 +1546,38 @@ function unregisterGlobalShortcuts() {
   electron.globalShortcut.unregisterAll();
   console.log("🗑️ Global shortcuts unregistered");
 }
+function cleanupHangingRecorderProcesses() {
+  console.log("🧹 Checking for hanging Swift recorder processes...");
+  const ps = child_process.spawn("ps", ["aux"]);
+  let output = "";
+  ps.stdout.on("data", (data) => {
+    output += data.toString();
+  });
+  ps.on("close", () => {
+    const lines = output.split("\n");
+    const recorderProcesses = lines.filter(
+      (line) => line.includes("Recorder") && line.includes("--record") && !line.includes("grep")
+    );
+    if (recorderProcesses.length > 0) {
+      console.log(`🔍 Found ${recorderProcesses.length} hanging recorder process(es):`);
+      recorderProcesses.forEach((line) => {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          const pid = parts[1];
+          console.log(`   PID ${pid}: ${line.substring(line.indexOf("Recorder"))}`);
+          try {
+            process.kill(parseInt(pid), "SIGKILL");
+            console.log(`   ✅ Killed hanging process ${pid}`);
+          } catch (error) {
+            console.log(`   ⚠️ Could not kill process ${pid}: ${error}`);
+          }
+        }
+      });
+    } else {
+      console.log("✅ No hanging recorder processes found");
+    }
+  });
+}
 electron.app.whenReady().then(async () => {
   try {
     await databaseService.initialize();
@@ -1540,6 +1596,7 @@ electron.app.whenReady().then(async () => {
     console.error("Failed to initialize database:", error);
   }
   try {
+    cleanupHangingRecorderProcesses();
     isSwiftRecorderAvailable = await checkSwiftRecorderAvailability();
     console.log(`Swift recorder availability: ${isSwiftRecorderAvailable}`);
   } catch (error) {

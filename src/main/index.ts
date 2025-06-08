@@ -1093,6 +1093,16 @@ function setupGeminiHandlers(): void {
       return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
+
+  ipcMain.handle('gemini:generate-message', async (_, options) => {
+    try {
+      const result = await geminiService.generateMessage(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate message with Gemini:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
 }
 
 // Handle dialog requests

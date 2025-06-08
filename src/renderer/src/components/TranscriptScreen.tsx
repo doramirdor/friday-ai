@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Meeting } from '../types/database'
 import RecordingInterface from './RecordingInterface'
 import LiveRecordingInterface from './LiveRecordingInterface'
@@ -110,6 +110,16 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
   const [needsAutoSave, setNeedsAutoSave] = useState(false)
 
+  // AI generation loading states
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
+  const [isGeneratingAllContent, setIsGeneratingAllContent] = useState(false)
+  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
+  const [generatedAIMessage, setGeneratedAIMessage] = useState('')
+  const [aiLoadingMessage, setAiLoadingMessage] = useState('')
+
+  // Combined loading state for full-screen overlay
+  const isAIGenerating = isGeneratingSummary || isGeneratingAllContent || isGeneratingMessage
+
   // Recording service state
   const [transcriptionStatus, setTranscriptionStatus] = useState<string>('idle')
   const [isSwiftRecorderAvailable, setIsSwiftRecorderAvailable] = useState(false)
@@ -123,8 +133,44 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
 
+  // Function to load existing recording file
+  const loadExistingRecording = useCallback(async (filePath: string): Promise<void> => {
+    try {
+      console.log('🔄 Loading recording file via IPC...')
+
+      const result = await (window.api as any).transcription.loadRecording(filePath)
+
+      if (result.success && result.buffer) {
+        const isMP3 = filePath.toLowerCase().endsWith('.mp3')
+        const mimeType = isMP3 ? 'audio/mpeg' : 'audio/webm'
+
+        const blob = new Blob([result.buffer], { type: mimeType })
+        const audioUrl = URL.createObjectURL(blob)
+        setRecordedAudioUrl(audioUrl)
+        console.log(`✅ Recording loaded for playback via IPC (${mimeType})`)
+      } else {
+        console.error('Failed to load recording file:', result.error)
+      }
+    } catch (error) {
+      console.error('Failed to load existing recording:', error)
+    }
+  }, [])
+
+  // Helper function to load recording (single file or chunks)
+  const loadRecording = useCallback(async (recordingPath: string | string[]): Promise<void> => {
+    try {
+      if (Array.isArray(recordingPath)) {
+        console.log('⚠️ Chunked recording playback not yet implemented')
+      } else {
+        await loadExistingRecording(recordingPath)
+      }
+    } catch (error) {
+      console.error('Failed to load recording:', error)
+    }
+  }, [loadExistingRecording])
+
   // Recording service callbacks
-  const handleTranscriptionResult = (result: TranscriptionResult): void => {
+  const handleTranscriptionResult = useCallback((result: TranscriptionResult): void => {
     if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
       setLiveText((prev) => prev + ' ' + result.text)
       
@@ -133,9 +179,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     } else if (result.type === 'error') {
       console.error('Transcription error:', result.message)
     }
-  }
+  }, [])
 
-  const handleCombinedRecordingStarted = (result: RecordingResult): void => {
+  const handleCombinedRecordingStarted = useCallback((result: RecordingResult): void => {
     console.log('🎙️ Combined recording started:', result)
     setIsCombinedRecording(true)
     
@@ -172,9 +218,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.warn('⚠️ Unknown recording result code:', result.code)
       setRecordingWarning(null)
     }
-  }
+  }, [])
 
-  const handleCombinedRecordingStopped = (result: RecordingResult): void => {
+  const handleCombinedRecordingStopped = useCallback((result: RecordingResult): void => {
     console.log('🎙️ Combined recording stopped:', result)
     setIsCombinedRecording(false)
     setRecordingWarning(null)
@@ -184,26 +230,34 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.log('📁 Stored combined recording path:', result.path)
       loadRecording(result.path)
     }
-  }
+  }, [loadRecording])
 
-  const handleCombinedRecordingFailed = (result: RecordingResult): void => {
+  const handleCombinedRecordingFailed = useCallback((result: RecordingResult): void => {
     console.error('❌ Recording failed during operation:', result.error)
     
     setIsCombinedRecording(false)
     setIsRecording(false)
     setTranscriptionStatus('error')
     setRecordingWarning(`❌ Recording failed: ${result.error}`)
-  }
+  }, [])
 
-  // Initialize recording service
-  const recordingService = useRecordingService({
+  // Memoize recording service props to prevent re-creation
+  const recordingServiceProps = useMemo(() => ({
     onTranscriptionResult: handleTranscriptionResult,
     onCombinedRecordingStarted: handleCombinedRecordingStarted,
     onCombinedRecordingStopped: handleCombinedRecordingStopped,
     onCombinedRecordingFailed: handleCombinedRecordingFailed,
     onTranscriptionStatusChange: setTranscriptionStatus,
     onSwiftRecorderAvailabilityChange: setIsSwiftRecorderAvailable
-  })
+  }), [
+    handleTranscriptionResult,
+    handleCombinedRecordingStarted,
+    handleCombinedRecordingStopped,
+    handleCombinedRecordingFailed
+  ])
+
+  // Initialize recording service with memoized props
+  const recordingService = useRecordingService(recordingServiceProps)
 
   // Initialize data from meeting prop
   useEffect(() => {
@@ -238,46 +292,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
   }, [meeting])
 
-  // Function to load existing recording file
-  const loadExistingRecording = async (filePath: string): Promise<void> => {
-    try {
-      console.log('🔄 Loading recording file via IPC...')
-
-      const result = await window.api.transcription.loadRecording(filePath)
-
-      if (result.success && result.buffer) {
-        const isMP3 = filePath.toLowerCase().endsWith('.mp3')
-        const mimeType = isMP3 ? 'audio/mpeg' : 'audio/webm'
-
-        const blob = new Blob([result.buffer], { type: mimeType })
-        const audioUrl = URL.createObjectURL(blob)
-        setRecordedAudioUrl(audioUrl)
-        console.log(`✅ Recording loaded for playback via IPC (${mimeType})`)
-      } else {
-        console.error('Failed to load recording file:', result.error)
-      }
-    } catch (error) {
-      console.error('Failed to load existing recording:', error)
-    }
-  }
-
-  // Helper function to load recording (single file or chunks)
-  const loadRecording = async (recordingPath: string | string[]): Promise<void> => {
-    try {
-      if (Array.isArray(recordingPath)) {
-        console.log('⚠️ Chunked recording playback not yet implemented')
-      } else {
-        await loadExistingRecording(recordingPath)
-      }
-    } catch (error) {
-      console.error('Failed to load recording:', error)
-    }
-  }
-
   // Initialize recording service on mount
   useEffect(() => {
     recordingService.initializeService()
-  }, [recordingService])
+  }, [])
 
   // Handle global shortcut events
   useEffect(() => {
@@ -554,7 +572,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       return
     }
 
+    if (isGeneratingSummary) {
+      console.log('Summary generation already in progress')
+      return
+    }
+
     try {
+      setIsGeneratingSummary(true)
+      setAiLoadingMessage('Analyzing transcript and generating summary...')
       console.log('🤖 Generating summary with Gemini...')
       const settings = await window.api.db.getSettings()
       
@@ -579,6 +604,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     } catch (error) {
       console.error('Error generating summary:', error)
       alert('Failed to generate summary. Please check your Gemini API key in settings.')
+    } finally {
+      setIsGeneratingSummary(false)
+      setAiLoadingMessage('')
     }
   }
 
@@ -588,7 +616,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       return
     }
 
+    if (isGeneratingAllContent) {
+      console.log('Content generation already in progress')
+      return
+    }
+
     try {
+      setIsGeneratingAllContent(true)
+      setAiLoadingMessage(`Generating comprehensive content from your ${transcript.length} transcript lines...`)
       console.log('🤖 Generating all content with Gemini...')
       const settings = await window.api.db.getSettings()
       
@@ -619,16 +654,20 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     } catch (error) {
       console.error('Error generating content:', error)
       alert('Failed to generate content. Please check your Gemini API key in settings.')
+    } finally {
+      setIsGeneratingAllContent(false)
+      setAiLoadingMessage('')
     }
   }
 
-  const generateAIMessage = async (type: 'slack' | 'email'): Promise<void> => {
+  const generateAIMessage = async (type: 'slack' | 'email'): Promise<string | void> => {
     if (!meeting?.id) {
       alert('No meeting data available for AI generation')
       return
     }
 
     try {
+      setAiLoadingMessage(`Crafting your ${type === 'slack' ? 'Slack' : 'email'} message...`)
       console.log(`🤖 Generating ${type} message with Gemini...`)
       
       const settings = await window.api.db.getSettings()
@@ -651,7 +690,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       
       if (result.success && result.message) {
         console.log(`✅ ${type} message generated successfully`)
-        // This would be handled by the SidebarContent component
+        setGeneratedAIMessage(result.message)
+        return result.message
       } else {
         console.error(`Failed to generate ${type} message:`, result.error)
         alert(`Failed to generate ${type} message: ${result.error}`)
@@ -659,6 +699,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     } catch (error) {
       console.error(`Error generating ${type} message:`, error)
       alert(`Failed to generate ${type} message. Please check your Gemini API key in settings.`)
+    }
+  }
+
+  const handleSetGeneratingMessage = (isGenerating: boolean): void => {
+    setIsGeneratingMessage(isGenerating)
+    if (!isGenerating) {
+      setAiLoadingMessage('')
     }
   }
 
@@ -724,6 +771,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         summary={summary}
         isSummaryAIGenerated={isSummaryAIGenerated}
         savingMeeting={savingMeeting}
+        isGeneratingSummary={isGeneratingSummary}
+        isGeneratingAllContent={isGeneratingAllContent}
         onTitleChange={setTitle}
         onDescriptionChange={setDescription}
         onTagsChange={setTags}
@@ -737,7 +786,37 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         onGenerateAllContent={generateAllContent}
         onGenerateAIMessage={generateAIMessage}
         transcript={transcript}
+        isGeneratingMessage={isGeneratingMessage}
+        onSetGeneratingMessage={handleSetGeneratingMessage}
       />
+
+      {/* Full-Screen AI Loading Overlay */}
+      {isAIGenerating && (
+        <div className="ai-loading-overlay">
+          <div className="ai-loading-content">
+            <div className="ai-loading-icon">
+              <svg
+                width="48"
+                height="48"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ animation: 'pulse 2s infinite' }}
+              >
+                <path d="M12 2L15.09 8.26L22 9L17 14L18.18 21L12 17.77L5.82 21L7 14L2 9L8.91 8.26L12 2Z" />
+              </svg>
+            </div>
+            <h2 className="ai-loading-title">AI is thinking...</h2>
+            <p className="ai-loading-message">{aiLoadingMessage}</p>
+            <div className="ai-loading-progress">
+              <div className="ai-loading-progress-bar"></div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

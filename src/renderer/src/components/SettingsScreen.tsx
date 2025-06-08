@@ -194,7 +194,7 @@ const SettingsScreen: React.FC = () => {
     if (!settings) return
 
     try {
-      const result = await window.api.electron.dialog.showOpenDialog({
+      const result = await (window.api as any).electron.dialog.showOpenDialog({
         properties: ['openDirectory'],
         title: 'Select Default Save Location',
         defaultPath: settings.defaultSaveLocation
@@ -219,13 +219,15 @@ const SettingsScreen: React.FC = () => {
     setConnectionResult(null)
 
     try {
-      // Test with a simple prompt
-      const result = await window.api.gemini.generateSummaryOnly({
-        transcript: 'This is a test message.',
-        context: '',
-        meetingContext: '',
+      // Test with a simple prompt using correct transcript format
+      const result = await (window.api as any).gemini.generateSummary({
+        transcript: [
+          { time: '00:00', text: 'This is a test message to verify the API connection.' }
+        ],
+        globalContext: '',
+        meetingContext: 'Test connection',
         notes: '',
-        title: 'Test'
+        existingTitle: 'API Test'
       })
 
       if (result.success) {

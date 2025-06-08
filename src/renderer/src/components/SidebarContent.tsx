@@ -40,6 +40,9 @@ interface SidebarContentProps {
   summary: string
   isSummaryAIGenerated: boolean
   savingMeeting: boolean
+  isGeneratingSummary: boolean
+  isGeneratingAllContent: boolean
+  isGeneratingMessage: boolean
   onTitleChange: (title: string) => void
   onDescriptionChange: (description: string) => void
   onTagsChange: (tags: string[]) => void
@@ -51,12 +54,12 @@ interface SidebarContentProps {
   onSaveMeeting: () => Promise<void>
   onGenerateSummary: () => Promise<void>
   onGenerateAllContent: () => Promise<void>
-  onGenerateAIMessage: (type: 'slack' | 'email') => Promise<void>
+  onGenerateAIMessage: (type: 'slack' | 'email') => Promise<string | void>
+  onSetGeneratingMessage: (isGenerating: boolean) => void
   transcript: Array<{ time: string; text: string }>
 }
 
 const SidebarContent: React.FC<SidebarContentProps> = ({
-  meeting,
   title,
   description,
   tags,
@@ -67,6 +70,9 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   summary,
   isSummaryAIGenerated,
   savingMeeting,
+  isGeneratingSummary,
+  isGeneratingAllContent,
+  isGeneratingMessage,
   onTitleChange,
   onDescriptionChange,
   onTagsChange,
@@ -79,6 +85,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   onGenerateSummary,
   onGenerateAllContent,
   onGenerateAIMessage,
+  onSetGeneratingMessage,
   transcript
 }) => {
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('details')
@@ -91,7 +98,6 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
     title: true
   })
   const [generatedMessage, setGeneratedMessage] = useState('')
-  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
   const [messageType, setMessageType] = useState<'slack' | 'email'>('slack')
 
   const contextTemplates = {
@@ -187,11 +193,14 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   }
 
   const handleGenerateAIMessage = async (type: 'slack' | 'email'): Promise<void> => {
-    setIsGeneratingMessage(true)
+    onSetGeneratingMessage(true)
     try {
-      await onGenerateAIMessage(type)
+      const result = await onGenerateAIMessage(type)
+      if (result) {
+        setGeneratedMessage(result)
+      }
     } finally {
-      setIsGeneratingMessage(false)
+      onSetGeneratingMessage(false)
     }
   }
 
@@ -393,10 +402,11 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={onGenerateAllContent}
+                  disabled={isGeneratingAllContent}
                   title="Generate all content with AI"
                 >
                   <SparklesIcon size={16} />
-                  Generate All
+                  {isGeneratingAllContent ? 'Generating...' : 'Generate All'}
                 </button>
               </div>
             </div>
@@ -431,15 +441,16 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={onGenerateSummary}
+                  disabled={isGeneratingSummary}
                   title="Generate summary with AI"
                 >
                   <SparklesIcon size={16} />
-                  Generate
+                  {isGeneratingSummary ? 'Generating...' : 'Generate'}
                 </button>
               </div>
             </div>
             <div className="card-body">
-              {!isSummaryAIGenerated && !summary ? (
+              {!isSummaryAIGenerated && !summary && !isGeneratingSummary ? (
                 <div style={{
                   textAlign: 'center',
                   padding: 'var(--spacing-xl)',
@@ -466,7 +477,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
                   <label className="input-label">Meeting Summary</label>
                 </div>
               )}
-              {summary && (
+              {summary && !isGeneratingSummary && (
                 <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                   {isSummaryAIGenerated ? '🤖 AI-generated summary - you can edit it above' : 'Custom summary'}
                 </div>
@@ -537,7 +548,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
                 </div>
 
                 {/* Generated Message Output */}
-                {generatedMessage && (
+                {generatedMessage && !isGeneratingMessage && (
                   <div className="input-group">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                       <label className="demo-label">Generated Message</label>

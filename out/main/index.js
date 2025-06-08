@@ -711,6 +711,7 @@ Generate only the email body content in rich text format, no subject line or add
 }
 const geminiService = new GeminiService();
 let mainWindow = null;
+let tray = null;
 let transcriptionProcess = null;
 let transcriptionSocket = null;
 let isTranscriptionReady = false;
@@ -718,6 +719,12 @@ let isTranscriptionStarting = false;
 let actualTranscriptionPort = 9001;
 let swiftRecorderProcess = null;
 let isSwiftRecorderAvailable = false;
+const currentShortcuts = {
+  "toggle-recording": "CmdOrCtrl+L",
+  "quick-note": "CmdOrCtrl+Shift+N",
+  "show-hide": "CmdOrCtrl+Shift+F",
+  "pause-resume": "CmdOrCtrl+P"
+};
 const activeChunkedRecordings = /* @__PURE__ */ new Map();
 const CHUNK_DURATION_MS = 5 * 60 * 1e3;
 const CHUNK_SIZE_LIMIT = 50 * 1024 * 1024;
@@ -1512,39 +1519,167 @@ electron.ipcMain.handle("dialog:showOpenDialog", async (_, options) => {
   return electron.dialog.showOpenDialog(options);
 });
 function registerGlobalShortcuts() {
-  electron.globalShortcut.register("CmdOrCtrl+L", () => {
+  electron.globalShortcut.unregisterAll();
+  electron.globalShortcut.register(currentShortcuts["toggle-recording"], () => {
     console.log("🎙️ Global shortcut: Start/Stop Recording");
     if (mainWindow) {
       mainWindow.webContents.send("shortcut:toggle-recording");
     }
   });
-  electron.globalShortcut.register("CmdOrCtrl+Shift+N", () => {
+  electron.globalShortcut.register(currentShortcuts["quick-note"], () => {
     console.log("📝 Global shortcut: Quick Note");
     if (mainWindow) {
       mainWindow.webContents.send("shortcut:quick-note");
     }
   });
-  electron.globalShortcut.register("CmdOrCtrl+Shift+H", () => {
+  electron.globalShortcut.register(currentShortcuts["show-hide"], () => {
     console.log("👁️ Global shortcut: Show/Hide Window");
     if (mainWindow) {
       if (mainWindow.isVisible()) {
         mainWindow.hide();
       } else {
         mainWindow.show();
+        mainWindow.focus();
       }
     }
   });
-  electron.globalShortcut.register("CmdOrCtrl+P", () => {
+  electron.globalShortcut.register(currentShortcuts["pause-resume"], () => {
     console.log("⏸️ Global shortcut: Pause/Resume Recording");
     if (mainWindow) {
       mainWindow.webContents.send("shortcut:pause-resume");
     }
   });
-  console.log("✅ Global shortcuts registered");
+  console.log("✅ Global shortcuts registered:", currentShortcuts);
 }
 function unregisterGlobalShortcuts() {
   electron.globalShortcut.unregisterAll();
   console.log("🗑️ Global shortcuts unregistered");
+}
+function createTray() {
+  try {
+    tray = new electron.Tray(icon);
+    tray.setToolTip("Friday - Meeting Recorder");
+    const contextMenu = electron.Menu.buildFromTemplate([
+      {
+        label: "Show Friday",
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        }
+      },
+      {
+        label: "Start Recording",
+        click: () => {
+          if (mainWindow) {
+            mainWindow.webContents.send("shortcut:toggle-recording");
+          }
+        }
+      },
+      { type: "separator" },
+      {
+        label: "Settings",
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+            mainWindow.webContents.send("navigate-to-settings");
+          }
+        }
+      },
+      { type: "separator" },
+      {
+        label: "Quit Friday",
+        click: () => {
+          electron.app.quit();
+        }
+      }
+    ]);
+    tray.setContextMenu(contextMenu);
+    tray.on("double-click", () => {
+      if (mainWindow) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+    console.log("✅ System tray created");
+  } catch (error) {
+    console.error("❌ Failed to create system tray:", error);
+  }
+}
+function destroyTray() {
+  if (tray) {
+    tray.destroy();
+    tray = null;
+    console.log("🗑️ System tray destroyed");
+  }
+}
+function updateShortcuts(newShortcuts) {
+  try {
+    for (const [key, shortcut] of Object.entries(newShortcuts)) {
+      if (!shortcut || shortcut.trim() === "") {
+        console.error(`❌ Invalid shortcut for ${key}: empty`);
+        return false;
+      }
+    }
+    const testResults = [];
+    for (const [key, shortcut] of Object.entries(newShortcuts)) {
+      try {
+        const success = electron.globalShortcut.register(shortcut, () => {
+        });
+        testResults.push({ key, shortcut, success });
+        if (success) {
+          electron.globalShortcut.unregister(shortcut);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to test shortcut ${shortcut} for ${key}:`, error);
+        testResults.push({ key, shortcut, success: false });
+      }
+    }
+    const failedTests = testResults.filter((test) => !test.success);
+    if (failedTests.length > 0) {
+      console.error("❌ Some shortcut registrations failed:", failedTests);
+      return false;
+    }
+    Object.assign(currentShortcuts, newShortcuts);
+    registerGlobalShortcuts();
+    console.log("✅ Shortcuts updated successfully:", currentShortcuts);
+    return true;
+  } catch (error) {
+    console.error("❌ Failed to update shortcuts:", error);
+    return false;
+  }
+}
+function setupSystemHandlers() {
+  electron.ipcMain.handle("system:get-shortcuts", () => {
+    return currentShortcuts;
+  });
+  electron.ipcMain.handle("system:update-shortcuts", (_, shortcuts) => {
+    return updateShortcuts(shortcuts);
+  });
+  electron.ipcMain.handle("system:toggle-menu-bar", async (_, show) => {
+    try {
+      if (show && !tray) {
+        createTray();
+        return { success: true };
+      } else if (!show && tray) {
+        destroyTray();
+        return { success: true };
+      }
+      return { success: true, message: `Tray already ${show ? "visible" : "hidden"}` };
+    } catch (error) {
+      console.error("❌ Failed to toggle menu bar:", error);
+      return { success: false, error: String(error) };
+    }
+  });
+  databaseService.getSettings().then((settings) => {
+    if (settings.showInMenuBar && !tray) {
+      createTray();
+    }
+  }).catch((error) => {
+    console.error("Failed to load menu bar setting:", error);
+  });
 }
 function cleanupHangingRecorderProcesses() {
   console.log("🧹 Checking for hanging Swift recorder processes...");
@@ -1607,6 +1742,7 @@ electron.app.whenReady().then(async () => {
   setupDatabaseHandlers();
   setupTranscriptionHandlers();
   setupGeminiHandlers();
+  setupSystemHandlers();
   registerGlobalShortcuts();
   electron.app.on("browser-window-created", (_, window) => {
     utils.optimizer.watchWindowShortcuts(window);

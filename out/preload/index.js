@@ -79,6 +79,15 @@ const api = {
     // Generate Slack or Email messages
     generateMessage: (options) => electron.ipcRenderer.invoke("gemini:generate-message", options)
   },
+  // System APIs for shortcuts and menu bar
+  system: {
+    // Get current shortcuts
+    getShortcuts: () => electron.ipcRenderer.invoke("system:get-shortcuts"),
+    // Update shortcuts
+    updateShortcuts: (shortcuts) => electron.ipcRenderer.invoke("system:update-shortcuts", shortcuts),
+    // Toggle menu bar tray
+    toggleMenuBar: (show) => electron.ipcRenderer.invoke("system:toggle-menu-bar", show)
+  },
   electron: {
     dialog: {
       showOpenDialog: (options) => electron.ipcRenderer.invoke("dialog:showOpenDialog", options)

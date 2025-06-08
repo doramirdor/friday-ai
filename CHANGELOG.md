@@ -271,3 +271,31 @@ This addresses the core issue of large recording limitations and provides a foun
 - Added process cleanup function that runs at startup to eliminate hanging recorder processes
 - Improved Bluetooth device detection using transport type instead of name-based detection
 - Added detailed audio device information logging for debugging Bluetooth compatibility issues
+
+## [Unreleased] - 2024-12-31
+
+### Fixed
+- **Shortcut Change Buttons**: Implemented functional keyboard shortcut change system in settings screen
+  - Added real-time key capture interface for shortcut editing
+  - Added shortcut validation and conflict detection
+  - Created system IPC handlers for shortcut management
+  - Improved error handling for shortcut registration failures
+
+- **Menu Bar Functionality**: Implemented system tray menu bar feature
+  - Added tray icon with context menu (Show Friday, Start Recording, Settings, Quit)
+  - Created toggle functionality for menu bar setting
+  - Added navigation handler for tray menu interactions
+  - Fixed menu bar setting integration with main process
+
+### Added
+- System APIs for shortcuts and menu bar management
+- Shortcut editing UI with visual feedback
+- Tray icon double-click to show window
+- Global shortcuts now properly update when changed
+- Navigation from tray menu to settings screen
+
+### Technical
+- Updated preload script with new system APIs
+- Enhanced type definitions for system functionality
+- Improved IPC communication between renderer and main process
+- Added proper cleanup for global shortcuts on app shutdown

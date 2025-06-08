@@ -938,19 +938,79 @@ function setupTranscriptionHandlers(): void {
     }
   )
 
-  ipcMain.handle('transcription:load-recording', async (_, filePath: string) => {
+  ipcMain.handle(
+    'transcription:load-recording',
+    async (_, filePath: string) => {
+      try {
+        const resolvedPath = path.resolve(filePath)
+        
+        if (!fs.existsSync(resolvedPath)) {
+          return { success: false, error: 'Recording file not found' }
+        }
+
+        const buffer = fs.readFileSync(resolvedPath)
+        return { success: true, buffer: buffer.buffer }
+      } catch (error) {
+        console.error('Failed to load recording:', error)
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
+  // Alerts IPC handlers
+  ipcMain.handle('alerts:check-keywords', async (_, options: { transcript: string; keywords: any[] }) => {
     try {
-      if (!fs.existsSync(filePath)) {
-        return { success: false, error: 'Recording file not found' }
+      // Check if transcription service is ready (we use the same socket)
+      const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed
+      const serviceReady = isTranscriptionReady && !isTranscriptionStarting
+      
+      if (!serviceReady || !socketConnected) {
+        return { success: false, error: 'Transcription service not ready for alerts' }
       }
 
-      const buffer = fs.readFileSync(filePath)
-      return {
-        success: true,
-        buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-      }
+      return new Promise((resolve) => {
+        // Create a temporary listener for the alert response
+        const handleAlertResponse = (data: Buffer) => {
+          try {
+            const lines = data.toString().split('\n').filter(line => line.trim())
+            
+            for (const line of lines) {
+              const response = JSON.parse(line)
+              
+              // Check if this is an alert response
+              if (response.hasOwnProperty('success') && response.hasOwnProperty('matches')) {
+                transcriptionSocket!.removeListener('data', handleAlertResponse)
+                resolve(response)
+                return
+              }
+            }
+          } catch (error) {
+            console.error('Failed to parse alert response:', error)
+            transcriptionSocket!.removeListener('data', handleAlertResponse)
+            resolve({ success: false, error: 'Failed to parse alert response' })
+          }
+        }
+
+        // Add temporary listener
+        transcriptionSocket!.on('data', handleAlertResponse)
+
+        // Send alert request
+        const alertRequest = JSON.stringify({
+          type: 'check_alerts',
+          transcript: options.transcript,
+          keywords: options.keywords
+        })
+
+        transcriptionSocket!.write(alertRequest)
+
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          transcriptionSocket!.removeListener('data', handleAlertResponse)
+          resolve({ success: false, error: 'Alert check timeout' })
+        }, 10000)
+      })
     } catch (error) {
-      console.error('Failed to load recording file:', error)
+      console.error('Failed to check alerts:', error)
       return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
@@ -1109,6 +1169,26 @@ function setupGeminiHandlers(): void {
       return result
     } catch (error) {
       console.error('Failed to generate message with Gemini:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('gemini:generate-followup-questions', async (_, options) => {
+    try {
+      const result = await geminiService.generateFollowupQuestions(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate followup questions with Gemini:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('gemini:ask-question', async (_, options) => {
+    try {
+      const result = await geminiService.askQuestion(options)
+      return result
+    } catch (error) {
+      console.error('Failed to ask question with Gemini:', error)
       return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
   })

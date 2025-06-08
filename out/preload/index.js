@@ -34,6 +34,10 @@ const api = {
       electron.ipcRenderer.removeAllListeners("transcription-result");
     }
   },
+  // Alerts API
+  alerts: {
+    checkKeywords: (options) => electron.ipcRenderer.invoke("alerts:check-keywords", options)
+  },
   // Swift Recorder API for combined audio recording
   swiftRecorder: {
     // Check if Swift recorder is available
@@ -77,7 +81,11 @@ const api = {
     // Generate summary only
     generateSummary: (options) => electron.ipcRenderer.invoke("gemini:generate-summary", options),
     // Generate Slack or Email messages
-    generateMessage: (options) => electron.ipcRenderer.invoke("gemini:generate-message", options)
+    generateMessage: (options) => electron.ipcRenderer.invoke("gemini:generate-message", options),
+    // Generate followup questions, risks, and comments
+    generateFollowupQuestions: (options) => electron.ipcRenderer.invoke("gemini:generate-followup-questions", options),
+    // Ask a question about the meeting
+    askQuestion: (options) => electron.ipcRenderer.invoke("gemini:ask-question", options)
   },
   // System APIs for shortcuts and menu bar
   system: {

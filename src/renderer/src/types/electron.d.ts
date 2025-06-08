@@ -1,9 +1,29 @@
-import { DatabaseAPI } from '../../../main/database'
+interface AlertKeyword {
+  id: number
+  keyword: string
+  threshold: number
+  enabled: boolean
+}
+
+interface AlertMatch {
+  keyword: string
+  text: string
+  similarity: number
+  time: string
+}
 
 declare global {
   interface Window {
     api: {
-      db: DatabaseAPI
+      db: {
+        createMeeting: (meeting: any) => Promise<any>
+        getMeeting: (id: number) => Promise<any>
+        getAllMeetings: () => Promise<any>
+        updateMeeting: (id: number, meeting: any) => Promise<any>
+        deleteMeeting: (id: number) => Promise<any>
+        getSettings: () => Promise<any>
+        updateSettings: (settings: any) => Promise<any>
+      }
       transcription: {
         startService: () => Promise<{ success: boolean; error?: string }>
         stopService: () => Promise<{ success: boolean }>
@@ -34,6 +54,11 @@ declare global {
         generateContent: (options: any) => Promise<{ success: boolean; data?: any; error?: string }>
         generateSummary: (options: any) => Promise<{ success: boolean; summary?: string; error?: string }>
         generateMessage: (options: any) => Promise<{ success: boolean; message?: string; error?: string }>
+        generateFollowupQuestions: (options: any) => Promise<{ success: boolean; data?: { questions: string[]; risks: string[]; comments: string[] }; error?: string }>
+        askQuestion: (options: any) => Promise<{ success: boolean; answer?: string; error?: string }>
+      }
+      alerts: {
+        checkKeywords: (options: { transcript: string; keywords: AlertKeyword[] }) => Promise<{ success: boolean; matches?: AlertMatch[]; error?: string }>
       }
       system: {
         getShortcuts: () => Promise<Record<string, string>>
@@ -51,6 +76,11 @@ declare global {
         on: (channel: string, listener: (...args: any[]) => void) => void
         removeAllListeners: (channel: string) => void
       }
+      process: {
+        versions: NodeJS.ProcessVersions
+      }
     }
   }
-} 
+}
+
+export { AlertKeyword, AlertMatch } 

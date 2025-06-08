@@ -708,6 +708,107 @@ Generate only the email body content in rich text format, no subject line or add
       return { success: false, error: `Message generation failed: ${error instanceof Error ? error.message : "Unknown error"}` };
     }
   }
+  async generateFollowupQuestions(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `You are an AI assistant analyzing an ongoing meeting. Based on the current transcript and context, please generate followup questions, identify potential risks, and provide helpful comments.
+
+MEETING CONTEXT:
+Title: ${options.title || "Meeting"}
+Context: ${options.context || "No specific context"}
+Description: ${options.description || "No description"}
+
+CURRENT TRANSCRIPT:
+${transcriptText}
+
+NOTES:
+${options.notes || "No notes"}
+
+SUMMARY SO FAR:
+${options.summary || "No summary yet"}
+
+Please provide your response in the following JSON format:
+{
+  "questions": [
+    "What specific question should be asked to clarify a point?",
+    "What details need more elaboration?"
+  ],
+  "risks": [
+    "What potential issues or concerns were identified?",
+    "What problems might arise from the current discussion?"
+  ],
+  "comments": [
+    "What important observations about the meeting flow?",
+    "What suggestions for improving the discussion?"
+  ]
+}
+
+Guidelines:
+- Questions: Generate 2-4 relevant followup questions that would help clarify or expand on the current discussion
+- Risks: Identify 1-3 potential issues, concerns, or problems mentioned or implied in the discussion
+- Comments: Provide 1-3 helpful observations or suggestions about the meeting progress
+- Make suggestions actionable and specific to the current context
+- If no relevant items exist for a category, provide an empty array
+- Ensure the JSON is properly formatted`;
+      const result = await this.makeGeminiRequest(prompt);
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || "Failed to generate followup questions" };
+      }
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          return { success: false, error: "No valid JSON found in Gemini response" };
+        }
+        const parsedData = JSON.parse(jsonMatch[0]);
+        return {
+          success: true,
+          data: {
+            questions: Array.isArray(parsedData.questions) ? parsedData.questions : [],
+            risks: Array.isArray(parsedData.risks) ? parsedData.risks : [],
+            comments: Array.isArray(parsedData.comments) ? parsedData.comments : []
+          }
+        };
+      } catch (parseError) {
+        return { success: false, error: `Failed to parse Gemini response: ${parseError instanceof Error ? parseError.message : "Unknown error"}` };
+      }
+    } catch (error) {
+      return { success: false, error: `Followup questions generation failed: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async askQuestion(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `You are an AI assistant with access to a meeting's complete information. Please answer the user's question based on the available data.
+
+MEETING CONTEXT:
+Title: ${options.title || "Meeting"}
+Description: ${options.description || "No description"}
+Context: ${options.context || "No specific context"}
+
+TRANSCRIPT:
+${transcriptText}
+
+NOTES:
+${options.notes || "No notes"}
+
+SUMMARY:
+${options.summary || "No summary"}
+
+USER QUESTION:
+${options.question}
+
+Please provide a helpful, accurate answer based on the meeting information available. If the information needed to answer the question is not available in the meeting data, please say so clearly. Be specific and reference relevant parts of the transcript when possible.
+
+Respond with only the answer, no additional formatting or explanations.`;
+      const result = await this.makeGeminiRequest(prompt);
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || "Failed to get answer" };
+      }
+      return { success: true, answer: result.content.trim() };
+    } catch (error) {
+      return { success: false, error: `Question answering failed: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
 }
 const geminiService = new GeminiService();
 let mainWindow = null;
@@ -1373,18 +1474,61 @@ function setupTranscriptionHandlers() {
       }
     }
   );
-  electron.ipcMain.handle("transcription:load-recording", async (_, filePath) => {
-    try {
-      if (!fs__namespace.existsSync(filePath)) {
-        return { success: false, error: "Recording file not found" };
+  electron.ipcMain.handle(
+    "transcription:load-recording",
+    async (_, filePath) => {
+      try {
+        const resolvedPath = path__namespace.resolve(filePath);
+        if (!fs__namespace.existsSync(resolvedPath)) {
+          return { success: false, error: "Recording file not found" };
+        }
+        const buffer = fs__namespace.readFileSync(resolvedPath);
+        return { success: true, buffer: buffer.buffer };
+      } catch (error) {
+        console.error("Failed to load recording:", error);
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
-      const buffer = fs__namespace.readFileSync(filePath);
-      return {
-        success: true,
-        buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-      };
+    }
+  );
+  electron.ipcMain.handle("alerts:check-keywords", async (_, options) => {
+    try {
+      const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed;
+      const serviceReady = isTranscriptionReady && !isTranscriptionStarting;
+      if (!serviceReady || !socketConnected) {
+        return { success: false, error: "Transcription service not ready for alerts" };
+      }
+      return new Promise((resolve) => {
+        const handleAlertResponse = (data) => {
+          try {
+            const lines = data.toString().split("\n").filter((line) => line.trim());
+            for (const line of lines) {
+              const response = JSON.parse(line);
+              if (response.hasOwnProperty("success") && response.hasOwnProperty("matches")) {
+                transcriptionSocket.removeListener("data", handleAlertResponse);
+                resolve(response);
+                return;
+              }
+            }
+          } catch (error) {
+            console.error("Failed to parse alert response:", error);
+            transcriptionSocket.removeListener("data", handleAlertResponse);
+            resolve({ success: false, error: "Failed to parse alert response" });
+          }
+        };
+        transcriptionSocket.on("data", handleAlertResponse);
+        const alertRequest = JSON.stringify({
+          type: "check_alerts",
+          transcript: options.transcript,
+          keywords: options.keywords
+        });
+        transcriptionSocket.write(alertRequest);
+        setTimeout(() => {
+          transcriptionSocket.removeListener("data", handleAlertResponse);
+          resolve({ success: false, error: "Alert check timeout" });
+        }, 1e4);
+      });
     } catch (error) {
-      console.error("Failed to load recording file:", error);
+      console.error("Failed to check alerts:", error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
@@ -1511,6 +1655,24 @@ function setupGeminiHandlers() {
       return result;
     } catch (error) {
       console.error("Failed to generate message with Gemini:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("gemini:generate-followup-questions", async (_, options) => {
+    try {
+      const result = await geminiService.generateFollowupQuestions(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate followup questions with Gemini:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("gemini:ask-question", async (_, options) => {
+    try {
+      const result = await geminiService.askQuestion(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to ask question with Gemini:", error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });

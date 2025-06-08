@@ -33,6 +33,41 @@ interface GeminiMessageOptions {
   model?: string
 }
 
+interface FollowupQuestionsOptions {
+  transcript: TranscriptLine[]
+  title?: string
+  description?: string
+  context?: string
+  notes?: string
+  summary?: string
+}
+
+interface FollowupQuestionsResult {
+  success: boolean
+  data?: {
+    questions: string[]
+    risks: string[]
+    comments: string[]
+  }
+  error?: string
+}
+
+interface AskQuestionOptions {
+  question: string
+  transcript: TranscriptLine[]
+  title?: string
+  description?: string
+  context?: string
+  notes?: string
+  summary?: string
+}
+
+interface AskQuestionResult {
+  success: boolean
+  answer?: string
+  error?: string
+}
+
 class GeminiService {
   private apiKey: string | null = null
 
@@ -282,6 +317,123 @@ Generate only the email body content in rich text format, no subject line or add
       return { success: true, message: result.content.trim() }
     } catch (error) {
       return { success: false, error: `Message generation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }
+    }
+  }
+
+  async generateFollowupQuestions(options: FollowupQuestionsOptions): Promise<FollowupQuestionsResult> {
+    try {
+      const transcriptText = options.transcript
+        .map(line => `[${line.time}] ${line.text}`)
+        .join('\n')
+
+      const prompt = `You are an AI assistant analyzing an ongoing meeting. Based on the current transcript and context, please generate followup questions, identify potential risks, and provide helpful comments.
+
+MEETING CONTEXT:
+Title: ${options.title || 'Meeting'}
+Context: ${options.context || 'No specific context'}
+Description: ${options.description || 'No description'}
+
+CURRENT TRANSCRIPT:
+${transcriptText}
+
+NOTES:
+${options.notes || 'No notes'}
+
+SUMMARY SO FAR:
+${options.summary || 'No summary yet'}
+
+Please provide your response in the following JSON format:
+{
+  "questions": [
+    "What specific question should be asked to clarify a point?",
+    "What details need more elaboration?"
+  ],
+  "risks": [
+    "What potential issues or concerns were identified?",
+    "What problems might arise from the current discussion?"
+  ],
+  "comments": [
+    "What important observations about the meeting flow?",
+    "What suggestions for improving the discussion?"
+  ]
+}
+
+Guidelines:
+- Questions: Generate 2-4 relevant followup questions that would help clarify or expand on the current discussion
+- Risks: Identify 1-3 potential issues, concerns, or problems mentioned or implied in the discussion
+- Comments: Provide 1-3 helpful observations or suggestions about the meeting progress
+- Make suggestions actionable and specific to the current context
+- If no relevant items exist for a category, provide an empty array
+- Ensure the JSON is properly formatted`
+
+      const result = await this.makeGeminiRequest(prompt)
+      
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || 'Failed to generate followup questions' }
+      }
+
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/)
+        if (!jsonMatch) {
+          return { success: false, error: 'No valid JSON found in Gemini response' }
+        }
+
+        const parsedData = JSON.parse(jsonMatch[0])
+        
+        return {
+          success: true,
+          data: {
+            questions: Array.isArray(parsedData.questions) ? parsedData.questions : [],
+            risks: Array.isArray(parsedData.risks) ? parsedData.risks : [],
+            comments: Array.isArray(parsedData.comments) ? parsedData.comments : []
+          }
+        }
+      } catch (parseError) {
+        return { success: false, error: `Failed to parse Gemini response: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` }
+      }
+    } catch (error) {
+      return { success: false, error: `Followup questions generation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }
+    }
+  }
+
+  async askQuestion(options: AskQuestionOptions): Promise<AskQuestionResult> {
+    try {
+      const transcriptText = options.transcript
+        .map(line => `[${line.time}] ${line.text}`)
+        .join('\n')
+
+      const prompt = `You are an AI assistant with access to a meeting's complete information. Please answer the user's question based on the available data.
+
+MEETING CONTEXT:
+Title: ${options.title || 'Meeting'}
+Description: ${options.description || 'No description'}
+Context: ${options.context || 'No specific context'}
+
+TRANSCRIPT:
+${transcriptText}
+
+NOTES:
+${options.notes || 'No notes'}
+
+SUMMARY:
+${options.summary || 'No summary'}
+
+USER QUESTION:
+${options.question}
+
+Please provide a helpful, accurate answer based on the meeting information available. If the information needed to answer the question is not available in the meeting data, please say so clearly. Be specific and reference relevant parts of the transcript when possible.
+
+Respond with only the answer, no additional formatting or explanations.`
+
+      const result = await this.makeGeminiRequest(prompt)
+      
+      if (!result.success || !result.content) {
+        return { success: false, error: result.error || 'Failed to get answer' }
+      }
+
+      return { success: true, answer: result.content.trim() }
+    } catch (error) {
+      return { success: false, error: `Question answering failed: ${error instanceof Error ? error.message : 'Unknown error'}` }
     }
   }
 }

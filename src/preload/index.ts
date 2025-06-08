@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import { DatabaseAPI } from '../main/database'
 
 // Custom APIs for renderer
 const api = {
@@ -44,6 +43,12 @@ const api = {
     removeAllListeners: () => {
       ipcRenderer.removeAllListeners('transcription-result')
     }
+  },
+
+  // Alerts API
+  alerts: {
+    checkKeywords: (options: { transcript: string; keywords: any[] }) =>
+      ipcRenderer.invoke('alerts:check-keywords', options)
   },
 
   // Swift Recorder API for combined audio recording
@@ -105,7 +110,13 @@ const api = {
     generateSummary: (options: any) => ipcRenderer.invoke('gemini:generate-summary', options),
 
     // Generate Slack or Email messages
-    generateMessage: (options: any) => ipcRenderer.invoke('gemini:generate-message', options)
+    generateMessage: (options: any) => ipcRenderer.invoke('gemini:generate-message', options),
+
+    // Generate followup questions, risks, and comments
+    generateFollowupQuestions: (options: any) => ipcRenderer.invoke('gemini:generate-followup-questions', options),
+
+    // Ask a question about the meeting
+    askQuestion: (options: any) => ipcRenderer.invoke('gemini:ask-question', options)
   },
 
   // System APIs for shortcuts and menu bar

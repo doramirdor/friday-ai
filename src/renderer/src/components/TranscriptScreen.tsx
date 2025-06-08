@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Meeting } from '../types/database'
+import { AlertKeyword, AlertMatch } from '../types/electron'
 import RecordingInterface from './RecordingInterface'
 import LiveRecordingInterface from './LiveRecordingInterface'
 import PlaybackInterface from './PlaybackInterface'
@@ -45,49 +46,6 @@ interface RecordingResult {
   screen_permission?: boolean
 }
 
-interface ElectronAPI {
-  db: {
-    createMeeting: (meeting: any) => Promise<any>
-    getMeeting: (id: number) => Promise<any>
-    getAllMeetings: () => Promise<any>
-    updateMeeting: (id: number, meeting: any) => Promise<any>
-    deleteMeeting: (id: number) => Promise<any>
-    getSettings: () => Promise<any>
-    updateSettings: (settings: any) => Promise<any>
-  }
-  transcription: {
-    startService: () => Promise<{ success: boolean; error?: string }>
-    stopService: () => Promise<{ success: boolean }>
-    isReady: () => Promise<{ ready: boolean; details?: any }>
-    processChunk: (buffer: ArrayBuffer) => Promise<{ success: boolean; error?: string }>
-    ping: () => Promise<{ success: boolean; error?: string }>
-    onResult: (callback: (result: TranscriptionResult) => void) => void
-    removeAllListeners: () => void
-    loadRecording: (filePath: string) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }>
-    saveRecording: (arrayBuffer: ArrayBuffer, meetingId: number) => Promise<{ success: boolean; filePath?: string; error?: string }>
-  }
-  swiftRecorder: {
-    checkAvailability: () => Promise<{ available: boolean }>
-    startCombinedRecording: (path: string, filename: string) => Promise<{ success: boolean; error?: string }>
-    stopCombinedRecording: () => Promise<{ success: boolean; error?: string }>
-    onRecordingStarted: (callback: (result: RecordingResult) => void) => void
-    onRecordingStopped: (callback: (result: RecordingResult) => void) => void
-    onRecordingFailed: (callback: (result: RecordingResult) => void) => void
-    removeAllListeners: () => void
-  }
-  gemini: {
-    generateSummary: (options: any) => Promise<{ success: boolean; summary?: string; error?: string }>
-    generateContent: (options: any) => Promise<{ success: boolean; data?: any; error?: string }>
-    generateMessage: (options: any) => Promise<{ success: boolean; message?: string; error?: string }>
-  }
-}
-
-declare global {
-  interface Window {
-    api: ElectronAPI
-  }
-}
-
 const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -109,12 +67,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null)
   const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
   const [needsAutoSave, setNeedsAutoSave] = useState(false)
+  const [alertKeywords, setAlertKeywords] = useState<AlertKeyword[]>([])
+  const [showAlertIndicator, setShowAlertIndicator] = useState(false)
+  const [currentAlert, setCurrentAlert] = useState<AlertMatch | null>(null)
 
   // AI generation loading states
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
   const [isGeneratingAllContent, setIsGeneratingAllContent] = useState(false)
   const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
-  const [generatedAIMessage, setGeneratedAIMessage] = useState('')
   const [aiLoadingMessage, setAiLoadingMessage] = useState('')
 
   // Combined loading state for full-screen overlay
@@ -127,7 +87,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
   const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
   const [isRecording, setIsRecording] = useState(false)
-  const [isCombinedRecording, setIsCombinedRecording] = useState(false)
   const [liveText, setLiveText] = useState('')
 
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
@@ -160,7 +119,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const loadRecording = useCallback(async (recordingPath: string | string[]): Promise<void> => {
     try {
       if (Array.isArray(recordingPath)) {
-        console.log('⚠️ Chunked recording playback not yet implemented')
+          console.log('⚠️ Chunked recording playback not yet implemented')
       } else {
         await loadExistingRecording(recordingPath)
       }
@@ -169,76 +128,115 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
   }, [loadExistingRecording])
 
+  // Function to check for keyword matches in transcript
+  const checkForAlerts = useCallback(async (transcriptText: string): Promise<void> => {
+    if (alertKeywords.length === 0) return
+
+    const enabledKeywords = alertKeywords.filter(kw => kw.enabled)
+    if (enabledKeywords.length === 0) return
+
+    try {
+      const result = await window.api.alerts.checkKeywords({
+        transcript: transcriptText,
+        keywords: enabledKeywords
+      })
+
+      if (result.success && result.matches && result.matches.length > 0) {
+        // Show visual alert for the first match
+        if (result.matches.length > 0) {
+          setCurrentAlert(result.matches[0])
+          setShowAlertIndicator(true)
+          
+          // Auto-hide after 5 seconds
+          setTimeout(() => {
+            setShowAlertIndicator(false)
+            setCurrentAlert(null)
+          }, 5000)
+        }
+        
+        // Log alerts
+        result.matches.forEach(match => {
+          console.log(`🚨 ALERT: Keyword "${match.keyword}" detected (${(match.similarity * 100).toFixed(1)}% match)`)
+          console.log(`   Text: "${match.text}"`)
+        })
+        }
+      } catch (error) {
+      console.error('Failed to check for alerts:', error)
+    }
+  }, [alertKeywords])
+
   // Recording service callbacks
   const handleTranscriptionResult = useCallback((result: TranscriptionResult): void => {
-    if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
-      setLiveText((prev) => prev + ' ' + result.text)
+      if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
+        setLiveText((prev) => prev + ' ' + result.text)
+
+      // Check for alerts on new transcript text
+      checkForAlerts(result.text)
       
       // This will be handled by the recording service itself
       // The transcript state is managed by the service
-    } else if (result.type === 'error') {
-      console.error('Transcription error:', result.message)
+      } else if (result.type === 'error') {
+        console.error('Transcription error:', result.message)
     }
-  }, [])
+  }, [checkForAlerts])
 
   const handleCombinedRecordingStarted = useCallback((result: RecordingResult): void => {
-    console.log('🎙️ Combined recording started:', result)
-    setIsCombinedRecording(true)
-    
-    if (result.code === 'BLUETOOTH_LIMITATION') {
-      console.warn('⚠️ Bluetooth audio detected:', result.warning)
-      setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
-      setTranscriptionStatus('recording-mic-only')
-    } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
-      console.warn('⚠️ Screen recording permission required:', result.warning)
-      setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}\n\nPlease grant screen recording permission in System Settings > Privacy & Security > Screen Recording`)
-      setTranscriptionStatus('recording-mic-only')
-    } else if (result.code === 'SYSTEM_AUDIO_UNAVAILABLE') {
-      console.warn('⚠️ System audio unavailable:', result.warning)
-      setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
-      setTranscriptionStatus('recording-mic-only')
-    } else if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
-      console.warn('⚠️ System audio capture failed (legacy):', result.warning)
-      setRecordingWarning(`⚠️ ${result.warning}`)
-      setTranscriptionStatus('recording-mic-only')
-    } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
-      console.error('❌ Recording failed:', result.error)
-      setRecordingWarning(`❌ Recording failed: ${result.error}`)
-      setTranscriptionStatus('error')
-      setIsCombinedRecording(false)
-    } else if (result.code === 'RECORDING_STARTED') {
-      setRecordingWarning(null)
-      setTranscriptionStatus('recording')
+      console.log('🎙️ Combined recording started:', result)
+    setIsRecording(true)
       
-      if (result.warning) {
-        console.warn('⚠️ Recording quality warning:', result.warning)
-        setRecordingWarning(`ℹ️ ${result.warning}`)
+      if (result.code === 'BLUETOOTH_LIMITATION') {
+        console.warn('⚠️ Bluetooth audio detected:', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
+        setTranscriptionStatus('recording-mic-only')
+      } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
+        console.warn('⚠️ Screen recording permission required:', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}\n\nPlease grant screen recording permission in System Settings > Privacy & Security > Screen Recording`)
+        setTranscriptionStatus('recording-mic-only')
+      } else if (result.code === 'SYSTEM_AUDIO_UNAVAILABLE') {
+        console.warn('⚠️ System audio unavailable:', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
+        setTranscriptionStatus('recording-mic-only')
+      } else if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
+        console.warn('⚠️ System audio capture failed (legacy):', result.warning)
+        setRecordingWarning(`⚠️ ${result.warning}`)
+        setTranscriptionStatus('recording-mic-only')
+      } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
+        console.error('❌ Recording failed:', result.error)
+        setRecordingWarning(`❌ Recording failed: ${result.error}`)
+        setTranscriptionStatus('error')
+      setIsRecording(false)
+      } else if (result.code === 'RECORDING_STARTED') {
+        setRecordingWarning(null)
+        setTranscriptionStatus('recording')
+        
+        if (result.warning) {
+          console.warn('⚠️ Recording quality warning:', result.warning)
+          setRecordingWarning(`ℹ️ ${result.warning}`)
+        }
+      } else {
+        console.warn('⚠️ Unknown recording result code:', result.code)
+        setRecordingWarning(null)
       }
-    } else {
-      console.warn('⚠️ Unknown recording result code:', result.code)
-      setRecordingWarning(null)
-    }
   }, [])
 
   const handleCombinedRecordingStopped = useCallback((result: RecordingResult): void => {
-    console.log('🎙️ Combined recording stopped:', result)
-    setIsCombinedRecording(false)
+      console.log('🎙️ Combined recording stopped:', result)
+    setIsRecording(false)
     setRecordingWarning(null)
 
-    if (result.path) {
-      setCombinedRecordingPath(result.path)
-      console.log('📁 Stored combined recording path:', result.path)
-      loadRecording(result.path)
-    }
+      if (result.path) {
+        setCombinedRecordingPath(result.path)
+        console.log('📁 Stored combined recording path:', result.path)
+        loadRecording(result.path)
+      }
   }, [loadRecording])
 
   const handleCombinedRecordingFailed = useCallback((result: RecordingResult): void => {
-    console.error('❌ Recording failed during operation:', result.error)
-    
-    setIsCombinedRecording(false)
-    setIsRecording(false)
-    setTranscriptionStatus('error')
-    setRecordingWarning(`❌ Recording failed: ${result.error}`)
+      console.error('❌ Recording failed during operation:', result.error)
+      
+      setIsRecording(false)
+      setTranscriptionStatus('error')
+      setRecordingWarning(`❌ Recording failed: ${result.error}`)
   }, [])
 
   // Memoize recording service props to prevent re-creation
@@ -282,7 +280,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         const totalSeconds = (minutes || 0) * 60 + (seconds || 0)
         setTotalTime(totalSeconds)
         console.log('⏱️ Loaded duration:', meeting.duration, `(${totalSeconds} seconds)`)
-      } else {
+    } else {
         console.log('⚠️ No valid duration found in meeting data')
       }
 
@@ -306,7 +304,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       const state = recordingService.getState()
       if (state.isRecording) {
         recordingService.stopRecording()
-      } else {
+              } else {
         recordingService.startRecording(recordingMode)
       }
     }
@@ -327,7 +325,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       const state = recordingService.getState()
       if (state.isRecording) {
         console.log('⏸️ Recording is active - pause functionality not yet implemented')
-      } else {
+                  } else {
         console.log('▶️ No active recording to pause/resume')
       }
     }
@@ -368,7 +366,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       if (state.isRecording || (wasRecording && !state.isRecording && state.transcript.length > 0)) {
         console.log('📝 Syncing transcript from recording service:', state.transcript.length, 'lines')
         setTranscript(state.transcript)
-      } else {
+                  } else {
         // console.log('📝 Preserving existing transcript, not syncing from recording service')
       }
       
@@ -703,7 +701,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       
       if (result.success && result.message) {
         console.log(`✅ ${type} message generated successfully`)
-        setGeneratedAIMessage(result.message)
         return result.message
       } else {
         console.error(`Failed to generate ${type} message:`, result.error)
@@ -731,11 +728,39 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   }, [])
 
   // Show recording interface if no recording is available
-  const hasTranscript = transcript && transcript.length > 0
   const hasRecording = totalTime > 0 && recordedAudioUrl
 
   return (
     <div className="transcript-layout">
+      {/* Visual Alert Indicator */}
+      {showAlertIndicator && currentAlert && (
+        <div 
+          className={`alert-indicator ${showAlertIndicator ? '' : 'alert-dismissing'}`}
+          onClick={() => {
+            setShowAlertIndicator(false)
+            setCurrentAlert(null)
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ 
+              width: '8px', 
+              height: '8px', 
+              background: 'white', 
+                    borderRadius: '50%',
+              animation: 'pulse 1s infinite'
+            }} />
+            <div>
+              <div style={{ fontWeight: '600', fontSize: '14px' }}>
+                Alert: {currentAlert.keyword}
+              </div>
+              <div style={{ fontSize: '12px', opacity: 0.9 }}>
+                {(currentAlert.similarity * 100).toFixed(1)}% match
+            </div>
+                </div>
+              </div>
+                  </div>
+                )}
+
       {/* Main Content (Left 50%) */}
       <div className="transcript-main">
         {!hasRecording && !isRecording ? (
@@ -769,7 +794,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
             onAudioPlayerRef={handleAudioPlayerRef}
           />
         )}
-      </div>
+              </div>
 
       {/* Sidebar (Right 50%) */}
       <SidebarContent
@@ -786,6 +811,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         savingMeeting={savingMeeting}
         isGeneratingSummary={isGeneratingSummary}
         isGeneratingAllContent={isGeneratingAllContent}
+        alertKeywords={alertKeywords}
         onTitleChange={setTitle}
         onDescriptionChange={setDescription}
         onTagsChange={setTags}
@@ -801,6 +827,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         transcript={transcript}
         isGeneratingMessage={isGeneratingMessage}
         onSetGeneratingMessage={handleSetGeneratingMessage}
+        onAlertKeywordsChange={setAlertKeywords}
       />
 
       {/* Full-Screen AI Loading Overlay */}
@@ -821,14 +848,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
               >
                 <path d="M12 2L15.09 8.26L22 9L17 14L18.18 21L12 17.77L5.82 21L7 14L2 9L8.91 8.26L12 2Z" />
               </svg>
-            </div>
+                      </div>
             <h2 className="ai-loading-title">AI is thinking...</h2>
             <p className="ai-loading-message">{aiLoadingMessage}</p>
             <div className="ai-loading-progress">
               <div className="ai-loading-progress-bar"></div>
-            </div>
-          </div>
-        </div>
+                    </div>
+                  </div>
+              </div>
       )}
     </div>
   )

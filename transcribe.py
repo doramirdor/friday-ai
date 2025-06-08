@@ -12,6 +12,68 @@ import numpy as np
 import fcntl  # For file locking
 import atexit  # For cleanup on exit
 from faster_whisper import WhisperModel
+from sentence_transformers import SentenceTransformer, util
+
+class AlertMatcher:
+    def __init__(self):
+        print("🤖 Initializing semantic alert matcher...", file=sys.stderr, flush=True)
+        self.model = SentenceTransformer("all-MiniLM-L6-v2")  # 384-dim, fast
+        print("✅ Alert matcher initialized successfully", file=sys.stderr, flush=True)
+    
+    def check_keywords(self, transcript_text, keywords):
+        """
+        Check for keyword matches using semantic similarity
+        """
+        try:
+            if not transcript_text.strip() or not keywords:
+                return []
+            
+            # Extract enabled keywords with their metadata
+            enabled_keywords = [kw for kw in keywords if kw.get('enabled', True)]
+            if not enabled_keywords:
+                return []
+            
+            keyword_texts = [kw['keyword'] for kw in enabled_keywords]
+            keyword_thresholds = {kw['keyword']: kw['threshold'] for kw in enabled_keywords}
+            
+            # Pre-encode keywords if not already done
+            kw_vecs = self.model.encode(keyword_texts, normalize_embeddings=True)
+            
+            # Process transcript in chunks with sliding window
+            window_size = 30  # words
+            overlap = 15  # 50% overlap
+            
+            tokens = transcript_text.lower().split()
+            matches = []
+            
+            for i in range(0, len(tokens), overlap):
+                chunk = " ".join(tokens[i:i+window_size])
+                if not chunk.strip():
+                    continue
+                
+                # Encode the chunk
+                chunk_vec = self.model.encode(chunk, normalize_embeddings=True)
+                
+                # Calculate similarities with all keywords
+                similarities = util.cos_sim(chunk_vec, kw_vecs)[0]
+                
+                # Check for matches above threshold
+                for j, (keyword, sim_score) in enumerate(zip(keyword_texts, similarities)):
+                    threshold = keyword_thresholds[keyword]
+                    if sim_score >= threshold:
+                        matches.append({
+                            'keyword': keyword,
+                            'text': chunk,
+                            'similarity': float(sim_score),
+                            'time': '00:00'  # You can implement time tracking if needed
+                        })
+                        break  # One alert per chunk to avoid spam
+            
+            return matches
+            
+        except Exception as e:
+            print(f"❌ Alert matching error: {e}", file=sys.stderr, flush=True)
+            return []
 
 class TranscriptionSocketServer:
     def __init__(self, port=9001):
@@ -37,6 +99,9 @@ class TranscriptionSocketServer:
         # Initialize Whisper model - using base model for balance of speed and accuracy
         self.model = WhisperModel("small", device="cpu", compute_type="int8")
         
+        # Initialize alert matcher
+        self.alert_matcher = AlertMatcher()
+        
         self.temp_dir = tempfile.mkdtemp()
         self.chunk_counter = 0
         self.port = port
@@ -49,40 +114,42 @@ class TranscriptionSocketServer:
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         
         try:
-            self.server.bind(("localhost", port))
-            self.server.listen(1)
-            print(f"🎧 Socket server listening on port {port}", file=sys.stderr, flush=True)
-            print("READY", flush=True)  # Signal to Electron that we're ready
+            self.server.bind(('localhost', self.port))
+            self.server.listen(5)
+            print(f"Socket server listening on port {self.port}", file=sys.stderr, flush=True)
+            print("READY", flush=True)  # Signal to main process that we're ready
         except OSError as e:
             if e.errno == 48:  # Address already in use
-                print(f"❌ Port {port} is already in use. Trying to find an available port...", file=sys.stderr, flush=True)
-                # Try to find an available port
-                for attempt_port in range(port + 1, port + 10):
-                    try:
-                        self.server.bind(("localhost", attempt_port))
-                        self.server.listen(1)
-                        self.port = attempt_port
-                        print(f"🎧 Socket server listening on port {attempt_port}", file=sys.stderr, flush=True)
-                        print("READY", flush=True)
-                        return
-                    except OSError:
-                        continue
-                
-                # If we can't find any port, raise the original error
-                raise OSError(f"Could not bind to any port from {port} to {port + 9}")
+                print(f"❌ Port {self.port} is already in use", file=sys.stderr, flush=True)
+                sys.exit(1)
             else:
                 raise e
     
     def cleanup_lock(self):
-        """Clean up the lock file"""
+        """Clean up the lock file on exit"""
         try:
             if self.lock_file:
                 self.lock_file.close()
-            if os.path.exists(self.lock_file_path):
-                os.remove(self.lock_file_path)
-                print(f"🔓 Released process lock: {self.lock_file_path}", file=sys.stderr, flush=True)
+                os.unlink(self.lock_file_path)
+                print(f"🧹 Cleaned up lock file: {self.lock_file_path}", file=sys.stderr, flush=True)
+        except:
+            pass
+    
+    def check_alerts(self, transcript_text, keywords):
+        """
+        Check for alert keywords in transcript text
+        """
+        try:
+            matches = self.alert_matcher.check_keywords(transcript_text, keywords)
+            return {
+                "success": True,
+                "matches": matches
+            }
         except Exception as e:
-            print(f"⚠️ Warning: Could not cleanup lock file: {e}", file=sys.stderr, flush=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
     def convert_audio_to_wav(self, input_path):
         """Convert any audio format to WAV using PyAV"""
@@ -189,32 +256,48 @@ class TranscriptionSocketServer:
                 pass
     
     def handle_client(self, conn, addr):
-        """Handle client connection for audio processing"""
+        """Handle client connection for audio processing and alert checking"""
         print(f"📞 Client connected from {addr}", file=sys.stderr, flush=True)
         
         try:
             while True:
-                # Receive audio file path
-                data = conn.recv(1024)
+                # Receive data
+                data = conn.recv(4096)  # Increased buffer size for alert data
                 if not data:
                     break
                 
-                audio_path = data.decode().strip()
-                if not audio_path:
-                    continue
-                
-                print(f"🔄 Processing: {os.path.basename(audio_path)}", file=sys.stderr, flush=True)
-                
-                self.chunk_counter += 1
-                
-                # Process the audio chunk
-                result = self.transcribe_chunk(audio_path)
-                
-                # Send result back to client
-                response = json.dumps(result) + "\n"
-                conn.send(response.encode())
-                
-                print(f"📤 Sent: {result.get('type', 'unknown')}", file=sys.stderr, flush=True)
+                try:
+                    # Try to parse as JSON for alert requests
+                    request = json.loads(data.decode().strip())
+                    
+                    if request.get('type') == 'check_alerts':
+                        # Handle alert checking request
+                        transcript_text = request.get('transcript', '')
+                        keywords = request.get('keywords', [])
+                        
+                        result = self.check_alerts(transcript_text, keywords)
+                        response = json.dumps(result) + "\n"
+                        conn.send(response.encode())
+                        continue
+                        
+                except json.JSONDecodeError:
+                    # Not JSON, treat as audio file path (legacy behavior)
+                    audio_path = data.decode().strip()
+                    if not audio_path:
+                        continue
+                    
+                    print(f"🔄 Processing: {os.path.basename(audio_path)}", file=sys.stderr, flush=True)
+                    
+                    self.chunk_counter += 1
+                    
+                    # Process the audio chunk
+                    result = self.transcribe_chunk(audio_path)
+                    
+                    # Send result back to client
+                    response = json.dumps(result) + "\n"
+                    conn.send(response.encode())
+                    
+                    print(f"📤 Sent: {result.get('type', 'unknown')}", file=sys.stderr, flush=True)
                 
         except Exception as e:
             print(f"❌ Client error: {e}", file=sys.stderr, flush=True)

@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { Meeting } from '../types/database'
 
-type SidebarTab = 'details' | 'context' | 'actions' | 'notes' | 'summary' | 'ai' | 'alerts'
+type SidebarTab = 'details' | 'context' | 'actions' | 'notes' | 'summary' | 'followup-questions' | 'ask-question' | 'ai-messages' | 'alerts'
 
 interface AIDataSelection {
   notes: boolean
@@ -116,12 +116,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   const [generatedMessage, setGeneratedMessage] = useState('')
   const [messageType, setMessageType] = useState<'slack' | 'email'>('slack')
 
-  // AI tab section states
-  const [followupCollapsed, setFollowupCollapsed] = useState(false)
-  const [questionCollapsed, setQuestionCollapsed] = useState(false)
-  const [messageCollapsed, setMessageCollapsed] = useState(false)
-
-  // Followup questions state
+  // Followup questions state - runs in background
   const [followupEnabled, setFollowupEnabled] = useState(false)
   const [followupInterval, setFollowupInterval] = useState(30) // seconds
   const [followupQuestions, setFollowupQuestions] = useState<string[]>([])
@@ -130,7 +125,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   const [isGeneratingFollowup, setIsGeneratingFollowup] = useState(false)
   const [lastFollowupTime, setLastFollowupTime] = useState<number>(0)
 
-  // Ask a question state
+  // Ask a question state - available in background
   const [userQuestion, setUserQuestion] = useState('')
   const [questionAnswer, setQuestionAnswer] = useState('')
   const [isGeneratingAnswer, setIsGeneratingAnswer] = useState(false)
@@ -651,299 +646,296 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
           </div>
         )
 
-      case 'ai':
+      case 'followup-questions':
         return (
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">AI Assistant</h3>
+              <h3 className="card-title">
+                💡 Followup Questions
+                {followupEnabled && (
+                  <span style={{ 
+                    marginLeft: '8px', 
+                    fontSize: '12px', 
+                    background: 'var(--green-light)', 
+                    color: 'var(--green-dark)',
+                    padding: '2px 6px',
+                    borderRadius: '4px'
+                  }}>
+                    Auto-generating
+                  </span>
+                )}
+              </h3>
             </div>
             <div className="card-body">
-              <div className="ai-content-container">
-                {/* Followup Questions Section */}
-                <div className="ai-section">
-                  <div 
-                    className="ai-section-header"
-                    onClick={() => setFollowupCollapsed(!followupCollapsed)}
-                  >
-                    <h4 className="ai-section-title">
-                      {followupCollapsed ? '▶' : '▼'} Followup Questions
-                    </h4>
-                    <div className="ai-section-controls">
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input
-                          type="checkbox"
-                          checked={followupEnabled}
-                          onChange={(e) => setFollowupEnabled(e.target.checked)}
-                        />
-                        <span style={{ fontSize: '12px' }}>Auto-generate</span>
-                      </label>
-                    </div>
-                  </div>
-                  
-                  {!followupCollapsed && (
-                    <div className="ai-section-content">
-                      <div className="input-group">
-                        <label className="demo-label">Update Interval (seconds)</label>
-                        <input
-                          type="range"
-                          min="5"
-                          max="300"
-                          step="5"
-                          value={followupInterval}
-                          onChange={(e) => setFollowupInterval(parseInt(e.target.value))}
-                          style={{ width: '100%' }}
-                        />
-                        <div style={{ 
-                          display: 'flex', 
-                          justifyContent: 'space-between', 
-                          fontSize: '12px', 
-                          color: 'var(--text-secondary)',
-                          marginTop: '4px'
-                        }}>
-                          <span>5s</span>
-                          <span>{followupInterval}s</span>
-                          <span>5m</span>
-                        </div>
-                      </div>
+              <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
+                AI automatically analyzes your meeting transcript and generates relevant followup questions, identifies potential risks, and provides helpful comments.
+              </div>
 
-                      <div className="input-group">
-                        <button
-                          className="btn btn-secondary w-full"
-                          onClick={generateFollowupQuestions}
-                          disabled={isGeneratingFollowup || transcript.length === 0}
-                        >
-                          <SparklesIcon size={16} />
-                          {isGeneratingFollowup ? 'Generating...' : 'Generate Now'}
-                        </button>
-                      </div>
+              <div className="input-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                  <input
+                    type="checkbox"
+                    checked={followupEnabled}
+                    onChange={(e) => setFollowupEnabled(e.target.checked)}
+                  />
+                  <span>Enable auto-generation during recording</span>
+                </label>
+              </div>
 
-                      {(followupQuestions.length > 0 || followupRisks.length > 0 || followupComments.length > 0) && (
-                        <div className="followup-results">
-                          {followupQuestions.length > 0 && (
-                            <div className="followup-section">
-                              <h5 style={{ color: 'var(--interactive-primary)', marginBottom: '8px' }}>
-                                💡 Suggested Questions
-                              </h5>
-                              <ul style={{ margin: 0, paddingLeft: '16px' }}>
-                                {followupQuestions.map((question, index) => (
-                                  <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
-                                    {question}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {followupRisks.length > 0 && (
-                            <div className="followup-section">
-                              <h5 style={{ color: 'var(--status-error)', marginBottom: '8px' }}>
-                                ⚠️ Potential Risks
-                              </h5>
-                              <ul style={{ margin: 0, paddingLeft: '16px' }}>
-                                {followupRisks.map((risk, index) => (
-                                  <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
-                                    {risk}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {followupComments.length > 0 && (
-                            <div className="followup-section">
-                              <h5 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>
-                                💬 Comments
-                              </h5>
-                              <ul style={{ margin: 0, paddingLeft: '16px' }}>
-                                {followupComments.map((comment, index) => (
-                                  <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
-                                    {comment}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Ask a Question Section */}
-                <div className="ai-section">
-                  <div 
-                    className="ai-section-header"
-                    onClick={() => setQuestionCollapsed(!questionCollapsed)}
-                  >
-                    <h4 className="ai-section-title">
-                      {questionCollapsed ? '▶' : '▼'} Ask a Question
-                    </h4>
-                  </div>
-                  
-                  {!questionCollapsed && (
-                    <div className="ai-section-content">
-                      <div className="input-group">
-                        <textarea
-                          className="input textarea"
-                          placeholder="Ask anything about this meeting..."
-                          value={userQuestion}
-                          onChange={(e) => setUserQuestion(e.target.value)}
-                          style={{ minHeight: '60px' }}
-                        />
-                      </div>
-
-                      <div className="input-group">
-                        <button
-                          className="btn btn-primary w-full"
-                          onClick={askQuestion}
-                          disabled={isGeneratingAnswer || !userQuestion.trim() || transcript.length === 0}
-                        >
-                          <MessageSquareIcon size={16} />
-                          {isGeneratingAnswer ? 'Thinking...' : 'Ask Question'}
-                        </button>
-                      </div>
-
-                      {questionAnswer && (
-                        <div className="question-answer">
-                          <h5 style={{ color: 'var(--interactive-primary)', marginBottom: '8px' }}>
-                            💬 Answer
-                          </h5>
-                          <div style={{
-                            padding: '12px',
-                            background: 'var(--surface-secondary)',
-                            borderRadius: 'var(--radius-md)',
-                            fontSize: '14px',
-                            lineHeight: '1.5'
-                          }}>
-                            {questionAnswer}
-                          </div>
-                        </div>
-                      )}
-
-                      {questionHistory.length > 0 && (
-                        <div className="question-history">
-                          <h5 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>
-                            📚 Question History
-                          </h5>
-                          <div className="question-history-list" style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                            {questionHistory.slice(-3).reverse().map((item, index) => (
-                              <div key={index} style={{
-                                padding: '8px',
-                                background: 'var(--surface-tertiary)',
-                                borderRadius: 'var(--radius-sm)',
-                                marginBottom: '8px',
-                                fontSize: '12px'
-                              }}>
-                                <div style={{ fontWeight: '500', marginBottom: '4px' }}>
-                                  Q: {item.question}
-                                </div>
-                                <div style={{ color: 'var(--text-secondary)' }}>
-                                  A: {item.answer.substring(0, 100)}...
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* AI Message Generator Section */}
-                <div className="ai-section">
-                  <div 
-                    className="ai-section-header"
-                    onClick={() => setMessageCollapsed(!messageCollapsed)}
-                  >
-                    <h4 className="ai-section-title">
-                      {messageCollapsed ? '▶' : '▼'} AI Message Generator
-                    </h4>
-                  </div>
-                  
-                  {!messageCollapsed && (
-                    <div className="ai-section-content">
-                      {/* Data Selection */}
-                      <div className="input-group">
-                        <label className="demo-label">Include Data</label>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {Object.entries(aiDataSelection).map(([key, value]) => (
-                            <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <input
-                                type="checkbox"
-                                checked={value}
-                                onChange={() => toggleDataSelection(key as keyof AIDataSelection)}
-                              />
-                              <span style={{ textTransform: 'capitalize' }}>{key}</span>
-                            </label>
-                          ))}
-                        </div>
-                        <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          Global context and meeting context are always included
-                        </div>
-                      </div>
-
-                      {/* Message Type Selection */}
-                      <div className="input-group">
-                        <label className="demo-label">Message Type</label>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button
-                            className={`btn btn-sm ${messageType === 'slack' ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setMessageType('slack')}
-                          >
-                            <MessageSquareIcon size={16} />
-                            Slack Message
-                          </button>
-                          <button
-                            className={`btn btn-sm ${messageType === 'email' ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setMessageType('email')}
-                          >
-                            <MailIcon size={16} />
-                            Email Message
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Generate Button */}
-                      <div className="input-group">
-                        <button
-                          className="btn btn-primary w-full"
-                          onClick={() => handleGenerateAIMessage(messageType)}
-                          disabled={isGeneratingMessage}
-                        >
-                          <SparklesIcon size={16} />
-                          {isGeneratingMessage ? 'Generating...' : `Generate ${messageType === 'slack' ? 'Slack' : 'Email'} Message`}
-                        </button>
-                      </div>
-
-                      {/* Generated Message Output */}
-                      {generatedMessage && !isGeneratingMessage && (
-                        <div className="input-group">
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <label className="demo-label">Generated Message</label>
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={copyToClipboard}
-                              title="Copy to clipboard"
-                            >
-                              <CopyIcon size={16} />
-                              Copy
-                            </button>
-                          </div>
-                          <BlockNoteEditor
-                            value={generatedMessage}
-                            onChange={setGeneratedMessage}
-                            placeholder="Generated message will appear here..."
-                            height={300}
-                          />
-                          <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                            You can edit the message above and copy it to your clipboard
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+              <div className="input-group">
+                <label className="demo-label">Update Interval: {followupInterval} seconds</label>
+                <input
+                  type="range"
+                  min="5"
+                  max="300"
+                  step="5"
+                  value={followupInterval}
+                  onChange={(e) => setFollowupInterval(parseInt(e.target.value))}
+                  style={{ width: '100%' }}
+                />
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  fontSize: '12px', 
+                  color: 'var(--text-secondary)',
+                  marginTop: '4px'
+                }}>
+                  <span>5s (frequent)</span>
+                  <span>5m (occasional)</span>
                 </div>
               </div>
+
+              <div className="input-group">
+                <button
+                  className="btn btn-primary w-full"
+                  onClick={generateFollowupQuestions}
+                  disabled={isGeneratingFollowup || transcript.length === 0}
+                >
+                  <SparklesIcon size={16} />
+                  {isGeneratingFollowup ? 'Generating...' : 'Generate Now'}
+                </button>
+              </div>
+
+              {(followupQuestions.length > 0 || followupRisks.length > 0 || followupComments.length > 0) && (
+                <div className="followup-results">
+                  {followupQuestions.length > 0 && (
+                    <div className="followup-section">
+                      <h5 style={{ color: 'var(--interactive-primary)', marginBottom: '8px' }}>
+                        💡 Suggested Questions
+                      </h5>
+                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
+                        {followupQuestions.map((question, index) => (
+                          <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
+                            {question}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {followupRisks.length > 0 && (
+                    <div className="followup-section">
+                      <h5 style={{ color: 'var(--status-error)', marginBottom: '8px' }}>
+                        ⚠️ Potential Risks
+                      </h5>
+                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
+                        {followupRisks.map((risk, index) => (
+                          <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
+                            {risk}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {followupComments.length > 0 && (
+                    <div className="followup-section">
+                      <h5 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>
+                        💬 Comments
+                      </h5>
+                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
+                        {followupComments.map((comment, index) => (
+                          <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
+                            {comment}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+
+      case 'ask-question':
+        return (
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">🤔 Ask a Question</h3>
+            </div>
+            <div className="card-body">
+              <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
+                Ask AI anything about your meeting. The AI has access to your complete transcript, notes, summary, and context.
+              </div>
+
+              <div className="input-group">
+                <textarea
+                  className="input textarea input-floating"
+                  placeholder=" "
+                  value={userQuestion}
+                  onChange={(e) => setUserQuestion(e.target.value)}
+                  style={{ minHeight: '80px' }}
+                />
+                <label className="input-label">Your question...</label>
+              </div>
+
+              <div className="input-group">
+                <button
+                  className="btn btn-primary w-full"
+                  onClick={askQuestion}
+                  disabled={isGeneratingAnswer || !userQuestion.trim() || transcript.length === 0}
+                >
+                  <MessageSquareIcon size={16} />
+                  {isGeneratingAnswer ? 'Thinking...' : 'Ask Question'}
+                </button>
+              </div>
+
+              {questionAnswer && (
+                <div className="question-answer">
+                  <h5 style={{ color: 'var(--interactive-primary)', marginBottom: '8px' }}>
+                    💬 Answer
+                  </h5>
+                  <div style={{
+                    padding: '12px',
+                    background: 'var(--surface-secondary)',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: '14px',
+                    lineHeight: '1.5'
+                  }}>
+                    {questionAnswer}
+                  </div>
+                </div>
+              )}
+
+              {questionHistory.length > 0 && (
+                <div className="question-history">
+                  <h5 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>
+                    📚 Recent Questions ({questionHistory.length})
+                  </h5>
+                  <div className="question-history-list">
+                    {questionHistory.slice(-5).reverse().map((item, index) => (
+                      <div key={index} style={{
+                        padding: '8px',
+                        background: 'var(--surface-tertiary)',
+                        borderRadius: 'var(--radius-sm)',
+                        marginBottom: '8px',
+                        fontSize: '12px'
+                      }}>
+                        <div style={{ fontWeight: '500', marginBottom: '4px' }}>
+                          Q: {item.question}
+                        </div>
+                        <div style={{ color: 'var(--text-secondary)' }}>
+                          A: {item.answer.length > 150 ? `${item.answer.substring(0, 150)}...` : item.answer}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+
+      case 'ai-messages':
+        return (
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">✉️ AI Message Generator</h3>
+            </div>
+            <div className="card-body">
+              <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
+                Generate professional Slack messages or emails based on your meeting content.
+              </div>
+
+              {/* Data Selection */}
+              <div className="input-group">
+                <label className="demo-label">Include Data</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {Object.entries(aiDataSelection).map(([key, value]) => (
+                    <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <input
+                        type="checkbox"
+                        checked={value}
+                        onChange={() => toggleDataSelection(key as keyof AIDataSelection)}
+                      />
+                      <span style={{ textTransform: 'capitalize' }}>{key}</span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Global context and meeting context are always included
+                </div>
+              </div>
+
+              {/* Message Type Selection */}
+              <div className="input-group">
+                <label className="demo-label">Message Type</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className={`btn btn-sm ${messageType === 'slack' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setMessageType('slack')}
+                  >
+                    <MessageSquareIcon size={16} />
+                    Slack Message
+                  </button>
+                  <button
+                    className={`btn btn-sm ${messageType === 'email' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setMessageType('email')}
+                  >
+                    <MailIcon size={16} />
+                    Email Message
+                  </button>
+                </div>
+              </div>
+
+              {/* Generate Button */}
+              <div className="input-group">
+                <button
+                  className="btn btn-primary w-full"
+                  onClick={() => handleGenerateAIMessage(messageType)}
+                  disabled={isGeneratingMessage}
+                >
+                  <SparklesIcon size={16} />
+                  {isGeneratingMessage ? 'Generating...' : `Generate ${messageType === 'slack' ? 'Slack' : 'Email'} Message`}
+                </button>
+              </div>
+
+              {/* Generated Message Output */}
+              {generatedMessage && !isGeneratingMessage && (
+                <div className="input-group">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <label className="demo-label">Generated Message</label>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={copyToClipboard}
+                      title="Copy to clipboard"
+                    >
+                      <CopyIcon size={16} />
+                      Copy
+                    </button>
+                  </div>
+                  <BlockNoteEditor
+                    value={generatedMessage}
+                    onChange={setGeneratedMessage}
+                    placeholder="Generated message will appear here..."
+                    height={300}
+                  />
+                  <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    You can edit the message above and copy it to your clipboard
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )
@@ -957,7 +949,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
             <div className="card-body">
               <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
                 Monitor your transcript for important keywords using AI-powered semantic matching. 
-                Get notified when topics of interest are mentioned, even if the exact words aren't used.
+                Get notified when topics of interest are mentioned, even if the exact words aren&apos;t used.
               </div>
 
               {/* Add New Keyword */}
@@ -1127,49 +1119,72 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
           className={`tab ${activeSidebarTab === 'details' ? 'active' : ''}`}
           onClick={() => setActiveSidebarTab('details')}
         >
-          <InfoIcon size={16} />
+          <InfoIcon size={14} />
           Details
         </button>
         <button
           className={`tab ${activeSidebarTab === 'context' ? 'active' : ''}`}
           onClick={() => setActiveSidebarTab('context')}
         >
-          <FileTextIcon size={16} />
+          <FileTextIcon size={14} />
           Context
         </button>
         <button
           className={`tab ${activeSidebarTab === 'actions' ? 'active' : ''}`}
           onClick={() => setActiveSidebarTab('actions')}
         >
-          <ClipboardListIcon size={16} />
+          <ClipboardListIcon size={14} />
           Actions
         </button>
         <button
           className={`tab ${activeSidebarTab === 'notes' ? 'active' : ''}`}
           onClick={() => setActiveSidebarTab('notes')}
         >
-          <BookOpenIcon size={16} />
+          <BookOpenIcon size={14} />
           Notes
         </button>
         <button
           className={`tab ${activeSidebarTab === 'summary' ? 'active' : ''}`}
           onClick={() => setActiveSidebarTab('summary')}
         >
-          <FileTextIcon size={16} />
+          <FileTextIcon size={14} />
           Summary
         </button>
         <button
-          className={`tab ${activeSidebarTab === 'ai' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('ai')}
+          className={`tab ${activeSidebarTab === 'followup-questions' ? 'active' : ''}`}
+          onClick={() => setActiveSidebarTab('followup-questions')}
         >
-          <BotIcon size={16} />
-          AI
+          <SparklesIcon size={14} />
+          Followup
+          {followupEnabled && (
+            <div style={{ 
+              width: '6px', 
+              height: '6px', 
+              background: 'var(--green-dark)', 
+              borderRadius: '50%',
+              marginLeft: '4px'
+            }} />
+          )}
+        </button>
+        <button
+          className={`tab ${activeSidebarTab === 'ask-question' ? 'active' : ''}`}
+          onClick={() => setActiveSidebarTab('ask-question')}
+        >
+          <MessageSquareIcon size={14} />
+          Q&A
+        </button>
+        <button
+          className={`tab ${activeSidebarTab === 'ai-messages' ? 'active' : ''}`}
+          onClick={() => setActiveSidebarTab('ai-messages')}
+        >
+          <BotIcon size={14} />
+          Messages
         </button>
         <button
           className={`tab ${activeSidebarTab === 'alerts' ? 'active' : ''}`}
           onClick={() => setActiveSidebarTab('alerts')}
         >
-          <AlertTriangleIcon size={16} />
+          <AlertTriangleIcon size={14} />
           Alerts
         </button>
       </div>

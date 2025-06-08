@@ -596,7 +596,7 @@
 }
 
 .card-header {
-  padding: var(--spacing-xl);
+  padding: var(--spacing-md) var(--spacing-xl) var(--spacing-xl) var(--spacing-xl);
   border-bottom: 1px solid var(--border);
 }
 

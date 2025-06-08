@@ -263,6 +263,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   useEffect(() => {
     if (meeting) {
       console.log('🎵 Meeting data:', meeting)
+      console.log('📝 Transcript data from meeting:', meeting.transcript)
+      console.log('📝 Transcript length:', meeting.transcript?.length || 0)
       setTitle(meeting.title)
       setDescription(meeting.description)
       setTags(meeting.tags)
@@ -290,7 +292,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         loadRecording(meeting.recordingPath)
       }
     }
-  }, [meeting])
+  }, [meeting, loadRecording])
 
   // Initialize recording service on mount
   useEffect(() => {
@@ -364,7 +366,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       // 1. When actively recording (live updates)
       // 2. When recording just stopped and we have new transcript data
       if (state.isRecording || (wasRecording && !state.isRecording && state.transcript.length > 0)) {
+        console.log('📝 Syncing transcript from recording service:', state.transcript.length, 'lines')
         setTranscript(state.transcript)
+      } else {
+        // console.log('📝 Preserving existing transcript, not syncing from recording service')
       }
       
       setLiveText(state.liveText)

@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, Tray, Menu } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -15,6 +15,7 @@ import ffmpeg from 'fluent-ffmpeg'
 import { geminiService } from './gemini'
 
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
 let transcriptionProcess: ChildProcess | null = null
 let transcriptionSocket: net.Socket | null = null
 let isTranscriptionReady = false
@@ -24,6 +25,14 @@ let actualTranscriptionPort = 9001 // Will be updated based on Python server out
 // Swift recorder process management
 let swiftRecorderProcess: ChildProcess | null = null
 let isSwiftRecorderAvailable = false
+
+// Current shortcuts state
+const currentShortcuts = {
+  'toggle-recording': 'CmdOrCtrl+L',
+  'quick-note': 'CmdOrCtrl+Shift+N',
+  'show-hide': 'CmdOrCtrl+Shift+F',
+  'pause-resume': 'CmdOrCtrl+P'
+}
 
 // Add interfaces for chunked recording at the top
 interface RecordingChunk {
@@ -1112,49 +1121,215 @@ ipcMain.handle('dialog:showOpenDialog', async (_, options: Electron.OpenDialogOp
 
 // Add keyboard shortcut registration
 function registerGlobalShortcuts(): void {
-  // Start/Stop Recording - Cmd+L
-  globalShortcut.register('CmdOrCtrl+L', () => {
+  // Clear any existing shortcuts first
+  globalShortcut.unregisterAll()
+
+  // Start/Stop Recording
+  globalShortcut.register(currentShortcuts['toggle-recording'], () => {
     console.log('🎙️ Global shortcut: Start/Stop Recording')
     if (mainWindow) {
       mainWindow.webContents.send('shortcut:toggle-recording')
     }
   })
 
-  // Quick Note - Cmd+Shift+N
-  globalShortcut.register('CmdOrCtrl+Shift+N', () => {
+  // Quick Note
+  globalShortcut.register(currentShortcuts['quick-note'], () => {
     console.log('📝 Global shortcut: Quick Note')
     if (mainWindow) {
       mainWindow.webContents.send('shortcut:quick-note')
     }
   })
 
-  // Show/Hide Window - Cmd+Shift+F
-  globalShortcut.register('CmdOrCtrl+Shift+F', () => {
+  // Show/Hide Window
+  globalShortcut.register(currentShortcuts['show-hide'], () => {
     console.log('👁️ Global shortcut: Show/Hide Window')
     if (mainWindow) {
       if (mainWindow.isVisible()) {
         mainWindow.hide()
       } else {
         mainWindow.show()
+        mainWindow.focus()
       }
     }
   })
 
-  // Pause/Resume Recording - Cmd+P
-  globalShortcut.register('CmdOrCtrl+P', () => {
+  // Pause/Resume Recording
+  globalShortcut.register(currentShortcuts['pause-resume'], () => {
     console.log('⏸️ Global shortcut: Pause/Resume Recording')
     if (mainWindow) {
       mainWindow.webContents.send('shortcut:pause-resume')
     }
   })
 
-  console.log('✅ Global shortcuts registered')
+  console.log('✅ Global shortcuts registered:', currentShortcuts)
 }
 
 // Add shortcut unregistration
 function unregisterGlobalShortcuts(): void {
   globalShortcut.unregisterAll()
   console.log('🗑️ Global shortcuts unregistered')
+}
+
+// Create system tray
+function createTray(): void {
+  try {
+    // Create tray icon (use the same icon as the app)
+    tray = new Tray(icon)
+    
+    // Set tooltip
+    tray.setToolTip('Friday - Meeting Recorder')
+    
+    // Create context menu
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Show Friday',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show()
+            mainWindow.focus()
+          }
+        }
+      },
+      {
+        label: 'Start Recording',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.webContents.send('shortcut:toggle-recording')
+          }
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Settings',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show()
+            mainWindow.focus()
+            mainWindow.webContents.send('navigate-to-settings')
+          }
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit Friday',
+        click: () => {
+          app.quit()
+        }
+      }
+    ])
+    
+    // Set the context menu
+    tray.setContextMenu(contextMenu)
+    
+    // Handle double click to show window
+    tray.on('double-click', () => {
+      if (mainWindow) {
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    })
+    
+    console.log('✅ System tray created')
+  } catch (error) {
+    console.error('❌ Failed to create system tray:', error)
+  }
+}
+
+// Destroy tray
+function destroyTray(): void {
+  if (tray) {
+    tray.destroy()
+    tray = null
+    console.log('🗑️ System tray destroyed')
+  }
+}
+
+// Update shortcuts
+function updateShortcuts(newShortcuts: Record<string, string>): boolean {
+  try {
+    // Validate shortcuts first
+    for (const [key, shortcut] of Object.entries(newShortcuts)) {
+      if (!shortcut || shortcut.trim() === '') {
+        console.error(`❌ Invalid shortcut for ${key}: empty`)
+        return false
+      }
+    }
+
+    // Test registration before committing changes
+    const testResults: Array<{ key: string; shortcut: string; success: boolean }> = []
+    for (const [key, shortcut] of Object.entries(newShortcuts)) {
+      try {
+        const success = globalShortcut.register(shortcut, () => {})
+        testResults.push({ key, shortcut, success })
+        if (success) {
+          globalShortcut.unregister(shortcut)
+        }
+      } catch (error) {
+        console.error(`❌ Failed to test shortcut ${shortcut} for ${key}:`, error)
+        testResults.push({ key, shortcut, success: false })
+      }
+    }
+
+    // Check if all test registrations succeeded
+    const failedTests = testResults.filter(test => !test.success)
+    if (failedTests.length > 0) {
+      console.error('❌ Some shortcut registrations failed:', failedTests)
+      return false
+    }
+
+    // All tests passed, update the shortcuts
+    Object.assign(currentShortcuts, newShortcuts)
+    
+    // Re-register all shortcuts with new values
+    registerGlobalShortcuts()
+    
+    console.log('✅ Shortcuts updated successfully:', currentShortcuts)
+    return true
+  } catch (error) {
+    console.error('❌ Failed to update shortcuts:', error)
+    return false
+  }
+}
+
+// Setup shortcut and tray handlers
+function setupSystemHandlers(): void {
+  // Get current shortcuts
+  ipcMain.handle('system:get-shortcuts', () => {
+    return currentShortcuts
+  })
+
+  // Update shortcuts
+  ipcMain.handle('system:update-shortcuts', (_, shortcuts: Record<string, string>) => {
+    return updateShortcuts(shortcuts)
+  })
+
+  // Show/hide menu bar tray
+  ipcMain.handle('system:toggle-menu-bar', async (_, show: boolean) => {
+    try {
+      if (show && !tray) {
+        createTray()
+        return { success: true }
+      } else if (!show && tray) {
+        destroyTray()
+        return { success: true }
+      }
+      return { success: true, message: `Tray already ${show ? 'visible' : 'hidden'}` }
+    } catch (error) {
+      console.error('❌ Failed to toggle menu bar:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
+  // Load settings and apply menu bar preference
+  databaseService.getSettings()
+    .then(settings => {
+      if (settings.showInMenuBar && !tray) {
+        createTray()
+      }
+    })
+    .catch(error => {
+      console.error('Failed to load menu bar setting:', error)
+    })
 }
 
 // Add process cleanup function
@@ -1244,6 +1419,7 @@ app.whenReady().then(async () => {
   setupDatabaseHandlers()
   setupTranscriptionHandlers()
   setupGeminiHandlers()
+  setupSystemHandlers()
 
   // Register global shortcuts
   registerGlobalShortcuts()

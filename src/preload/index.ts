@@ -108,6 +108,19 @@ const api = {
     generateMessage: (options: any) => ipcRenderer.invoke('gemini:generate-message', options)
   },
 
+  // System APIs for shortcuts and menu bar
+  system: {
+    // Get current shortcuts
+    getShortcuts: () => ipcRenderer.invoke('system:get-shortcuts'),
+
+    // Update shortcuts
+    updateShortcuts: (shortcuts: Record<string, string>) => 
+      ipcRenderer.invoke('system:update-shortcuts', shortcuts),
+
+    // Toggle menu bar tray
+    toggleMenuBar: (show: boolean) => ipcRenderer.invoke('system:toggle-menu-bar', show)
+  },
+
   electron: {
     dialog: {
       showOpenDialog: (options: Electron.OpenDialogOptions) => 

@@ -14,37 +14,92 @@ import { Settings } from '../types/database'
 
 type TabType = 'general' | 'shortcuts' | 'transcription' | 'context' | 'about'
 
+interface ShortcutKeys {
+  'toggle-recording': string
+  'quick-note': string
+  'show-hide': string
+  'pause-resume': string
+}
+
 const SettingsScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('general')
-  const [settings, setSettings] = useState<Settings | null>(null)
+  const [settings, setSettings] = useState<Settings>({
+    defaultSaveLocation: '',
+    launchAtLogin: false,
+    theme: 'auto',
+    showInMenuBar: false,
+    autoSaveRecordings: true,
+    realtimeTranscription: true,
+    transcriptionLanguage: 'en',
+    geminiApiKey: '',
+    autoGenerateActionItems: false,
+    autoSuggestTags: false,
+    globalContext: '',
+    enableGlobalContext: true,
+    includeContextInTranscriptions: true,
+    includeContextInActionItems: true
+  })
+  const [shortcuts, setShortcuts] = useState<ShortcutKeys>({
+    'toggle-recording': 'CmdOrCtrl+L',
+    'quick-note': 'CmdOrCtrl+Shift+N',
+    'show-hide': 'CmdOrCtrl+Shift+F',
+    'pause-resume': 'CmdOrCtrl+P'
+  })
+  const [editingShortcut, setEditingShortcut] = useState<string | null>(null)
+  const [newShortcut, setNewShortcut] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null)
 
-  // Load settings on component mount
+  // Load settings and shortcuts
   useEffect(() => {
-    const loadSettings = async (): Promise<void> => {
+    const loadData = async (): Promise<void> => {
       try {
-        const loadedSettings = await window.api.db.getSettings()
-        setSettings(loadedSettings)
+        const settingsData = await window.api.db.getSettings()
+        if (settingsData) {
+          setSettings(settingsData)
+        }
+        
+        // Try to load shortcuts if system API is available
+        try {
+          const shortcutsData = await (window.api as any).system?.getShortcuts()
+          if (shortcutsData) {
+            setShortcuts(shortcutsData as ShortcutKeys)
+          }
+        } catch (error) {
+          console.log('System API not available for shortcuts:', error)
+        }
       } catch (error) {
-        console.error('Failed to load settings:', error)
+        console.error('Failed to load settings or shortcuts:', error)
       } finally {
         setLoading(false)
       }
     }
-
-    loadSettings()
+    
+    loadData()
   }, [])
 
-  // Save settings to database
-  const handleSaveSettings = async (): Promise<void> => {
-    if (!settings) return
+  const updateSetting = async (key: keyof Settings, value: Settings[keyof Settings]): Promise<void> => {
+    const newSettings = { ...settings, [key]: value }
+    setSettings(newSettings)
+    
+    // Handle special cases
+    if (key === 'showInMenuBar') {
+      try {
+        await (window.api as any).system.toggleMenuBar(value as boolean)
+      } catch (error) {
+        console.error('Failed to toggle menu bar:', error)
+      }
+    }
+  }
 
+  const handleSaveSettings = async (): Promise<void> => {
+    setSaving(true)
+    setSaveSuccess(false)
+    
     try {
-      setSaving(true)
       await window.api.db.updateSettings(settings)
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 2000)
@@ -55,10 +110,83 @@ const SettingsScreen: React.FC = () => {
     }
   }
 
-  // Update settings state
-  const updateSetting = (key: keyof Settings, value: unknown): void => {
-    if (!settings) return
-    setSettings(prev => prev ? { ...prev, [key]: value } : null)
+  const startEditingShortcut = (shortcutKey: string): void => {
+    setEditingShortcut(shortcutKey)
+    setNewShortcut('')
+  }
+
+  const handleKeyDown = (event: React.KeyboardEvent): void => {
+    if (!editingShortcut) return
+    
+    event.preventDefault()
+    
+    const keys: string[] = []
+    if (event.metaKey || event.ctrlKey) keys.push(event.metaKey ? 'Cmd' : 'Ctrl')
+    if (event.altKey) keys.push('Alt')
+    if (event.shiftKey) keys.push('Shift')
+    
+    const key = event.key
+    if (key !== 'Meta' && key !== 'Control' && key !== 'Alt' && key !== 'Shift') {
+      keys.push(key.toUpperCase())
+    }
+    
+    if (keys.length > 1) {
+      const shortcutString = keys.join('+').replace('Cmd', 'CmdOrCtrl').replace('Ctrl', 'CmdOrCtrl')
+      setNewShortcut(shortcutString)
+    }
+  }
+
+  const saveShortcut = async (): Promise<void> => {
+    if (!editingShortcut || !newShortcut) return
+    
+    try {
+      const updatedShortcuts = { ...shortcuts, [editingShortcut]: newShortcut }
+      const success = await (window.api as any).system?.updateShortcuts(updatedShortcuts)
+      
+      if (success) {
+        setShortcuts(updatedShortcuts)
+        setEditingShortcut(null)
+        setNewShortcut('')
+      } else {
+        alert('Failed to update shortcut. It may already be in use by another application.')
+      }
+    } catch (error) {
+      console.error('Failed to save shortcut:', error)
+      alert('Failed to save shortcut. Please try a different combination.')
+    }
+  }
+
+  const cancelEditingShortcut = (): void => {
+    setEditingShortcut(null)
+    setNewShortcut('')
+  }
+
+  const formatShortcutDisplay = (shortcut: string): string => {
+    return shortcut
+      .replace('CmdOrCtrl', '⌘')
+      .replace('Shift', '⇧')
+      .replace('Alt', '⌥')
+      .replace(/\+/g, ' + ')
+  }
+
+  const getShortcutName = (key: string): string => {
+    const names = {
+      'toggle-recording': 'Start/Stop Recording',
+      'quick-note': 'Quick Note',
+      'show-hide': 'Show/Hide Window',
+      'pause-resume': 'Pause/Resume Recording'
+    }
+    return names[key as keyof typeof names] || key
+  }
+
+  const getShortcutDescription = (key: string): string => {
+    const descriptions = {
+      'toggle-recording': 'Global hotkey to start or stop recording',
+      'quick-note': 'Quickly add a note during recording',
+      'show-hide': 'Toggle Friday window visibility',
+      'pause-resume': 'Temporarily pause active recording'
+    }
+    return descriptions[key as keyof typeof descriptions] || ''
   }
 
   // Handle browse button click for default save location
@@ -261,69 +389,59 @@ const SettingsScreen: React.FC = () => {
             </div>
             <div className="card-body">
               <div className="settings-section">
-                <div className="settings-row">
-                  <div className="settings-label">
-                    <h4>Start/Stop Recording</h4>
-                    <p>Global hotkey to start or stop recording</p>
-                  </div>
-                  <div className="settings-control">
-                    <div className="shortcut-input">
-                      <kbd>⌘</kbd> + <kbd>L</kbd>
-                      <button className="btn btn-ghost btn-sm">
-                        <Edit2Icon size={14} />
-                        Change
-                      </button>
+                {Object.entries(shortcuts).map(([key, shortcut]) => (
+                  <div key={key} className="settings-row">
+                    <div className="settings-label">
+                      <h4>{getShortcutName(key)}</h4>
+                      <p>{getShortcutDescription(key)}</p>
+                    </div>
+                    <div className="settings-control">
+                      {editingShortcut === key ? (
+                        <div className="shortcut-edit">
+                          <input
+                            type="text"
+                            className="input"
+                            value={newShortcut || 'Press keys...'}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Press new shortcut..."
+                            style={{ minWidth: '200px', marginRight: '8px' }}
+                            autoFocus
+                            readOnly
+                          />
+                          <button 
+                            className="btn btn-primary btn-sm" 
+                            onClick={saveShortcut}
+                            disabled={!newShortcut}
+                          >
+                            Save
+                          </button>
+                          <button 
+                            className="btn btn-ghost btn-sm" 
+                            onClick={cancelEditingShortcut}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="shortcut-input">
+                          {formatShortcutDisplay(shortcut).split(' + ').map((part, index) => (
+                            <React.Fragment key={index}>
+                              <kbd>{part}</kbd>
+                              {index < formatShortcutDisplay(shortcut).split(' + ').length - 1 && ' + '}
+                            </React.Fragment>
+                          ))}
+                          <button 
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => startEditingShortcut(key)}
+                          >
+                            <Edit2Icon size={14} />
+                            Change
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-label">
-                    <h4>Quick Note</h4>
-                    <p>Quickly add a note during recording</p>
-                  </div>
-                  <div className="settings-control">
-                    <div className="shortcut-input">
-                      <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd>
-                      <button className="btn btn-ghost btn-sm">
-                        <Edit2Icon size={14} />
-                        Change
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-label">
-                    <h4>Show/Hide Window</h4>
-                    <p>Toggle Friday window visibility</p>
-                  </div>
-                  <div className="settings-control">
-                    <div className="shortcut-input">
-                      <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd>
-                      <button className="btn btn-ghost btn-sm">
-                        <Edit2Icon size={14} />
-                        Change
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-label">
-                    <h4>Pause/Resume Recording</h4>
-                    <p>Temporarily pause active recording</p>
-                  </div>
-                  <div className="settings-control">
-                    <div className="shortcut-input">
-                      <kbd>⌘</kbd> + <kbd>P</kbd>
-                      <button className="btn btn-ghost btn-sm">
-                        <Edit2Icon size={14} />
-                        Change
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                ))}
               </div>
 
               <div
@@ -338,7 +456,7 @@ const SettingsScreen: React.FC = () => {
                 <div className="flex gap-sm items-center">
                   <HelpCircleIcon size={16} />
                   <span className="text-sm font-medium">
-                    Tip: Global shortcuts work from any application
+                    Tip: Global shortcuts work from any application. Click &ldquo;Change&rdquo; and press your desired key combination.
                   </span>
                 </div>
               </div>

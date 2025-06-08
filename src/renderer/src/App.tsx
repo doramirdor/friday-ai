@@ -64,6 +64,10 @@ function App(): React.JSX.Element {
         } else {
           console.log('ℹ️ Pause/resume is only available during recording')
         }
+      },
+      'navigate-to-settings': () => {
+        console.log('⚙️ Navigate to settings from tray')
+        setCurrentScreen('settings')
       }
     }
 
@@ -168,7 +172,6 @@ function App(): React.JSX.Element {
         return (
           <TranscriptScreen 
             meeting={currentMeeting} 
-            onBack={handleBackToLibrary}
           />
         )
       case 'settings':

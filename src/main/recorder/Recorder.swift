@@ -61,6 +61,18 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     
     // Add state tracking for Bluetooth workaround
     private var bluetoothWorkaroundEnabled = false
+
+    /// Configures AVAudioSession to allow Bluetooth microphone input
+    private func configureBluetoothAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, options: [.allowBluetooth])
+            try session.setActive(true)
+            print("✅ Audio session configured for Bluetooth input")
+        } catch {
+            print("⚠️ Failed to configure audio session for Bluetooth: \(error.localizedDescription)")
+        }
+    }
     
     // Function to check if recording is active
     var isRecordingActive: Bool {
@@ -211,6 +223,9 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     
     func setupMicrophoneForCombinedRecording() throws {
         print("Setting up microphone for combined recording...")
+
+        // Ensure audio session allows Bluetooth input
+        configureBluetoothAudioSession()
         
         // Log audio device info
         print("Checking audio input devices on macOS:")
@@ -703,6 +718,9 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioRecorderDe
     
     func setupMicrophoneRecording() {
         print("Setting up microphone recording...")
+
+        // Ensure audio session allows Bluetooth input
+        configureBluetoothAudioSession()
         
         // Create timestamp and filename
         let timestamp = Date()

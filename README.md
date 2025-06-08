@@ -11,7 +11,7 @@ A modern macOS desktop application for recording audio and generating AI-powered
 - **Tagging System**: Organize recordings with custom tags
 - **Dark/Light Mode**: Automatic theme switching based on system preferences
 - **Keyboard Shortcuts**: Global hotkeys for quick recording control
-- **Bluetooth Compatible**: Automatically adapts to Bluetooth microphones like AirPods
+- **Bluetooth Compatible**: Automatically adapts to Bluetooth microphones like AirPods and records even when they are connected
 
 ## 🏗️ Architecture
 

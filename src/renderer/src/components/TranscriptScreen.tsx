@@ -354,11 +354,19 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
   // Sync recording service state with local state
   useEffect(() => {
-    const updateState = () => {
+    const updateState = (): void => {
       const state = recordingService.getState()
+      const wasRecording = isRecording
       setIsRecording(state.isRecording)
       setCurrentTime(state.currentTime)
-      setTranscript(state.transcript)
+      
+      // Sync transcript in these cases:
+      // 1. When actively recording (live updates)
+      // 2. When recording just stopped and we have new transcript data
+      if (state.isRecording || (wasRecording && !state.isRecording && state.transcript.length > 0)) {
+        setTranscript(state.transcript)
+      }
+      
       setLiveText(state.liveText)
       setRecordingWarning(state.recordingWarning)
       setCombinedRecordingPath(state.combinedRecordingPath)
@@ -372,7 +380,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
     const interval = setInterval(updateState, 100)
     return () => clearInterval(interval)
-  }, [recordingService])
+  }, [recordingService, isRecording])
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)

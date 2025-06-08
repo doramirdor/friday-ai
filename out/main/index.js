@@ -1524,7 +1524,7 @@ function registerGlobalShortcuts() {
       mainWindow.webContents.send("shortcut:quick-note");
     }
   });
-  electron.globalShortcut.register("CmdOrCtrl+Shift+F", () => {
+  electron.globalShortcut.register("CmdOrCtrl+Shift+H", () => {
     console.log("👁️ Global shortcut: Show/Hide Window");
     if (mainWindow) {
       if (mainWindow.isVisible()) {

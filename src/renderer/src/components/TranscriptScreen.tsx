@@ -1,25 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react'
-import BlockNoteEditor from './BlockNoteEditor'
-import {
-  PlayIcon,
-  PauseIcon,
-  XIcon,
-  PlusIcon,
-  CheckIcon,
-  FileTextIcon,
-  ClipboardListIcon,
-  InfoIcon,
-  UploadIcon,
-  MicIcon,
-  SaveIcon,
-  SparklesIcon,
-  BookOpenIcon,
-  BotIcon,
-  MailIcon,
-  MessageSquareIcon,
-  CopyIcon
-} from 'lucide-react'
 import { Meeting } from '../types/database'
+import RecordingInterface from './RecordingInterface'
+import LiveRecordingInterface from './LiveRecordingInterface'
+import PlaybackInterface from './PlaybackInterface'
+import SidebarContent from './SidebarContent'
+import { useRecordingService } from './RecordingService'
 
 /// <reference path="../../preload/index.d.ts" />
 
@@ -30,29 +15,8 @@ interface TranscriptLine {
 
 interface TranscriptScreenProps {
   meeting: Meeting | null
-  onBack: () => void
 }
 
-type SidebarTab = 'details' | 'context' | 'actions' | 'notes' | 'summary' | 'ai'
-
-interface AIDataSelection {
-  notes: boolean
-  summary: boolean
-  transcript: boolean
-  description: boolean
-  title: boolean
-}
-
-// Global recording control interface - moved from App.tsx for consistency
-interface RecordingControl {
-  toggleRecording: () => void
-  addQuickNote: () => void
-  pauseResumeRecording: () => void
-  isRecording: boolean
-  canRecord: boolean
-}
-
-// Local interface definition to fix TypeScript errors
 interface TranscriptionResult {
   type: 'transcript' | 'error' | 'pong' | 'shutdown'
   text?: string
@@ -81,30 +45,41 @@ interface RecordingResult {
   screen_permission?: boolean
 }
 
-/*
-interface TranscriptionAPI {
-  startService: () => Promise<{ success: boolean; error?: string }>
-  stopService: () => Promise<{ success: boolean }>
-  isReady: () => Promise<{ ready: boolean }>
-  processChunk: (buffer: ArrayBuffer) => Promise<{ success: boolean; error?: string }>
-  ping: () => Promise<{ success: boolean; error?: string }>
-  onResult: (callback: (result: TranscriptionResult) => void) => void
-  removeAllListeners: () => void
-}
-
-interface DatabaseAPI {
-  createMeeting: (meeting: any) => Promise<any>
-  getMeeting: (id: number) => Promise<any>
-  getAllMeetings: () => Promise<any>
-  updateMeeting: (id: number, meeting: any) => Promise<any>
-  deleteMeeting: (id: number) => Promise<any>
-  getSettings: () => Promise<any>
-  updateSettings: (settings: any) => Promise<any>
-}
-
 interface ElectronAPI {
-  db: DatabaseAPI
-  transcription: TranscriptionAPI
+  db: {
+    createMeeting: (meeting: any) => Promise<any>
+    getMeeting: (id: number) => Promise<any>
+    getAllMeetings: () => Promise<any>
+    updateMeeting: (id: number, meeting: any) => Promise<any>
+    deleteMeeting: (id: number) => Promise<any>
+    getSettings: () => Promise<any>
+    updateSettings: (settings: any) => Promise<any>
+  }
+  transcription: {
+    startService: () => Promise<{ success: boolean; error?: string }>
+    stopService: () => Promise<{ success: boolean }>
+    isReady: () => Promise<{ ready: boolean; details?: any }>
+    processChunk: (buffer: ArrayBuffer) => Promise<{ success: boolean; error?: string }>
+    ping: () => Promise<{ success: boolean; error?: string }>
+    onResult: (callback: (result: TranscriptionResult) => void) => void
+    removeAllListeners: () => void
+    loadRecording: (filePath: string) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }>
+    saveRecording: (arrayBuffer: ArrayBuffer, meetingId: number) => Promise<{ success: boolean; filePath?: string; error?: string }>
+  }
+  swiftRecorder: {
+    checkAvailability: () => Promise<{ available: boolean }>
+    startCombinedRecording: (path: string, filename: string) => Promise<{ success: boolean; error?: string }>
+    stopCombinedRecording: () => Promise<{ success: boolean; error?: string }>
+    onRecordingStarted: (callback: (result: RecordingResult) => void) => void
+    onRecordingStopped: (callback: (result: RecordingResult) => void) => void
+    onRecordingFailed: (callback: (result: RecordingResult) => void) => void
+    removeAllListeners: () => void
+  }
+  gemini: {
+    generateSummary: (options: any) => Promise<{ success: boolean; summary?: string; error?: string }>
+    generateContent: (options: any) => Promise<{ success: boolean; data?: any; error?: string }>
+    generateMessage: (options: any) => Promise<{ success: boolean; message?: string; error?: string }>
+  }
 }
 
 declare global {
@@ -112,17 +87,13 @@ declare global {
     api: ElectronAPI
   }
 }
-*/
 
-const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) => {
+const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [isPlaying, setIsPlaying] = useState(false)
-  const [isRecording, setIsRecording] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [totalTime, setTotalTime] = useState(0)
   const [activeLineIndex, setActiveLineIndex] = useState(0)
-  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('details')
   const [tags, setTags] = useState<string[]>([])
-  const [newTag, setNewTag] = useState('')
   const [contextText, setContextText] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState<string[]>([])
   const [notes, setNotes] = useState('')
@@ -134,86 +105,105 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [transcript, setTranscript] = useState<TranscriptLine[]>([])
-  const [transcriptionStatus, setTranscriptionStatus] = useState<string>('idle')
-  const [liveText, setLiveText] = useState<string>('')
   const [savingMeeting, setSavingMeeting] = useState(false)
   const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null)
   const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
   const [needsAutoSave, setNeedsAutoSave] = useState(false)
 
-  // Swift recorder state
+  // Recording service state
+  const [transcriptionStatus, setTranscriptionStatus] = useState<string>('idle')
   const [isSwiftRecorderAvailable, setIsSwiftRecorderAvailable] = useState(false)
   const [recordingMode, setRecordingMode] = useState<'microphone' | 'combined'>('microphone')
-  const [isCombinedRecording, setIsCombinedRecording] = useState(false)
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
   const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
-
-  // Chunked recording state
-  const [isChunkedRecording, setIsChunkedRecording] = useState(false)
-  const [recordingChunks, setRecordingChunks] = useState<string[]>([])
+  const [isRecording, setIsRecording] = useState(false)
+  const [isCombinedRecording, setIsCombinedRecording] = useState(false)
+  const [liveText, setLiveText] = useState('')
 
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
-  const recordingInterval = useRef<NodeJS.Timeout | null>(null)
-  const chunkCounter = useRef<number>(0)
-  const isRecordingRef = useRef<boolean>(false)
-  const audioStreamRef = useRef<MediaStream | null>(null)
-  const recordingChunksRef = useRef<Blob[]>([])
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
-  const recordingStartTime = useRef<number>(0) // Track when recording actually started
 
-  // Handle global shortcut events
-  useEffect(() => {
-    const handleToggleRecording = (): void => {
-      console.log('📱 TranscriptScreen: Toggle recording event received')
-      if (isRecording) {
-        stopRecording()
-      } else {
-        startRecording()
+  // Recording service callbacks
+  const handleTranscriptionResult = (result: TranscriptionResult): void => {
+    if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
+      setLiveText((prev) => prev + ' ' + result.text)
+      
+      // This will be handled by the recording service itself
+      // The transcript state is managed by the service
+    } else if (result.type === 'error') {
+      console.error('Transcription error:', result.message)
+    }
+  }
+
+  const handleCombinedRecordingStarted = (result: RecordingResult): void => {
+    console.log('🎙️ Combined recording started:', result)
+    setIsCombinedRecording(true)
+    
+    if (result.code === 'BLUETOOTH_LIMITATION') {
+      console.warn('⚠️ Bluetooth audio detected:', result.warning)
+      setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
+      setTranscriptionStatus('recording-mic-only')
+    } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
+      console.warn('⚠️ Screen recording permission required:', result.warning)
+      setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}\n\nPlease grant screen recording permission in System Settings > Privacy & Security > Screen Recording`)
+      setTranscriptionStatus('recording-mic-only')
+    } else if (result.code === 'SYSTEM_AUDIO_UNAVAILABLE') {
+      console.warn('⚠️ System audio unavailable:', result.warning)
+      setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
+      setTranscriptionStatus('recording-mic-only')
+    } else if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
+      console.warn('⚠️ System audio capture failed (legacy):', result.warning)
+      setRecordingWarning(`⚠️ ${result.warning}`)
+      setTranscriptionStatus('recording-mic-only')
+    } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
+      console.error('❌ Recording failed:', result.error)
+      setRecordingWarning(`❌ Recording failed: ${result.error}`)
+      setTranscriptionStatus('error')
+      setIsCombinedRecording(false)
+    } else if (result.code === 'RECORDING_STARTED') {
+      setRecordingWarning(null)
+      setTranscriptionStatus('recording')
+      
+      if (result.warning) {
+        console.warn('⚠️ Recording quality warning:', result.warning)
+        setRecordingWarning(`ℹ️ ${result.warning}`)
       }
+    } else {
+      console.warn('⚠️ Unknown recording result code:', result.code)
+      setRecordingWarning(null)
     }
+  }
 
-    const handleQuickNote = (): void => {
-      console.log('📱 TranscriptScreen: Quick note event received')
-      if (isRecording && currentTime > 0) {
-        // Format timestamp as [MM:SS]
-        const minutes = Math.floor(currentTime / 60)
-        const seconds = Math.floor(currentTime % 60)
-        const timestamp = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-        setNotes(prev => prev ? `${prev}\n[${timestamp}] ` : `[${timestamp}] `)
-      }
+  const handleCombinedRecordingStopped = (result: RecordingResult): void => {
+    console.log('🎙️ Combined recording stopped:', result)
+    setIsCombinedRecording(false)
+    setRecordingWarning(null)
+
+    if (result.path) {
+      setCombinedRecordingPath(result.path)
+      console.log('📁 Stored combined recording path:', result.path)
+      loadRecording(result.path)
     }
+  }
 
-    const handlePauseResume = () => {
-      console.log('📱 TranscriptScreen: Pause/resume event received')
-      // For now, just log since pause/resume is complex with streaming transcription
-      if (isRecording) {
-        console.log('⏸️ Recording is active - pause functionality not yet implemented')
-      } else {
-        console.log('▶️ No active recording to pause/resume')
-      }
-    }
+  const handleCombinedRecordingFailed = (result: RecordingResult): void => {
+    console.error('❌ Recording failed during operation:', result.error)
+    
+    setIsCombinedRecording(false)
+    setIsRecording(false)
+    setTranscriptionStatus('error')
+    setRecordingWarning(`❌ Recording failed: ${result.error}`)
+  }
 
-    const handleAutoStartRecording = () => {
-      console.log('📱 TranscriptScreen: Auto-start recording event received')
-      if (!isRecording && (transcriptionStatus === 'ready' || isSwiftRecorderAvailable)) {
-        startRecording()
-      }
-    }
-
-    // Add event listeners
-    window.addEventListener('friday-toggle-recording', handleToggleRecording)
-    window.addEventListener('friday-quick-note', handleQuickNote)
-    window.addEventListener('friday-pause-resume', handlePauseResume)
-    window.addEventListener('friday-auto-start-recording', handleAutoStartRecording)
-
-    // Cleanup function
-    return () => {
-      window.removeEventListener('friday-toggle-recording', handleToggleRecording)
-      window.removeEventListener('friday-quick-note', handleQuickNote)
-      window.removeEventListener('friday-pause-resume', handlePauseResume)
-      window.removeEventListener('friday-auto-start-recording', handleAutoStartRecording)
-    }
-  }, [isRecording, transcriptionStatus, isSwiftRecorderAvailable, currentTime])
+  // Initialize recording service
+  const recordingService = useRecordingService({
+    onTranscriptionResult: handleTranscriptionResult,
+    onCombinedRecordingStarted: handleCombinedRecordingStarted,
+    onCombinedRecordingStopped: handleCombinedRecordingStopped,
+    onCombinedRecordingFailed: handleCombinedRecordingFailed,
+    onTranscriptionStatusChange: setTranscriptionStatus,
+    onSwiftRecorderAvailabilityChange: setIsSwiftRecorderAvailable
+  })
 
   // Initialize data from meeting prop
   useEffect(() => {
@@ -228,7 +218,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
       setUploadedFiles(meeting.context_files || [])
       setNotes(meeting.notes || '')
       setSummary(meeting.summary || '')
-      setIsSummaryAIGenerated(!!meeting.summary) // If there's already a summary, consider it AI-generated
+      setIsSummaryAIGenerated(!!meeting.summary)
 
       // Parse duration to seconds
       if (meeting.duration && meeting.duration !== '00:00') {
@@ -240,7 +230,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
         console.log('⚠️ No valid duration found in meeting data')
       }
 
-      // Load existing recording if available (handles both single and chunked)
+      // Load existing recording if available
       if (meeting.recordingPath) {
         console.log('🎵 Loading existing recording from:', meeting.recordingPath)
         loadRecording(meeting.recordingPath)
@@ -253,12 +243,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     try {
       console.log('🔄 Loading recording file via IPC...')
 
-      // Use IPC to load the file (avoids CSP issues with file:// URLs)
-      const result = await (window.api as any).transcription.loadRecording(filePath)
+      const result = await window.api.transcription.loadRecording(filePath)
 
       if (result.success && result.buffer) {
-        // Convert ArrayBuffer to Blob with correct MIME type
-        // Detect file type from extension
         const isMP3 = filePath.toLowerCase().endsWith('.mp3')
         const mimeType = isMP3 ? 'audio/mpeg' : 'audio/webm'
 
@@ -278,22 +265,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
   const loadRecording = async (recordingPath: string | string[]): Promise<void> => {
     try {
       if (Array.isArray(recordingPath)) {
-        console.log('🔄 Loading chunked recording...')
-        // setRecordingChunks(recordingPath) // Commented out - chunked recording not implemented
-        
-        // Load first chunk for immediate playback
-        if (recordingPath.length > 0) {
-          // const result = await window.api.chunkedRecording.loadChunks([recordingPath[0]]) // Commented out
-          // if (result.success && result.chunks && result.chunks.length > 0) {
-          //   const blob = new Blob([result.chunks[0]], { type: 'audio/mpeg' })
-          //   const audioUrl = URL.createObjectURL(blob)
-          //   setRecordedAudioUrl(audioUrl)
-          //   console.log('✅ First chunk loaded for playback')
-          // }
-          console.log('⚠️ Chunked recording playback not yet implemented')
-        }
+        console.log('⚠️ Chunked recording playback not yet implemented')
       } else {
-        // Single file recording
         await loadExistingRecording(recordingPath)
       }
     } catch (error) {
@@ -301,217 +274,87 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     }
   }
 
-  // Setup transcription service on component mount
-  useEffect((): (() => void) => {
-    console.log('🔧 TranscriptScreen component initializing...')
-    
-    const initializeTranscription = async (): Promise<void> => {
-      try {
-        setTranscriptionStatus('initializing')
-        const result = await (window.api as any).transcription.startService()
-        if (result.success) {
-          setTranscriptionStatus('ready')
-          console.log('✅ Transcription service initialized')
-        } else {
-          setTranscriptionStatus('error')
-          console.error('Failed to initialize transcription:', result.error)
-        }
-      } catch (error) {
-        setTranscriptionStatus('error')
-        console.error('Transcription initialization error:', error)
-      }
-    }
-
-    const checkSwiftRecorderAvailability = async (): Promise<void> => {
-      try {
-        const result = await (window.api as any).swiftRecorder.checkAvailability()
-        setIsSwiftRecorderAvailable(result.available)
-        console.log('🎙️ Swift recorder availability:', result.available)
-
-        // Set default recording mode based on availability
-        if (result.available) {
-          setRecordingMode('combined')
-        }
-      } catch (error) {
-        console.error('Failed to check Swift recorder availability:', error)
-        setIsSwiftRecorderAvailable(false)
-      }
-    }
-
-    // Setup transcription result listener (currentTime is captured when called)
-    const handleTranscriptionResult = (result: TranscriptionResult): void => {
-      console.log('📝 Received transcription:', result)
-
-      if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
-        // Calculate proper timestamp based on recording start time
-        const recordingElapsed = Date.now() - recordingStartTime.current
-        const recordingSeconds = Math.floor(recordingElapsed / 1000)
-        const currentTimestamp = formatTime(recordingSeconds)
-
-        // Add to live text for immediate feedback
-        setLiveText((prev) => prev + ' ' + result.text)
-
-        // Add to transcript lines immediately during recording
-        const newLine: TranscriptLine = {
-          time: currentTimestamp,
-          text: result.text.trim()
-        }
-
-        setTranscript((prev) => [...prev, newLine])
-      } else if (result.type === 'error') {
-        console.error('Transcription error:', result.message)
-        setTranscriptionStatus('error')
-      }
-    }
-
-    initializeTranscription()
-    checkSwiftRecorderAvailability()
-    
-    // Setup transcription result listener once
-    ;(window.api as any).transcription.onResult(handleTranscriptionResult)
-
-    return (): void => {
-      // Cleanup transcription service listeners
-      ;(window.api as any).transcription.removeAllListeners()
-    }
-  }, []) // Run only once on mount
-
-  // Separate effect for Swift recorder event listeners
+  // Initialize recording service on mount
   useEffect(() => {
-    // Setup Swift recorder event listeners
-    const handleCombinedRecordingStarted = (result: RecordingResult): void => {
-      console.log('🎙️ Combined recording started:', result)
-      setIsCombinedRecording(true)
-      
-      // Handle different recording start types and error conditions
-      if (result.code === 'BLUETOOTH_LIMITATION') {
-        // Show warning about Bluetooth audio limitation
-        console.warn('⚠️ Bluetooth audio detected:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
-        setTranscriptionStatus('recording-mic-only')
-        
-        // Log device details if available
-        if (result.device) {
-          console.log(`🔊 Audio device: ${result.device}`)
-        }
-        
-      } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
-        // Show warning about missing screen recording permission
-        console.warn('⚠️ Screen recording permission required:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}\n\nPlease grant screen recording permission in System Settings > Privacy & Security > Screen Recording`)
-        setTranscriptionStatus('recording-mic-only')
-        
-      } else if (result.code === 'SYSTEM_AUDIO_UNAVAILABLE') {
-        // Show warning about general system audio unavailability
-        console.warn('⚠️ System audio unavailable:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
-        setTranscriptionStatus('recording-mic-only')
-        
-        // Log technical details if available
-        if (result.device && result.screen_permission !== undefined) {
-          console.log(`🔍 Debug info - Device: ${result.device}, Screen permission: ${result.screen_permission}`)
-        }
-        
-      } else if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
-        // Legacy fallback case
-        console.warn('⚠️ System audio capture failed (legacy):', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}`)
-        setTranscriptionStatus('recording-mic-only')
-        
-      } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
-        // Handle complete recording failure
-        console.error('❌ Recording failed:', result.error)
-        setRecordingWarning(`❌ Recording failed: ${result.error}`)
-        setTranscriptionStatus('error')
-        setIsCombinedRecording(false)
-        
-      } else if (result.code === 'RECORDING_STARTED') {
-        // Success case - clear any previous warnings
-        setRecordingWarning(null)
-        setTranscriptionStatus('recording')
-        
-        // Log any warnings about audio quality if present
-        if (result.warning) {
-          console.warn('⚠️ Recording quality warning:', result.warning)
-          // Show non-blocking warning for quality issues
-          setRecordingWarning(`ℹ️ ${result.warning}`)
-        }
-        
+    recordingService.initializeService()
+  }, [recordingService])
+
+  // Handle global shortcut events
+  useEffect(() => {
+    const handleToggleRecording = (): void => {
+      console.log('📱 TranscriptScreen: Toggle recording event received')
+      const state = recordingService.getState()
+      if (state.isRecording) {
+        recordingService.stopRecording()
       } else {
-        // Unknown result code
-        console.warn('⚠️ Unknown recording result code:', result.code)
-        setRecordingWarning(null)
+        recordingService.startRecording(recordingMode)
       }
     }
 
-    const handleCombinedRecordingStopped = (result: RecordingResult): void => {
-      console.log('🎙️ Combined recording stopped:', result)
-      setIsCombinedRecording(false)
-      setRecordingWarning(null) // Clear warning when recording stops
-
-      // Store the recording path for saving to database
-      if (result.path) {
-        setCombinedRecordingPath(result.path)
-        console.log('📁 Stored combined recording path:', result.path)
-        
-        // Load the combined recording for playback
-        loadRecording(result.path)
+    const handleQuickNote = (): void => {
+      console.log('📱 TranscriptScreen: Quick note event received')
+      const state = recordingService.getState()
+      if (state.isRecording && state.currentTime > 0) {
+        const minutes = Math.floor(state.currentTime / 60)
+        const seconds = Math.floor(state.currentTime % 60)
+        const timestamp = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+        setNotes(prev => prev ? `${prev}\n[${timestamp}] ` : `[${timestamp}] `)
       }
     }
 
-    const handleCombinedRecordingFailed = (result: RecordingResult): void => {
-      console.error('❌ Recording failed during operation:', result.error)
+    const handlePauseResume = (): void => {
+      console.log('📱 TranscriptScreen: Pause/resume event received')
+      const state = recordingService.getState()
+      if (state.isRecording) {
+        console.log('⏸️ Recording is active - pause functionality not yet implemented')
+      } else {
+        console.log('▶️ No active recording to pause/resume')
+      }
+    }
+
+    const handleAutoStartRecording = (): void => {
+      console.log('📱 TranscriptScreen: Auto-start recording event received')
+      const state = recordingService.getState()
+      if (!state.isRecording && (state.transcriptionStatus === 'ready' || state.isSwiftRecorderAvailable)) {
+        recordingService.startRecording(recordingMode)
+      }
+    }
+
+    // Add event listeners
+    window.addEventListener('friday-toggle-recording', handleToggleRecording)
+    window.addEventListener('friday-quick-note', handleQuickNote)
+    window.addEventListener('friday-pause-resume', handlePauseResume)
+    window.addEventListener('friday-auto-start-recording', handleAutoStartRecording)
+
+    return () => {
+      window.removeEventListener('friday-toggle-recording', handleToggleRecording)
+      window.removeEventListener('friday-quick-note', handleQuickNote)
+      window.removeEventListener('friday-pause-resume', handlePauseResume)
+      window.removeEventListener('friday-auto-start-recording', handleAutoStartRecording)
+    }
+  }, [recordingService, recordingMode])
+
+  // Sync recording service state with local state
+  useEffect(() => {
+    const updateState = () => {
+      const state = recordingService.getState()
+      setIsRecording(state.isRecording)
+      setCurrentTime(state.currentTime)
+      setTranscript(state.transcript)
+      setLiveText(state.liveText)
+      setRecordingWarning(state.recordingWarning)
+      setCombinedRecordingPath(state.combinedRecordingPath)
+      setRecordedAudioBlob(state.recordedAudioBlob)
       
-      // Clean up recording state
-      setIsCombinedRecording(false)
-      setIsRecording(false)
-      setTranscriptionStatus('error')
-      setRecordingWarning(`❌ Recording failed: ${result.error}`)
-      
-      // Stop parallel transcription recording
-      isRecordingRef.current = false
-      
-      // Stop audio stream
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach((track) => track.stop())
-        audioStreamRef.current = null
-      }
-      
-      // Clear timer
-      if (recordingInterval.current) {
-        clearInterval(recordingInterval.current)
-        recordingInterval.current = null
+      // Set total time when recording stops
+      if (!state.isRecording && state.currentTime > 0) {
+        setTotalTime(Math.max(state.currentTime, 1))
       }
     }
 
-    if (isSwiftRecorderAvailable) {
-      ;(window.api as any).swiftRecorder.onRecordingStarted(handleCombinedRecordingStarted)
-      ;(window.api as any).swiftRecorder.onRecordingStopped(handleCombinedRecordingStopped)
-      ;(window.api as any).swiftRecorder.onRecordingFailed(handleCombinedRecordingFailed)
-    }
-
-    return (): void => {
-      if (isSwiftRecorderAvailable) {
-        ;(window.api as any).swiftRecorder.removeAllListeners()
-      }
-    }
-  }, [isSwiftRecorderAvailable]) // Only isSwiftRecorderAvailable dependency
-
-  const contextTemplates = {
-    custom: 'Add your custom context here...',
-    standup:
-      "This is our daily standup meeting. We discuss what we completed yesterday, what we're working on today, and any blockers. Team members share progress updates and coordinate on shared tasks.",
-    planning:
-      'Sprint planning session where we review the product backlog, estimate story points, and plan work for the upcoming sprint. We discuss priorities, dependencies, and resource allocation.',
-    review:
-      'Code review session where we examine recent changes, discuss implementation approaches, identify potential issues, and ensure code quality standards are met.',
-    client:
-      'Client meeting to discuss project progress, gather feedback, review deliverables, and align on next steps. We present updates and address any concerns or questions.',
-    interview:
-      'Interview session for evaluating candidate qualifications, cultural fit, and technical skills. We assess experience, problem-solving abilities, and alignment with role requirements.',
-    retrospective:
-      'Sprint retrospective to reflect on what went well, what could be improved, and action items for the next sprint. Team discussion on process improvements.'
-  }
+    const interval = setInterval(updateState, 100)
+    return () => clearInterval(interval)
+  }, [recordingService])
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -525,528 +368,12 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
   }
 
   const startRecording = async (): Promise<void> => {
-    if (recordingMode === 'combined' && isSwiftRecorderAvailable) {
-      await startCombinedRecording()
-    } else {
-      await startMicrophoneRecording()
-    }
-  }
-
-  const startCombinedRecording = async (): Promise<void> => {
-    try {
-      console.log('🎙️ Starting combined audio recording (system + microphone)...')
-
-      // Note: Combined recording doesn't need transcription service to be ready
-      // It uses the Swift recorder directly and can be transcribed later
-      
-      // Generate recording path
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const recordingPath = '~/Friday Recordings' // Will be resolved by the main process
-      const filename = `combined-recording-${timestamp}.mp3`
-
-      // Start combined recording via Swift recorder
-      const result = await (window.api as any).swiftRecorder.startCombinedRecording(
-        recordingPath,
-        filename
-      )
-
-      if (result.success) {
-        setIsRecording(true)
-        setCurrentTime(0)
-        setLiveText('')
-        setTranscriptionStatus('recording')
-        
-        // Set recording start time for proper timestamps
-        recordingStartTime.current = Date.now()
-
-        // Clear any previous recording
-        if (recordedAudioUrl) {
-          URL.revokeObjectURL(recordedAudioUrl)
-          setRecordedAudioUrl(null)
-        }
-        setRecordedAudioBlob(null)
-        setCombinedRecordingPath(null)
-
-        // Start timer
-        recordingInterval.current = setInterval(() => {
-          setCurrentTime((prev) => prev + 1)
-        }, 1000)
-
-        // Also start parallel microphone recording for real-time transcription
-        // This won't interfere with the Swift recorder's microphone capture
-        await startParallelTranscriptionRecording()
-
-        console.log('✅ Combined recording started successfully')
-      } else {
-        console.error('Failed to start combined recording:', result.error)
-        setTranscriptionStatus('error')
-      }
-    } catch (error) {
-      console.error('Failed to start combined recording:', error)
-      setTranscriptionStatus('error')
-    }
-  }
-
-  const startParallelTranscriptionRecording = async (): Promise<void> => {
-    try {
-      console.log('🎤 Starting parallel microphone recording for transcription...')
-
-      // Get user media with optimal settings for transcription
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false
-        }
-      })
-
-      // Store stream reference for cleanup
-      audioStreamRef.current = stream
-
-      // Reset transcription state
-      chunkCounter.current = 0
-
-      // Queue for pending transcription chunks when service is unavailable
-      const transcriptionQueue: ArrayBuffer[] = []
-      let isProcessingQueue = false
-
-      // Function to process queued chunks when service becomes available
-      const processQueuedChunks = async (): Promise<void> => {
-        if (isProcessingQueue || transcriptionQueue.length === 0) return
-        
-        isProcessingQueue = true
-        while (transcriptionQueue.length > 0) {
-          const statusResult = await (window.api as any).transcription.isReady()
-          
-          if (!statusResult.ready) {
-            const details = statusResult.details || {}
-            console.log('⏳ Waiting for transcription service to be ready...', {
-              serviceReady: details.serviceReady,
-              socketConnected: details.socketConnected,
-              processRunning: details.processRunning,
-              isStarting: details.isStarting
-            })
-            
-            // Wait longer if service is starting, shorter for socket reconnection
-            const waitTime = details.isStarting ? 2000 : 1000
-            await new Promise(resolve => setTimeout(resolve, waitTime))
-            continue
-          }
-
-          const chunk = transcriptionQueue.shift()
-          if (chunk) {
-            try {
-              const result = await (window.api as any).transcription.processChunk(chunk)
-              if (result.success) {
-                console.log('✅ Queued transcription chunk processed successfully')
-              } else {
-                console.error('Failed to process queued transcription chunk:', result.error)
-                // Don't retry indefinitely - just log and continue
-              }
-            } catch (error) {
-              console.error('Error processing queued transcription chunk:', error)
-            }
-          }
-        }
-        isProcessingQueue = false
-      }
-
-      // Function to create and process transcription segments
-      const processTranscriptionSegment = async (): Promise<void> => {
-        if (!isRecordingRef.current) return
-
-        return new Promise<void>((resolve) => {
-          // Use compatible audio format for transcription
-          const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-            ? 'audio/webm;codecs=opus'
-            : MediaRecorder.isTypeSupported('audio/webm')
-              ? 'audio/webm'
-              : 'audio/wav'
-
-          const recorder = new MediaRecorder(stream, {
-            mimeType,
-            audioBitsPerSecond: 32000
-          })
-
-          const chunks: Blob[] = []
-
-          recorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              chunks.push(event.data)
-            }
-          }
-
-          recorder.onstop = async () => {
-            try {
-              if (chunks.length > 0) {
-                const completeBlob = new Blob(chunks, { type: mimeType })
-
-                if (completeBlob.size > 1000) {
-                  console.log(`🎵 Processing transcription segment: ${completeBlob.size} bytes`)
-
-                  const arrayBuffer = await completeBlob.arrayBuffer()
-                  
-                  // Check if service is ready, if not, queue the chunk
-                  const statusResult = await (window.api as any).transcription.isReady()
-                  if (!statusResult.ready) {
-                    const details = statusResult.details || {}
-                    console.log('⏳ Transcription service busy, queuing chunk for later processing', {
-                      serviceReady: details.serviceReady,
-                      socketConnected: details.socketConnected,
-                      processRunning: details.processRunning,
-                      isStarting: details.isStarting
-                    })
-                    transcriptionQueue.push(arrayBuffer)
-                    // Trigger queue processing in background
-                    setTimeout(processQueuedChunks, 500)
-                  } else {
-                    // Try to process immediately
-                    try {
-                      const result = await (window.api as any).transcription.processChunk(arrayBuffer)
-                      if (!result.success) {
-                        console.log('⏳ Processing failed, queuing chunk for retry. Error:', result.error)
-                        transcriptionQueue.push(arrayBuffer)
-                        setTimeout(processQueuedChunks, 500)
-                      } else {
-                        console.log('✅ Transcription segment sent successfully')
-                      }
-                    } catch (error) {
-                      console.log('⏳ Processing error, queuing chunk for retry. Error:', error)
-                      transcriptionQueue.push(arrayBuffer)
-                      setTimeout(processQueuedChunks, 500)
-                    }
-                  }
-
-                  chunkCounter.current++
-                }
-              }
-            } catch (error) {
-              console.error('Error processing transcription segment:', error)
-            }
-
-            resolve()
-          }
-
-          recorder.onerror = (event) => {
-            console.error('Transcription MediaRecorder error:', event)
-            resolve()
-          }
-
-          // Record for 4 seconds to get complete segments
-          recorder.start()
-
-          setTimeout(() => {
-            if (recorder.state === 'recording') {
-              recorder.stop()
-            }
-          }, 4000)
-        })
-      }
-
-      // Process transcription segments in a loop
-      const transcriptionLoop = async (): Promise<void> => {
-        while (isRecordingRef.current) {
-          await processTranscriptionSegment()
-
-          // Small gap between segments
-          if (isRecordingRef.current) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 200))
-          }
-        }
-        
-        // Process any remaining queued chunks when recording stops
-        if (transcriptionQueue.length > 0) {
-          console.log(`🔄 Processing ${transcriptionQueue.length} remaining queued transcription chunks...`)
-          await processQueuedChunks()
-        }
-      }
-
-      // Update refs for loop control
-      isRecordingRef.current = true
-
-      // Start the transcription loop
-      transcriptionLoop()
-
-      console.log('✅ Parallel transcription recording started (with queue resilience)')
-    } catch (error) {
-      console.error('Failed to start parallel transcription recording:', error)
-    }
-  }
-
-  const startMicrophoneRecording = async (): Promise<void> => {
-    try {
-      console.log('🎤 Starting microphone-only recording...')
-
-      // Check transcription service status
-      const statusResult = await (window.api as any).transcription.isReady()
-      if (!statusResult.ready) {
-        console.error('Transcription service not ready')
-        return
-      }
-
-      // Get user media with optimal settings
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false
-        }
-      })
-
-      // Store stream reference for cleanup
-      audioStreamRef.current = stream
-
-      // Reset recording state
-      setIsRecording(true)
-      setCurrentTime(0)
-      setLiveText('')
-      setTranscriptionStatus('recording')
-      chunkCounter.current = 0
-      recordingChunksRef.current = []
-
-      // Clear any previous recording
-      if (recordedAudioUrl) {
-        URL.revokeObjectURL(recordedAudioUrl)
-        setRecordedAudioUrl(null)
-      }
-      setRecordedAudioBlob(null)
-
-      // Start timer
-      recordingInterval.current = setInterval(() => {
-        setCurrentTime((prev) => prev + 1)
-      }, 1000)
-
-      // Function to create and process a complete recording segment
-      const processRecordingSegment = async (): Promise<void> => {
-        if (!isRecordingRef.current) return
-
-        return new Promise<void>((resolve) => {
-          // Use more compatible audio format
-          const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-            ? 'audio/webm;codecs=opus'
-            : MediaRecorder.isTypeSupported('audio/webm')
-              ? 'audio/webm'
-              : MediaRecorder.isTypeSupported('audio/mp4')
-                ? 'audio/mp4'
-                : 'audio/wav'
-
-          console.log(`🎵 Using recording format: ${mimeType}`)
-
-          const recorder = new MediaRecorder(stream, {
-            mimeType,
-            audioBitsPerSecond: 32000
-          })
-
-          const chunks: Blob[] = []
-
-          recorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              chunks.push(event.data)
-              // Also save for complete recording
-              recordingChunksRef.current.push(event.data)
-            }
-          }
-
-          recorder.onstop = async () => {
-            try {
-              if (chunks.length > 0) {
-                // Create complete WebM blob from all chunks
-                const completeBlob = new Blob(chunks, { type: mimeType })
-
-                if (completeBlob.size > 1000) {
-                  // Only process substantial segments
-                  console.log(`🎵 Processing complete segment: ${completeBlob.size} bytes`)
-
-                  const arrayBuffer = await completeBlob.arrayBuffer()
-                  const result = await (window.api as any).transcription.processChunk(arrayBuffer)
-
-                  if (!result.success) {
-                    console.error('Failed to process audio segment:', result.error)
-                  } else {
-                    console.log('✅ Audio segment sent successfully')
-                  }
-
-                  chunkCounter.current++
-                } else {
-                  console.log(`⏭️ Skipping small segment: ${completeBlob.size} bytes`)
-                }
-              }
-            } catch (error) {
-              console.error('Error processing audio segment:', error)
-            }
-
-            resolve()
-          }
-
-          recorder.onerror = (event) => {
-            console.error('MediaRecorder error:', event)
-            setTranscriptionStatus('error')
-            resolve()
-          }
-
-          // Record for 4 seconds to get complete segments
-          recorder.start()
-
-          setTimeout(() => {
-            if (recorder.state === 'recording') {
-              recorder.stop()
-            }
-          }, 4000)
-        })
-      }
-
-      // Process segments in a loop
-      const recordingLoop = async (): Promise<void> => {
-        while (isRecordingRef.current) {
-          await processRecordingSegment()
-
-          // Small gap between segments to ensure clean boundaries
-          if (isRecordingRef.current) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 200))
-          }
-        }
-      }
-
-      // Update refs for loop control
-      isRecordingRef.current = true
-
-      // Start the recording loop
-      recordingLoop()
-      
-      // Set recording start time for proper timestamps
-      recordingStartTime.current = Date.now()
-
-      console.log('✅ Microphone recording started (4-second complete segments)')
-    } catch (error) {
-      console.error('Failed to start microphone recording:', error)
-      setTranscriptionStatus('error')
-    }
+    await recordingService.startRecording(recordingMode)
   }
 
   const stopRecording = async (): Promise<void> => {
-    console.log('🛑 Stopping recording...')
-
-    if (isCombinedRecording) {
-      await stopCombinedRecording()
-    } else {
-      stopMicrophoneRecording()
-    }
+    await recordingService.stopRecording()
   }
-
-  const stopCombinedRecording = async (): Promise<void> => {
-    try {
-      const result = await (window.api as any).swiftRecorder.stopCombinedRecording()
-
-      if (result.success) {
-        console.log('✅ Combined recording stopped successfully')
-
-        // The recording stopped event will be handled by the event listener
-        // which will load the recording for playback
-      } else {
-        console.error('Failed to stop combined recording:', result.error)
-      }
-    } catch (error) {
-      console.error('Error stopping combined recording:', error)
-    }
-
-    // Stop parallel transcription recording
-    isRecordingRef.current = false
-
-    // Stop audio stream used for transcription
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((track) => track.stop())
-      audioStreamRef.current = null
-    }
-
-    // Clean up common recording state
-    setIsRecording(false)
-    setTranscriptionStatus('ready')
-
-    if (recordingInterval.current) {
-      clearInterval(recordingInterval.current)
-      recordingInterval.current = null
-    }
-
-    // Set total time to current recording time
-    const finalDuration = Math.max(currentTime, 1)
-    setTotalTime(finalDuration)
-
-    console.log('✅ Combined recording cleanup completed. Duration:', formatTime(finalDuration))
-  }
-
-  const stopMicrophoneRecording = (): void => {
-    // Stop the recording loop
-    isRecordingRef.current = false
-    setIsRecording(false)
-    setTranscriptionStatus('ready')
-
-    // Stop audio stream
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((track) => track.stop())
-      audioStreamRef.current = null
-    }
-
-    if (recordingInterval.current) {
-      clearInterval(recordingInterval.current)
-      recordingInterval.current = null
-    }
-
-    // Create complete recording file for conversion
-    if (recordingChunksRef.current.length > 0) {
-      // Use the same compatible format detection as recording
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : MediaRecorder.isTypeSupported('audio/mp4')
-            ? 'audio/mp4'
-            : 'audio/wav'
-
-      const completeRecording = new Blob(recordingChunksRef.current, { type: mimeType })
-
-      console.log(
-        `💾 Complete recording created: ${completeRecording.size} bytes, format: ${mimeType}`
-      )
-      console.log(`⏳ Preparing for MP3 conversion and playback...`)
-
-      // Set total time to current recording time (ensure it's not zero)
-      const finalDuration = Math.max(currentTime, 1) // At least 1 second if we recorded anything
-
-      console.log(
-        '✅ Microphone recording stopped. Duration:',
-        formatTime(finalDuration),
-        `(${finalDuration} seconds)`
-      )
-
-      // Update state but don't set audio URL yet - wait for MP3 conversion
-      setRecordedAudioBlob(completeRecording)
-      setTotalTime(finalDuration)
-
-      // Trigger save and MP3 conversion
-      setNeedsAutoSave(true)
-    }
-  }
-
-  // Auto-save effect that triggers when recording is complete
-  useEffect(() => {
-    if (needsAutoSave && meeting?.id && recordedAudioBlob && totalTime > 0) {
-      console.log('🔄 Auto-save triggered with state:', {
-        needsAutoSave,
-        meetingId: meeting?.id,
-        hasRecordedBlob: !!recordedAudioBlob,
-        recordedBlobSize: recordedAudioBlob?.size,
-        totalTime,
-        formattedDuration: formatTime(totalTime),
-        transcriptLines: transcript.length
-      })
-      setNeedsAutoSave(false)
-      handleSaveMeeting()
-    }
-  }, [needsAutoSave, meeting?.id, recordedAudioBlob, totalTime])
 
   const togglePlayback = async (): Promise<void> => {
     if (!audioPlayerRef.current || !recordedAudioUrl) {
@@ -1062,7 +389,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
           playbackInterval.current = null
         }
       } else {
-        // Ensure audio is loaded before playing
         if (audioPlayerRef.current.readyState < 2) {
           console.log('⏳ Loading audio...')
           await new Promise<void>((resolve, reject) => {
@@ -1092,14 +418,12 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
             const newTime = Math.floor(audioPlayerRef.current.currentTime)
             setCurrentTime(newTime)
 
-            // Update active line based on time if transcript exists
             if (transcript && transcript.length > 0) {
               const timeInMinutes = newTime / 60
               const lineIndex = Math.floor(timeInMinutes * 4)
               setActiveLineIndex(Math.min(lineIndex, transcript.length - 1))
             }
 
-            // Auto-pause at end
             if (newTime >= totalTime) {
               setIsPlaying(false)
               if (playbackInterval.current) {
@@ -1132,7 +456,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     setCurrentTime(newTime)
     audioPlayerRef.current.currentTime = newTime
 
-    // Update active line if transcript exists
     if (transcript && transcript.length > 0) {
       const timeInMinutes = newTime / 60
       const lineIndex = Math.floor(timeInMinutes * 4)
@@ -1146,495 +469,18 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     setActiveLineIndex(index)
   }
 
-  const addTag = (): void => {
-    if (newTag.trim() && !tags.includes(newTag.trim())) {
-      setTags([...tags, newTag.trim()])
-      setNewTag('')
-    }
+  const handleAudioPlayerRef = (ref: HTMLAudioElement | null): void => {
+    audioPlayerRef.current = ref
   }
 
-  const removeTag = (tagToRemove: string): void => {
-    setTags(tags.filter((tag) => tag !== tagToRemove))
-  }
-
-  const handleTagKeyPress = (event: React.KeyboardEvent): void => {
-    if (event.key === 'Enter') {
-      addTag()
-    }
-  }
-
-  const toggleActionItem = (id: number): void => {
-    setActionItems((items) =>
-      items.map((item) => (item.id === id ? { ...item, completed: !item.completed } : item))
-    )
-  }
-
-  const addActionItem = (): void => {
-    const newItem = {
-      id: Date.now(),
-      text: 'New action item...',
-      completed: false
-    }
-    setActionItems([...actionItems, newItem])
-  }
-
-  const handleContextTemplateChange = (template: string): void => {
-    setContextText(contextTemplates[template as keyof typeof contextTemplates])
-  }
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>): void => {
-    const files = event.target.files
-    if (files) {
-      const validExtensions = ['.pdf', '.doc', '.docx', '.txt', '.md', '.json', '.xml']
-      const remainingSlots = 5 - uploadedFiles.length
-      
-      if (remainingSlots <= 0) {
-        alert('Maximum of 5 context files allowed')
-        return
-      }
-      
-      const filesToProcess = Array.from(files).slice(0, remainingSlots)
-      const validFiles = filesToProcess.filter(file => {
-        const extension = '.' + file.name.split('.').pop()?.toLowerCase()
-        return validExtensions.includes(extension)
-      })
-      
-      if (validFiles.length !== filesToProcess.length) {
-        alert('Only text format files are supported: PDF, DOC, DOCX, TXT, MD, JSON, XML')
-      }
-      
-      // For now, store file names. In a full implementation, you would:
-      // 1. Save files to a dedicated context files directory
-      // 2. Store the actual file paths in the database
-      // 3. Implement file reading/processing for AI context
-      const newFileNames = validFiles.map((file) => file.name)
-      setUploadedFiles((prev) => [...prev, ...newFileNames])
-    }
-    
-    // Clear the input so the same file can be selected again
-    event.target.value = ''
-  }
-
-  const removeFile = (fileName: string): void => {
-    setUploadedFiles((prev) => prev.filter((file) => file !== fileName))
-  }
-
+  // Auto-save effect
   useEffect(() => {
-    return () => {
-      if (playbackInterval.current) {
-        clearInterval(playbackInterval.current)
-      }
-      if (recordingInterval.current) {
-        clearInterval(recordingInterval.current)
-      }
+    if (needsAutoSave && meeting?.id && recordedAudioBlob && totalTime > 0) {
+      console.log('🔄 Auto-save triggered')
+      setNeedsAutoSave(false)
+      handleSaveMeeting()
     }
-  }, [])
-
-  const renderSidebarContent = (): React.ReactNode => {
-    switch (activeSidebarTab) {
-      case 'details':
-        return (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Recording Details</h3>
-            </div>
-            <div className="card-body">
-              <div className="input-group">
-                <input
-                  type="text"
-                  className="input input-floating"
-                  placeholder=" "
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-                <label className="input-label">Title</label>
-              </div>
-
-              <div className="input-group">
-                <textarea
-                  className="input textarea input-floating"
-                  placeholder=" "
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-                <label className="input-label">Description</label>
-              </div>
-
-              <div className="input-group">
-                <label className="demo-label">Tags</label>
-                <div className="tag-input-container">
-                  {tags.map((tag) => (
-                    <span key={tag} className="tag tag-deletable">
-                      {tag}
-                      <button className="tag-delete" onClick={() => removeTag(tag)}>
-                        <XIcon size={12} />
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    type="text"
-                    className="tag-input"
-                    placeholder="Add tag..."
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
-                    onKeyPress={handleTagKeyPress}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        )
-
-      case 'context':
-        return (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Context Information</h3>
-            </div>
-            <div className="card-body">
-              <div className="input-group">
-                <label className="demo-label">Context Template</label>
-                <select
-                  className="input"
-                  onChange={(e) => handleContextTemplateChange(e.target.value)}
-                  value={contextText === contextTemplates.standup ? 'standup' : 'custom'}
-                >
-                  <option value="custom">Custom</option>
-                  <option value="standup">Daily Standup</option>
-                  <option value="planning">Sprint Planning</option>
-                  <option value="review">Code Review</option>
-                  <option value="client">Client Meeting</option>
-                  <option value="interview">Interview</option>
-                  <option value="retrospective">Sprint Retrospective</option>
-                </select>
-              </div>
-
-              <div className="input-group">
-                <textarea
-                  className="input textarea input-floating"
-                  placeholder=" "
-                  style={{ minHeight: '120px' }}
-                  value={contextText}
-                  onChange={(e) => setContextText(e.target.value)}
-                />
-                <label className="input-label">Context</label>
-              </div>
-
-              <div className="input-group">
-                <label className="demo-label">Context Files</label>
-                <div style={{ marginBottom: '12px' }}>
-                  <input
-                    type="file"
-                    id="context-files"
-                    multiple
-                    accept=".pdf,.doc,.docx,.txt,.md,.json,.xml"
-                    onChange={handleFileUpload}
-                    style={{ display: 'none' }}
-                  />
-                  <label htmlFor="context-files" className="btn btn-secondary btn-sm">
-                    <UploadIcon size={16} />
-                    Upload Files ({uploadedFiles.length}/5)
-                  </label>
-                </div>
-
-                {uploadedFiles.length > 0 && (
-                  <div className="uploaded-files">
-                    {uploadedFiles.map((fileName, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-sm"
-                        style={{
-                          background: 'var(--surface-secondary)',
-                          borderRadius: 'var(--radius-sm)',
-                          marginBottom: '8px'
-                        }}
-                      >
-                        <div className="flex items-center gap-sm">
-                          <FileTextIcon size={16} color="var(--text-secondary)" />
-                          <span className="text-sm">{fileName}</span>
-                        </div>
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          onClick={() => removeFile(fileName)}
-                          style={{ padding: '4px' }}
-                        >
-                          <XIcon size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-
-      case 'actions':
-        return (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Action Items</h3>
-            </div>
-            <div className="card-body">
-              <div className="action-items-container">
-                <div className="action-items">
-                  {actionItems.map((item) => (
-                    <div key={item.id} className="action-item">
-                      <input
-                        type="checkbox"
-                        id={`action-${item.id}`}
-                        checked={item.completed}
-                        onChange={() => toggleActionItem(item.id)}
-                      />
-                      <label
-                        htmlFor={`action-${item.id}`}
-                        className={`action-item-text ${item.completed ? 'completed' : ''}`}
-                      >
-                        {item.text}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                className="btn btn-ghost btn-sm w-full"
-                onClick={addActionItem}
-                style={{ marginTop: '12px' }}
-              >
-                <PlusIcon size={16} />
-                Add Action Item
-              </button>
-            </div>
-          </div>
-        )
-
-      case 'notes':
-        return (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Notes</h3>
-              <div style={{ marginLeft: 'auto' }}>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={generateAllContent}
-                  title="Generate all content with AI"
-                >
-                  <SparklesIcon size={16} />
-                  Generate All
-                </button>
-              </div>
-            </div>
-            <div className="card-body">
-              <div className="input-group">
-                <label className="demo-label">Notes (Rich Text Editor)</label>
-                <div style={{ marginTop: '8px' }}>
-                  <BlockNoteEditor
-                    value={notes}
-                    onChange={(val) => setNotes(val || '')}
-                    placeholder="Write your notes here..."
-                    height={250}
-                  />
-                </div>
-              </div>
-              <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Use the toolbar above for rich text formatting. Bold, italic, headers, lists, and more are available.
-              </div>
-              <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Use "/" to open the command menu for blocks, headings, lists, and more. Drag blocks to reorder them.
-              </div>
-            </div>
-          </div>
-        )
-
-      case 'summary':
-        return (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Summary</h3>
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={generateSummary}
-                  title="Generate summary with AI"
-                >
-                  <SparklesIcon size={16} />
-                  Generate
-                </button>
-              </div>
-            </div>
-            <div className="card-body">
-              {!isSummaryAIGenerated && !summary ? (
-                <div style={{
-                  textAlign: 'center',
-                  padding: 'var(--spacing-xl)',
-                  color: 'var(--text-secondary)',
-                  background: 'var(--surface-tertiary)',
-                  borderRadius: 'var(--radius-md)',
-                  border: '2px dashed var(--border-primary)'
-                }}>
-                  <SparklesIcon size={32} style={{ marginBottom: '12px', opacity: 0.5 }} />
-                  <p style={{ margin: '0 0 8px 0', fontWeight: '500' }}>No summary yet</p>
-                  <p style={{ margin: 0, fontSize: '14px' }}>
-                    Click "Generate" to create an AI-powered summary based on your transcript, context, and notes.
-                  </p>
-                </div>
-              ) : (
-                <div className="input-group">
-                  <textarea
-                    className="input textarea input-floating"
-                    placeholder=" "
-                    style={{ minHeight: '150px' }}
-                    value={summary}
-                    onChange={(e) => setSummary(e.target.value)}
-                  />
-                  <label className="input-label">Meeting Summary</label>
-                </div>
-              )}
-              {summary && (
-                <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  {isSummaryAIGenerated ? '🤖 AI-generated summary - you can edit it above' : 'Custom summary'}
-                </div>
-              )}
-            </div>
-          </div>
-        )
-
-      case 'ai':
-        return (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">AI Message Generator</h3>
-            </div>
-            <div className="card-body">
-              <div className="ai-content-container">
-                {/* Data Selection */}
-                <div className="input-group">
-                  <label className="demo-label">Include Data</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {Object.entries(aiDataSelection).map(([key, value]) => (
-                      <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input
-                          type="checkbox"
-                          checked={value}
-                          onChange={() => toggleDataSelection(key as keyof AIDataSelection)}
-                        />
-                        <span style={{ textTransform: 'capitalize' }}>{key}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Global context and meeting context are always included
-                  </div>
-                </div>
-
-                {/* Message Type Selection */}
-                <div className="input-group">
-                  <label className="demo-label">Message Type</label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      className={`btn btn-sm ${messageType === 'slack' ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => setMessageType('slack')}
-                    >
-                      <MessageSquareIcon size={16} />
-                      Slack Message
-                    </button>
-                    <button
-                      className={`btn btn-sm ${messageType === 'email' ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => setMessageType('email')}
-                    >
-                      <MailIcon size={16} />
-                      Email Message
-                    </button>
-                  </div>
-                </div>
-
-                {/* Generate Button */}
-                <div className="input-group">
-                  <button
-                    className="btn btn-primary w-full"
-                    onClick={() => generateAIMessage(messageType)}
-                    disabled={isGeneratingMessage}
-                  >
-                    <SparklesIcon size={16} />
-                    {isGeneratingMessage ? 'Generating...' : `Generate ${messageType === 'slack' ? 'Slack' : 'Email'} Message`}
-                  </button>
-                </div>
-
-                {/* Generated Message Output */}
-                {generatedMessage && (
-                  <div className="input-group">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <label className="demo-label">Generated Message</label>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={copyToClipboard}
-                        title="Copy to clipboard"
-                      >
-                        <CopyIcon size={16} />
-                        Copy
-                      </button>
-                    </div>
-                    <BlockNoteEditor
-                      value={generatedMessage}
-                      onChange={setGeneratedMessage}
-                      placeholder="Generated message will appear here..."
-                      height={300}
-                    />
-                    <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      You can edit the message above and copy it to your clipboard
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-
-      default:
-        return null
-    }
-  }
-
-  const progressPercentage = totalTime > 0 ? (currentTime / totalTime) * 100 : 0
-
-  // Show recording interface if no recording is available
-  const hasTranscript = transcript && transcript.length > 0
-  const hasRecording = totalTime > 0 && recordedAudioUrl
-
-  const getRecordingStatusColor = (): string => {
-    switch (transcriptionStatus) {
-      case 'recording':
-        return 'var(--status-error)'
-      case 'ready':
-        return 'var(--status-success)'
-      case 'error':
-        return 'var(--status-error)'
-      case 'initializing':
-        return 'var(--status-warning)'
-      default:
-        return 'var(--text-secondary)'
-    }
-  }
-
-  const getRecordingStatusText = (): string => {
-    switch (transcriptionStatus) {
-      case 'initializing':
-        return 'Initializing transcription service...'
-      case 'ready':
-        return 'Ready to record'
-      case 'recording':
-        return `Recording live... ${formatTime(currentTime)}`
-      case 'recording-mic-only':
-        return `Recording (Microphone Only)... ${formatTime(currentTime)}`
-      case 'processing':
-        return 'Processing audio...'
-      case 'error':
-        return 'Transcription service error'
-      default:
-        return 'Ready to record'
-    }
-  }
+  }, [needsAutoSave, meeting?.id, recordedAudioBlob, totalTime])
 
   const handleSaveMeeting = async (): Promise<void> => {
     if (!meeting?.id) {
@@ -1642,7 +488,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
       return
     }
 
-    // Prevent multiple simultaneous saves
     if (savingMeeting) {
       console.log('Save already in progress, skipping...')
       return
@@ -1651,29 +496,17 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     try {
       setSavingMeeting(true)
       console.log('💾 Saving meeting data...')
-      console.log('📊 Current state before save:', {
-        totalTime,
-        formattedDuration: formatTime(totalTime),
-        transcriptLines: transcript.length,
-        hasRecordedBlob: !!recordedAudioBlob,
-        recordedBlobSize: recordedAudioBlob?.size || 0,
-        currentRecordingPath: meeting.recordingPath || 'none',
-        needsAutoSave
-      })
 
       let recordingPath = meeting.recordingPath || ''
 
-      // For combined recordings, use the stored path
       if (combinedRecordingPath) {
         recordingPath = combinedRecordingPath
         console.log('📁 Using combined recording path:', recordingPath)
-      }
-      // Save the audio file if we have recorded audio and no existing path
-      else if (recordedAudioBlob && !recordingPath) {
+      } else if (recordedAudioBlob && !recordingPath) {
         console.log('💾 Saving new audio recording...')
         try {
           const arrayBuffer = await recordedAudioBlob.arrayBuffer()
-          const result = await (window.api as any).transcription.saveRecording(
+          const result = await window.api.transcription.saveRecording(
             arrayBuffer,
             meeting.id
           )
@@ -1681,9 +514,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
           if (result.success && result.filePath) {
             recordingPath = result.filePath
             console.log('✅ Audio recording saved to:', recordingPath)
-
-            // Load the converted MP3 file for playback
-            console.log('🎵 Loading converted MP3 file for playback...')
             await loadRecording(recordingPath)
           } else {
             console.error('Failed to save audio recording:', result.error)
@@ -1691,10 +521,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
         } catch (error) {
           console.error('Error saving audio recording:', error)
         }
-      } else if (recordingPath) {
-        console.log('📁 Using existing recording path:', recordingPath)
-      } else {
-        console.log('⚠️ No recording data to save')
       }
 
       const updatedMeetingData: Partial<Meeting> = {
@@ -1702,7 +528,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
         description,
         tags,
         context: contextText,
-        context_files: uploadedFiles.slice(0, 5), // Limit to 5 files
+        context_files: uploadedFiles.slice(0, 5),
         actionItems,
         transcript,
         duration: formatTime(totalTime),
@@ -1712,33 +538,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
         updatedAt: new Date().toISOString()
       }
 
-      console.log(
-        '💾 About to save meeting with duration:',
-        formatTime(totalTime),
-        `(${totalTime} seconds)`
-      )
-      console.log('💾 Meeting data to save:', updatedMeetingData)
-
       await window.api.db.updateMeeting(meeting.id, updatedMeetingData)
       console.log('✅ Meeting data saved successfully')
-
-      // Verify what was actually saved
-      const savedMeeting = await window.api.db.getMeeting(meeting.id)
-      console.log('🔍 Verification - Data actually saved to database:', {
-        id: savedMeeting?.id,
-        title: savedMeeting?.title,
-        duration: savedMeeting?.duration,
-        recordingPath: savedMeeting?.recordingPath,
-        transcriptLines: savedMeeting?.transcript?.length || 0
-      })
-
-      console.log('📊 Saved data:', {
-        transcript: transcript.length + ' lines',
-        duration: formatTime(totalTime),
-        tags: tags.length + ' tags',
-        actionItems: actionItems.length + ' action items',
-        recordingPath: recordingPath || 'none'
-      })
     } catch (error) {
       console.error('Error saving meeting data:', error)
     } finally {
@@ -1765,7 +566,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
         existingTitle: title
       }
 
-      const result = await (window.api as any).gemini.generateSummary(options)
+      const result = await window.api.gemini.generateSummary(options)
       
       if (result.success && result.summary) {
         setSummary(result.summary)
@@ -1799,7 +600,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
         existingTitle: title
       }
 
-      const result = await (window.api as any).gemini.generateContent(options)
+      const result = await window.api.gemini.generateContent(options)
       
       if (result.success && result.data) {
         const { summary: newSummary, description: newDescription, actionItems: newActionItems, tags: newTags } = result.data
@@ -1821,97 +622,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     }
   }
 
-  // Helper function to create a recording chunk
-  const createRecordingChunk = async (): Promise<void> => {
-    if (recordingChunks.length === 0) return
-
-    try {
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm'
-
-      const chunkBlob = new Blob(recordingChunks, { type: mimeType })
-      const arrayBuffer = await chunkBlob.arrayBuffer()
-
-      console.log(`💾 Processing chunk (${chunkBlob.size} bytes)`)
-
-      // Clear buffer for next chunk
-      recordingChunks.length = 0
-    } catch (error) {
-      console.error('Error creating recording chunk:', error)
-    }
-  }
-
-  // Start chunked recording with automatic chunk creation
-  const startChunkedRecordingWithTimer = async (): Promise<void> => {
-    if (!meeting?.id) return
-
-    try {
-      console.log('🎬 Starting chunked recording...')
-      
-      // Initialize chunked recording
-      const result = await window.api.chunkedRecording.start(meeting.id)
-      if (result.success) {
-        setIsChunkedRecording(true)
-        setRecordingChunks([])
-
-        // Set up periodic chunk creation
-        recordingInterval.current = setInterval(createRecordingChunk, 5 * 60 * 1000) // 5 minutes
-        
-        console.log('✅ Chunked recording started with 5-minute intervals')
-      } else {
-        console.error('Failed to start chunked recording:', result.error)
-      }
-    } catch (error) {
-      console.error('Error starting chunked recording:', error)
-    }
-  }
-
-  // Stop chunked recording
-  const stopChunkedRecordingWithTimer = async (): Promise<void> => {
-    if (!meeting?.id) return
-
-    try {
-      // Clear chunk timer
-      if (recordingInterval.current) {
-        clearInterval(recordingInterval.current)
-        recordingInterval.current = null
-      }
-
-      // Create final chunk if there's data
-      await createRecordingChunk()
-
-      // Stop chunked recording
-      const result = await window.api.chunkedRecording.stop(meeting.id)
-      if (result.success) {
-        console.log('🏁 Chunked recording stopped')
-        setIsChunkedRecording(false)
-        
-        if (result.chunkPaths) {
-          setRecordingChunks(result.chunkPaths)
-          console.log(`📁 Recording saved as ${result.chunkPaths.length} chunks`)
-        }
-      } else {
-        console.error('Failed to stop chunked recording:', result.error)
-      }
-    } catch (error) {
-      console.error('Error stopping chunked recording:', error)
-    }
-  }
-
-  // AI generation state
-  const [aiDataSelection, setAiDataSelection] = useState<AIDataSelection>({
-    notes: true,
-    summary: true,
-    transcript: true,
-    description: true,
-    title: true
-  })
-  const [generatedMessage, setGeneratedMessage] = useState('')
-  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
-  const [messageType, setMessageType] = useState<'slack' | 'email'>('slack')
-
-  // AI generation functions
   const generateAIMessage = async (type: 'slack' | 'email'): Promise<void> => {
     if (!meeting?.id) {
       alert('No meeting data available for AI generation')
@@ -1919,35 +629,29 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     }
 
     try {
-      setIsGeneratingMessage(true)
       console.log(`🤖 Generating ${type} message with Gemini...`)
       
       const settings = await window.api.db.getSettings()
       
-      // Build the context data based on user selection
-      const selectedData: any = {
+      const selectedData = {
         globalContext: settings.globalContext || '',
-        meetingContext: contextText, // Always included
+        meetingContext: contextText,
+        title,
+        description,
+        notes,
+        summary,
+        transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
       }
 
-      // Add selected data
-      if (aiDataSelection.title && title) selectedData.title = title
-      if (aiDataSelection.description && description) selectedData.description = description
-      if (aiDataSelection.notes && notes) selectedData.notes = notes
-      if (aiDataSelection.summary && summary) selectedData.summary = summary
-      if (aiDataSelection.transcript && transcript.length > 0) {
-        selectedData.transcript = transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
-      }
-
-      const result = await (window.api as any).gemini.generateMessage({
+      const result = await window.api.gemini.generateMessage({
         type,
         data: selectedData,
         model: 'gemini-2.5-pro-preview-06-05'
       })
       
       if (result.success && result.message) {
-        setGeneratedMessage(result.message)
         console.log(`✅ ${type} message generated successfully`)
+        // This would be handled by the SidebarContent component
       } else {
         console.error(`Failed to generate ${type} message:`, result.error)
         alert(`Failed to generate ${type} message: ${result.error}`)
@@ -1955,430 +659,85 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting, onBack }) 
     } catch (error) {
       console.error(`Error generating ${type} message:`, error)
       alert(`Failed to generate ${type} message. Please check your Gemini API key in settings.`)
-    } finally {
-      setIsGeneratingMessage(false)
     }
   }
 
-  const copyToClipboard = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(generatedMessage)
-      console.log('✅ Message copied to clipboard')
-      // You could add a toast notification here
-    } catch (error) {
-      console.error('Failed to copy to clipboard:', error)
-      alert('Failed to copy to clipboard')
+  useEffect(() => {
+    return () => {
+      if (playbackInterval.current) {
+        clearInterval(playbackInterval.current)
+      }
     }
-  }
+  }, [])
 
-  const toggleDataSelection = (key: keyof AIDataSelection): void => {
-    setAiDataSelection(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }))
-  }
+  // Show recording interface if no recording is available
+  const hasTranscript = transcript && transcript.length > 0
+  const hasRecording = totalTime > 0 && recordedAudioUrl
 
   return (
     <div className="transcript-layout">
       {/* Main Content (Left 50%) */}
       <div className="transcript-main">
         {!hasRecording && !isRecording ? (
-          /* Recording Interface */
-          <div
-            className="recording-interface"
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '60vh',
-              textAlign: 'center'
-            }}
-          >
-            <div style={{ marginBottom: 'var(--spacing-xl)' }}>
-              <MicIcon size={64} color={getRecordingStatusColor()} />
-            </div>
-            <h2 style={{ marginBottom: 'var(--spacing-md)', color: 'var(--text-primary)' }}>
-              Ready to Record
-            </h2>
-            <p
-              style={{
-                marginBottom: 'var(--spacing-md)',
-                color: 'var(--text-secondary)',
-                maxWidth: '400px'
-              }}
-            >
-              {getRecordingStatusText()}
-            </p>
-
-            {/* Recording Mode Selector */}
-            {isSwiftRecorderAvailable && (
-              <div
-                style={{
-                  marginBottom: 'var(--spacing-lg)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 'var(--spacing-sm)'
-                }}
-              >
-                <label style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-                  Recording Mode
-                </label>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 'var(--spacing-sm)',
-                    background: 'var(--surface-secondary)',
-                    padding: '4px',
-                    borderRadius: 'var(--radius-sm)'
-                  }}
-                >
-                  <button
-                    className={`btn btn-sm ${recordingMode === 'microphone' ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => setRecordingMode('microphone')}
-                    style={{ minWidth: '120px' }}
-                  >
-                    🎤 Microphone Only
-                  </button>
-                  <button
-                    className={`btn btn-sm ${recordingMode === 'combined' ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => setRecordingMode('combined')}
-                    style={{ minWidth: '120px' }}
-                  >
-                    🎵 System + Mic
-                  </button>
-                </div>
-                <p
-                  style={{
-                    fontSize: '12px',
-                    color: 'var(--text-tertiary)',
-                    maxWidth: '300px',
-                    textAlign: 'center'
-                  }}
-                >
-                  {recordingMode === 'combined'
-                    ? 'Records both system audio and microphone for complete meeting capture'
-                    : 'Records microphone input only'}
-                </p>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
-              <button
-                className="btn btn-primary btn-lg"
-                onClick={startRecording}
-                disabled={transcriptionStatus !== 'ready'}
-              >
-                <MicIcon size={20} />
-                {recordingMode === 'combined' && isSwiftRecorderAvailable
-                  ? 'Start Combined Recording'
-                  : 'Start Recording'}
-              </button>
-            </div>
-          </div>
+          <RecordingInterface
+            transcriptionStatus={transcriptionStatus}
+            isSwiftRecorderAvailable={isSwiftRecorderAvailable}
+            recordingMode={recordingMode}
+            onRecordingModeChange={setRecordingMode}
+            onStartRecording={startRecording}
+          />
         ) : isRecording ? (
-          /* Live Recording Interface */
-          <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            {/* Recording Status Header */}
-            <div
-              style={{
-                padding: 'var(--spacing-md)',
-                background: 'var(--surface-secondary)',
-                borderRadius: 'var(--radius-md)',
-                marginBottom: 'var(--spacing-md)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--spacing-md)'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-                <div
-                  style={{
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--status-error)',
-                    animation: 'pulse 2s infinite'
-                  }}
-                />
-                <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>
-                  Recording live... {formatTime(currentTime)}
-                </span>
-              </div>
-              <button
-                className="btn btn-secondary"
-                onClick={stopRecording}
-                style={{ marginLeft: 'auto' }}
-              >
-                <PauseIcon size={16} />
-                Stop Recording
-              </button>
-            </div>
-
-            {/* Show warning if system audio capture failed */}
-            {recordingWarning && (
-              <div
-                style={{
-                  padding: 'var(--spacing-md)',
-                  background: '#FFF3CD',
-                  border: '1px solid #FFEAA7',
-                  borderRadius: 'var(--radius-md)',
-                  marginBottom: 'var(--spacing-md)'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-                  <span style={{ fontSize: '16px' }}>⚠️</span>
-                  <span style={{ color: '#856404', fontSize: '14px' }}>
-                    {recordingWarning}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Live Transcript */}
-            <div className="transcript-content" style={{ flex: 1, overflow: 'auto' }}>
-              <h3 style={{ marginTop: 0, color: 'var(--text-primary)' }}>Live Transcript</h3>
-              <div className="transcript-lines">
-                {transcript.length > 0 ? (
-                  transcript.map((line, index) => (
-                    <div
-                      key={index}
-                      className={`transcript-line ${index === transcript.length - 1 ? 'active' : ''}`}
-                    >
-                      <div className="transcript-time">{line.time}</div>
-                      <div className="transcript-text">{line.text}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      padding: 'var(--spacing-xl)',
-                      color: 'var(--text-secondary)'
-                    }}
-                  >
-                    <p>Speak to start transcribing...</p>
-                  </div>
-                )}
-
-                {/* Live text preview */}
-                {liveText && (
-                  <div
-                    style={{
-                      padding: 'var(--spacing-sm)',
-                      background: 'var(--surface-tertiary)',
-                      borderRadius: 'var(--radius-sm)',
-                      marginTop: 'var(--spacing-sm)',
-                      fontStyle: 'italic',
-                      color: 'var(--text-secondary)'
-                    }}
-                  >
-                    Processing: &ldquo;{liveText}&rdquo;
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <LiveRecordingInterface
+            currentTime={currentTime}
+            transcriptionStatus={transcriptionStatus}
+            recordingWarning={recordingWarning}
+            transcript={transcript}
+            liveText={liveText}
+            onStopRecording={stopRecording}
+          />
         ) : (
-          /* Playback Interface */
-          <>
-            {/* Hidden audio element for playback */}
-            {recordedAudioUrl && (
-              <audio
-                ref={audioPlayerRef}
-                src={recordedAudioUrl}
-                onLoadedMetadata={() => {
-                  if (audioPlayerRef.current && !isNaN(audioPlayerRef.current.duration)) {
-                    const duration = Math.floor(audioPlayerRef.current.duration)
-                    console.log(
-                      `🎵 Audio metadata loaded - Duration: ${duration}s (was ${totalTime}s)`
-                    )
-                    if (duration > 0 && Math.abs(duration - totalTime) > 1) {
-                      console.log(`📐 Updating totalTime from ${totalTime}s to ${duration}s`)
-                      setTotalTime(duration)
-                    }
-                  }
-                }}
-                onCanPlay={() => {
-                  console.log('🎵 Audio can start playing')
-                }}
-                onLoadStart={() => {
-                  console.log('🎵 Audio load started')
-                }}
-                onLoadedData={() => {
-                  console.log('🎵 Audio data loaded')
-                  if (audioPlayerRef.current && !isNaN(audioPlayerRef.current.duration)) {
-                    const duration = Math.floor(audioPlayerRef.current.duration)
-                    if (duration > 0 && Math.abs(duration - totalTime) > 1) {
-                      console.log(`📐 Updating totalTime from metadata: ${duration}s`)
-                      setTotalTime(duration)
-                    }
-                  }
-                }}
-                onError={(e) => {
-                  const audio = e.currentTarget
-                  const error = audio.error
-                  console.error('🚫 Audio error:', {
-                    code: error?.code,
-                    message: error?.message,
-                    src: audio.src,
-                    networkState: audio.networkState,
-                    readyState: audio.readyState
-                  })
-                }}
-                onEnded={() => {
-                  setIsPlaying(false)
-                  if (playbackInterval.current) {
-                    clearInterval(playbackInterval.current)
-                    playbackInterval.current = null
-                  }
-                }}
-                style={{ display: 'none' }}
-                preload="metadata"
-              />
-            )}
-
-            <div className="waveform-player">
-              <div className="waveform-controls">
-                <button
-                  className="btn btn-ghost btn-icon"
-                  onClick={togglePlayback}
-                  disabled={!recordedAudioUrl}
-                >
-                  {isPlaying ? <PauseIcon size={20} /> : <PlayIcon size={20} />}
-                </button>
-                <div className="waveform-time">
-                  <span>{formatTime(currentTime)}</span> / <span>{formatTime(totalTime)}</span>
-                </div>
-              </div>
-
-              <div className="waveform-track" onClick={handleSeek}>
-                <div className="waveform-progress" style={{ width: `${progressPercentage}%` }} />
-                <div className="waveform-handle" style={{ left: `${progressPercentage}%` }} />
-              </div>
-            </div>
-
-            {/* Transcript Content */}
-            <div className="transcript-content">
-              <h3 style={{ marginTop: 0, color: 'var(--text-primary)' }}>Transcript</h3>
-              <div className="transcript-lines">
-                {hasTranscript ? (
-                  transcript.map((line, index) => (
-                    <div
-                      key={index}
-                      className={`transcript-line ${index === activeLineIndex ? 'active' : ''}`}
-                      onClick={() => handleTranscriptLineClick(line, index)}
-                    >
-                      <div className="transcript-time">{line.time}</div>
-                      <div
-                        className="transcript-text"
-                        contentEditable
-                        suppressContentEditableWarning
-                      >
-                        {line.text}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      padding: 'var(--spacing-xl)',
-                      color: 'var(--text-secondary)'
-                    }}
-                  >
-                    <p>No transcript available.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
+          <PlaybackInterface
+            isPlaying={isPlaying}
+            currentTime={currentTime}
+            totalTime={totalTime}
+            recordedAudioUrl={recordedAudioUrl}
+            transcript={transcript}
+            activeLineIndex={activeLineIndex}
+            onTogglePlayback={togglePlayback}
+            onSeek={handleSeek}
+            onTranscriptLineClick={handleTranscriptLineClick}
+            onAudioPlayerRef={handleAudioPlayerRef}
+          />
         )}
       </div>
 
       {/* Sidebar (Right 50%) */}
-      <div className="transcript-sidebar">
-        {/* Tab Navigation */}
-        <div className="tabs">
-          <button
-            className={`tab ${activeSidebarTab === 'details' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('details')}
-          >
-            <InfoIcon size={16} />
-            Details
-          </button>
-          <button
-            className={`tab ${activeSidebarTab === 'context' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('context')}
-          >
-            <FileTextIcon size={16} />
-            Context
-          </button>
-          <button
-            className={`tab ${activeSidebarTab === 'actions' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('actions')}
-          >
-            <ClipboardListIcon size={16} />
-            Actions
-          </button>
-          <button
-            className={`tab ${activeSidebarTab === 'notes' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('notes')}
-          >
-            <BookOpenIcon size={16} />
-            Notes
-          </button>
-          <button
-            className={`tab ${activeSidebarTab === 'summary' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('summary')}
-          >
-            <FileTextIcon size={16} />
-            Summary
-          </button>
-          <button
-            className={`tab ${activeSidebarTab === 'ai' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('ai')}
-          >
-            <BotIcon size={16} />
-            AI
-          </button>
-        </div>
-
-        {/* Tab Content */}
-        {renderSidebarContent()}
-
-        {/* Save Indicator */}
-        <div className="save-indicator saved">
-          <CheckIcon size={16} />
-          <span>All changes saved</span>
-          <span className="text-xs text-secondary">⌘ S</span>
-        </div>
-
-        {/* Save Button */}
-        <div style={{ marginTop: 'var(--spacing-md)' }}>
-          <button
-            className="btn btn-primary w-full"
-            onClick={() => {
-              console.log('🔧 Manual save triggered. Current state:')
-              console.log('📊 Debug state:', {
-                totalTime,
-                formattedDuration: formatTime(totalTime),
-                transcriptLines: transcript.length,
-                hasRecordedBlob: !!recordedAudioBlob,
-                recordedBlobSize: recordedAudioBlob?.size || 0,
-                currentRecordingPath: meeting?.recordingPath || 'none',
-                needsAutoSave
-              })
-              handleSaveMeeting()
-            }}
-            disabled={savingMeeting}
-          >
-            <SaveIcon size={16} />
-            {savingMeeting ? 'Saving...' : 'Save Meeting'}
-          </button>
-        </div>
-      </div>
+      <SidebarContent
+        meeting={meeting}
+        title={title}
+        description={description}
+        tags={tags}
+        contextText={contextText}
+        uploadedFiles={uploadedFiles}
+        actionItems={actionItems}
+        notes={notes}
+        summary={summary}
+        isSummaryAIGenerated={isSummaryAIGenerated}
+        savingMeeting={savingMeeting}
+        onTitleChange={setTitle}
+        onDescriptionChange={setDescription}
+        onTagsChange={setTags}
+        onContextTextChange={setContextText}
+        onUploadedFilesChange={setUploadedFiles}
+        onActionItemsChange={setActionItems}
+        onNotesChange={setNotes}
+        onSummaryChange={setSummary}
+        onSaveMeeting={handleSaveMeeting}
+        onGenerateSummary={generateSummary}
+        onGenerateAllContent={generateAllContent}
+        onGenerateAIMessage={generateAIMessage}
+        transcript={transcript}
+      />
     </div>
   )
 }

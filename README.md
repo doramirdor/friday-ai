@@ -129,7 +129,7 @@ friday/
 
 - `⌘ L` - Start/Stop Recording
 - `⌘ Shift N` - Quick Note
-- `⌘ Shift F` - Show/Hide Window
+- `⌘ Shift H` - Show/Hide Window
 - `⌘ P` - Pause/Resume Recording
 - `⌘ S` - Save Changes
 

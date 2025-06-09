@@ -895,7 +895,7 @@ Best regards,
             </div>
             <div className="card-body">
               <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
-                Ask AI anything about your meeting. The AI has access to your complete transcript, notes, summary, and context.
+                Ask AI anything about your meeting or get general knowledge and expertise. The AI can access your complete transcript, notes, summary, context, and provide insights from its knowledge base.
               </div>
 
               <div className="input-group">
@@ -905,8 +905,14 @@ Best regards,
                   value={userQuestion}
                   onChange={(e) => setUserQuestion(e.target.value)}
                   style={{ minHeight: '80px' }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault()
+                      askQuestion()
+                    }
+                  }}
                 />
-                <label className="input-label">Your question...</label>
+                <label className="input-label">Your question... (Cmd/Ctrl+Enter to submit)</label>
               </div>
 
               <div className="input-group">
@@ -930,7 +936,11 @@ Best regards,
                     background: 'var(--surface-secondary)',
                     borderRadius: 'var(--radius-md)',
                     fontSize: '14px',
-                    lineHeight: '1.5'
+                    lineHeight: '1.5',
+                    maxHeight: '40vh',
+                    overflowY: 'auto',
+                    wordWrap: 'break-word',
+                    whiteSpace: 'pre-wrap'
                   }}>
                     {questionAnswer}
                   </div>
@@ -942,20 +952,41 @@ Best regards,
                   <h5 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>
                     📚 Recent Questions ({questionHistory.length})
                   </h5>
-                  <div className="question-history-list">
-                    {questionHistory.slice(-5).reverse().map((item, index) => (
+                  <div 
+                    className="question-history-list"
+                    style={{
+                      maxHeight: questionHistory.length > 3 ? '40vh' : 'auto'
+                    }}
+                  >
+                    {questionHistory.slice(-10).reverse().map((item, index) => (
                       <div key={index} style={{
                         padding: '8px',
                         background: 'var(--surface-tertiary)',
                         borderRadius: 'var(--radius-sm)',
                         marginBottom: '8px',
-                        fontSize: '12px'
-                      }}>
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        transition: 'background-color var(--transition-fast)'
+                      }}
+                      onClick={() => {
+                        setUserQuestion(item.question)
+                        setQuestionAnswer(item.answer)
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = 'var(--surface-secondary)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'var(--surface-tertiary)'
+                      }}
+                      >
                         <div style={{ fontWeight: '500', marginBottom: '4px' }}>
                           Q: {item.question}
                         </div>
                         <div style={{ color: 'var(--text-secondary)' }}>
                           A: {item.answer.length > 150 ? `${item.answer.substring(0, 150)}...` : item.answer}
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+                          {new Date(item.timestamp).toLocaleTimeString()} • Click to reuse
                         </div>
                       </div>
                     ))}

@@ -68,6 +68,30 @@ interface ChunkedRecordingAPI {
   loadChunks: (chunkPaths: string[]) => Promise<{ success: boolean; chunks?: ArrayBuffer[]; error?: string }>
 }
 
+interface GeminiAPI {
+  generateContent: (options: any) => Promise<{ success: boolean; data?: any; error?: string }>
+  generateSummary: (options: any) => Promise<{ success: boolean; summary?: string; error?: string }>
+  generateMessage: (options: any) => Promise<{ success: boolean; message?: string; error?: string }>
+  generateFollowupQuestions: (options: any) => Promise<{ success: boolean; data?: any; error?: string }>
+  askQuestion: (options: any) => Promise<{ success: boolean; answer?: string; error?: string }>
+}
+
+interface AlertsAPI {
+  checkKeywords: (options: { transcript: string; keywords: any[] }) => Promise<{ success: boolean; matches?: any[]; error?: string }>
+}
+
+interface SystemAPI {
+  getShortcuts: () => Promise<Record<string, string>>
+  updateShortcuts: (shortcuts: Record<string, string>) => Promise<boolean>
+  toggleMenuBar: (show: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
+}
+
+interface AudioAPI {
+  getCurrentDevice: () => Promise<{ success: boolean; deviceName?: string; isBluetooth?: boolean; availableDevices?: string[]; error?: string }>
+  switchToBuiltInSpeakers: () => Promise<{ success: boolean; message?: string; error?: string }>
+  enableBluetoothWorkaround: () => Promise<{ success: boolean; message?: string; error?: string }>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -76,28 +100,14 @@ declare global {
       transcription: TranscriptionAPI
       swiftRecorder: SwiftRecorderAPI
       chunkedRecording: ChunkedRecordingAPI
-      gemini: {
-        generateSummaryOnly: (input: {
-          transcript: string
-          context: string
-          meetingContext: string
-          notes: string
-          title: string
-        }) => Promise<{ success: boolean; summary?: string; error?: string }>
-        generateMeetingContent: (input: {
-          transcript: string
-          context: string
-          meetingContext: string
-          notes: string
-          title: string
-        }) => Promise<{
-          success: boolean
-          summary?: string
-          description?: string
-          actionItems?: Array<{ id: number; text: string; completed: boolean }>
-          tags?: string[]
-          error?: string
-        }>
+      gemini: GeminiAPI
+      alerts: AlertsAPI
+      system: SystemAPI
+      audio: AudioAPI
+      electron: {
+        dialog: {
+          showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>
+        }
       }
     }
   }

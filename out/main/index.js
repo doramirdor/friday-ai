@@ -28,7 +28,7 @@ const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 const net__namespace = /* @__PURE__ */ _interopNamespaceDefault(net);
-const icon = path.join(__dirname, "../../resources/FridayLogoOnly.png");
+const icon = path.join(__dirname, "../../resources/icon.png");
 class DatabaseService {
   db = null;
   dbPath;
@@ -873,8 +873,8 @@ function createWindow() {
     height: 800,
     show: false,
     autoHideMenuBar: true,
-    icon,
-    // Use Friday logo for all platforms
+    icon: getAppIcon(),
+    // Use proper icon resolution function
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       sandbox: false,
@@ -896,6 +896,77 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+}
+function getAppIcon() {
+  console.log("🔍 Resolving app icon for platform:", process.platform);
+  if (process.platform === "darwin") {
+    const icnsPath = path__namespace.join(__dirname, "../../build/icon.icns");
+    console.log("🔍 Checking for macOS icon at:", icnsPath);
+    if (fs__namespace.existsSync(icnsPath)) {
+      console.log("✅ Using macOS .icns icon:", icnsPath);
+      return icnsPath;
+    }
+  } else if (process.platform === "win32") {
+    const icoPath = path__namespace.join(__dirname, "../../build/icon.ico");
+    console.log("🔍 Checking for Windows icon at:", icoPath);
+    if (fs__namespace.existsSync(icoPath)) {
+      console.log("✅ Using Windows .ico icon:", icoPath);
+      return icoPath;
+    }
+  }
+  const pngPath = path__namespace.join(__dirname, "../../build/icon.png");
+  console.log("🔍 Checking for PNG icon at:", pngPath);
+  if (fs__namespace.existsSync(pngPath)) {
+    console.log("✅ Using PNG icon:", pngPath);
+    return pngPath;
+  }
+  const resourcesPath = path__namespace.join(__dirname, "../../resources/FridayLogoOnly.png");
+  console.log("🔍 Checking for resources icon at:", resourcesPath);
+  if (fs__namespace.existsSync(resourcesPath)) {
+    console.log("✅ Using resources icon:", resourcesPath);
+    return resourcesPath;
+  }
+  console.log("⚠️ Using bundled fallback icon:", icon);
+  return icon;
+}
+function getTrayIcon() {
+  console.log("🔍 Resolving tray icon for platform:", process.platform);
+  if (process.platform === "darwin") {
+    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
+    console.log("🔍 Checking for macOS tray icon at:", trayIconPath);
+    if (fs__namespace.existsSync(trayIconPath)) {
+      console.log("✅ Using macOS tray icon:", trayIconPath);
+      return trayIconPath;
+    }
+    const fridayLogoPath = path__namespace.join(__dirname, "../../resources/FridayLogoOnly.png");
+    console.log("🔍 Checking for Friday logo at:", fridayLogoPath);
+    if (fs__namespace.existsSync(fridayLogoPath)) {
+      console.log("✅ Using Friday logo for tray:", fridayLogoPath);
+      return fridayLogoPath;
+    }
+    const smallIconPath = path__namespace.join(__dirname, "../../build/icon.png");
+    console.log("🔍 Checking for build icon at:", smallIconPath);
+    if (fs__namespace.existsSync(smallIconPath)) {
+      console.log("✅ Using build icon for tray:", smallIconPath);
+      return smallIconPath;
+    }
+  } else if (process.platform === "win32") {
+    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
+    if (fs__namespace.existsSync(trayIconPath)) {
+      return trayIconPath;
+    }
+    const buildIconPath = path__namespace.join(__dirname, "../../build/icon.png");
+    if (fs__namespace.existsSync(buildIconPath)) {
+      return buildIconPath;
+    }
+  } else {
+    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
+    if (fs__namespace.existsSync(trayIconPath)) {
+      return trayIconPath;
+    }
+  }
+  console.log("⚠️ Using bundled fallback icon for tray:", icon);
+  return icon;
 }
 async function checkSwiftRecorderAvailability() {
   return new Promise((resolve) => {
@@ -1794,7 +1865,12 @@ function unregisterGlobalShortcuts() {
 }
 function createTray() {
   try {
-    tray = new electron.Tray(icon);
+    const trayIconPath = getTrayIcon();
+    tray = new electron.Tray(trayIconPath);
+    if (process.platform === "darwin") {
+      tray.setIgnoreDoubleClickEvents(false);
+      console.log("🎨 Using regular tray icon for macOS (avoiding template mode)");
+    }
     tray.setToolTip("Friday - Meeting Recorder");
     const contextMenu = electron.Menu.buildFromTemplate([
       {
@@ -1840,7 +1916,7 @@ function createTray() {
         mainWindow.focus();
       }
     });
-    console.log("✅ System tray created");
+    console.log("✅ System tray created with icon:", trayIconPath);
   } catch (error) {
     console.error("❌ Failed to create system tray:", error);
   }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { MicIcon, ComputerIcon, AlertTriangleIcon, SettingsIcon, SpeakerIcon, BluetoothIcon } from 'lucide-react'
+import { MicIcon, AlertTriangleIcon, SettingsIcon, SpeakerIcon, BluetoothIcon } from 'lucide-react'
 
 interface RecordingInterfaceProps {
   transcriptionStatus: string

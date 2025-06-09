@@ -672,12 +672,6 @@ export const useRecordingService = ({
     recordedAudioBlob: recordedAudioBlobRef.current
   }), [])
 
-  // Force save transcript function for manual triggering
-  const forceTranscriptSave = useCallback(() => {
-    console.log('🔄 Force saving transcript with', transcriptRef.current.length, 'lines')
-    return transcriptRef.current
-  }, [])
-
   // Initialize service
   const initializeService = useCallback(async (): Promise<void> => {
     await initializeTranscription()

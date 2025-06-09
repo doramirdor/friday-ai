@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, Tray, Menu } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/FridayLogoOnly.png?asset'
+import icon from '../../resources/icon.png?asset'
 import { databaseService, Meeting, Settings } from './database'
 import { seedDatabase } from './seedData'
 import { spawn, ChildProcess } from 'child_process'
@@ -70,7 +70,7 @@ function createWindow(): void {
     height: 800,
     show: false,
     autoHideMenuBar: true,
-    icon: icon, // Use Friday logo for all platforms
+    icon: getAppIcon(), // Use proper icon resolution function
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -96,6 +96,103 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+}
+
+// Function to get appropriate app icon based on platform
+function getAppIcon(): string {
+  console.log('🔍 Resolving app icon for platform:', process.platform)
+  
+  if (process.platform === 'darwin') {
+    // On macOS, use .icns for the app
+    const icnsPath = path.join(__dirname, '../../build/icon.icns')
+    console.log('🔍 Checking for macOS icon at:', icnsPath)
+    if (fs.existsSync(icnsPath)) {
+      console.log('✅ Using macOS .icns icon:', icnsPath)
+      return icnsPath
+    }
+  } else if (process.platform === 'win32') {
+    // On Windows, use .ico for the app
+    const icoPath = path.join(__dirname, '../../build/icon.ico')
+    console.log('🔍 Checking for Windows icon at:', icoPath)
+    if (fs.existsSync(icoPath)) {
+      console.log('✅ Using Windows .ico icon:', icoPath)
+      return icoPath
+    }
+  }
+  
+  // Fallback to PNG for Linux or if platform-specific icons don't exist
+  const pngPath = path.join(__dirname, '../../build/icon.png')
+  console.log('🔍 Checking for PNG icon at:', pngPath)
+  if (fs.existsSync(pngPath)) {
+    console.log('✅ Using PNG icon:', pngPath)
+    return pngPath
+  }
+  
+  // Try resources directory as fallback
+  const resourcesPath = path.join(__dirname, '../../resources/FridayLogoOnly.png')
+  console.log('🔍 Checking for resources icon at:', resourcesPath)
+  if (fs.existsSync(resourcesPath)) {
+    console.log('✅ Using resources icon:', resourcesPath)
+    return resourcesPath
+  }
+  
+  // Final fallback to the bundled icon
+  console.log('⚠️ Using bundled fallback icon:', icon)
+  return icon
+}
+
+// Function to get appropriate tray icon based on platform
+function getTrayIcon(): string {
+  console.log('🔍 Resolving tray icon for platform:', process.platform)
+  
+  // Tray icons need to be smaller - typically 16x16 or 22x22 pixels
+  if (process.platform === 'darwin') {
+    // On macOS, don't use template for now - just use regular icon
+    const trayIconPath = path.join(__dirname, '../../resources/tray-icon.png')
+    console.log('🔍 Checking for macOS tray icon at:', trayIconPath)
+    if (fs.existsSync(trayIconPath)) {
+      console.log('✅ Using macOS tray icon:', trayIconPath)
+      return trayIconPath
+    }
+    
+    // Fallback: use the Friday logo directly, resized
+    const fridayLogoPath = path.join(__dirname, '../../resources/FridayLogoOnly.png')
+    console.log('🔍 Checking for Friday logo at:', fridayLogoPath)
+    if (fs.existsSync(fridayLogoPath)) {
+      console.log('✅ Using Friday logo for tray:', fridayLogoPath)
+      return fridayLogoPath
+    }
+    
+    // Final fallback: use the small build icon
+    const smallIconPath = path.join(__dirname, '../../build/icon.png')
+    console.log('🔍 Checking for build icon at:', smallIconPath)
+    if (fs.existsSync(smallIconPath)) {
+      console.log('✅ Using build icon for tray:', smallIconPath)
+      return smallIconPath
+    }
+  } else if (process.platform === 'win32') {
+    // On Windows, use a small version of the icon
+    const trayIconPath = path.join(__dirname, '../../resources/tray-icon.png')
+    if (fs.existsSync(trayIconPath)) {
+      return trayIconPath
+    }
+    
+    // Fallback to build icon
+    const buildIconPath = path.join(__dirname, '../../build/icon.png')
+    if (fs.existsSync(buildIconPath)) {
+      return buildIconPath
+    }
+  } else {
+    // Linux - use small PNG
+    const trayIconPath = path.join(__dirname, '../../resources/tray-icon.png')
+    if (fs.existsSync(trayIconPath)) {
+      return trayIconPath
+    }
+  }
+  
+  // Final fallback
+  console.log('⚠️ Using bundled fallback icon for tray:', icon)
+  return icon
 }
 
 // Check if Swift recorder is available
@@ -1309,8 +1406,16 @@ function unregisterGlobalShortcuts(): void {
 // Create system tray
 function createTray(): void {
   try {
-    // Create tray icon (use the same icon as the app)
-    tray = new Tray(icon)
+    // Create tray icon with appropriate size
+    const trayIconPath = getTrayIcon()
+    tray = new Tray(trayIconPath)
+    
+    // On macOS, configure tray behavior
+    if (process.platform === 'darwin') {
+      tray.setIgnoreDoubleClickEvents(false)
+      // Don't use template mode for now to avoid black square issue
+      console.log('🎨 Using regular tray icon for macOS (avoiding template mode)')
+    }
     
     // Set tooltip
     tray.setToolTip('Friday - Meeting Recorder')
@@ -1365,7 +1470,7 @@ function createTray(): void {
       }
     })
     
-    console.log('✅ System tray created')
+    console.log('✅ System tray created with icon:', trayIconPath)
   } catch (error) {
     console.error('❌ Failed to create system tray:', error)
   }

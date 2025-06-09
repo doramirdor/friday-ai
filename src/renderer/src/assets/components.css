@@ -1065,8 +1065,9 @@
   border-radius: var(--radius-md);
   background: var(--surface-tertiary);
   padding: var(--spacing-xs);
-  max-height: 300px;
   overflow-y: auto;
+  min-height: 60px;
+  max-height: 50vh;
 }
 
 .question-history-list::-webkit-scrollbar {

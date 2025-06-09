@@ -366,7 +366,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       if (state.isRecording || (wasRecording && !state.isRecording && state.transcript.length > 0)) {
         console.log('📝 Syncing transcript from recording service:', state.transcript.length, 'lines')
         setTranscript(state.transcript)
-                  } else {
+        
+        // Trigger auto-save when recording stops and we have new transcript data
+        if (wasRecording && !state.isRecording && state.transcript.length > 0) {
+          console.log('🔄 Recording stopped with transcript data, triggering auto-save')
+          setNeedsAutoSave(true)
+        }
+      } else {
         // console.log('📝 Preserving existing transcript, not syncing from recording service')
       }
       
@@ -384,6 +390,29 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     const interval = setInterval(updateState, 100)
     return () => clearInterval(interval)
   }, [recordingService, isRecording])
+
+  // Auto-save effect - enhanced for transcript data
+  useEffect(() => {
+    if (needsAutoSave && meeting?.id) {
+      console.log('🔄 Auto-save triggered with:', {
+        transcriptLength: transcript.length,
+        totalTime,
+        hasRecordedAudioBlob: !!recordedAudioBlob,
+        hasCombinedRecordingPath: !!combinedRecordingPath
+      })
+      setNeedsAutoSave(false)
+      handleSaveMeeting()
+    }
+  }, [needsAutoSave, meeting?.id, transcript.length, totalTime, recordedAudioBlob, combinedRecordingPath])
+
+  // Debug transcript changes
+  useEffect(() => {
+    console.log('📝 Transcript state updated:', {
+      length: transcript.length,
+      lastItem: transcript[transcript.length - 1],
+      meetingId: meeting?.id
+    })
+  }, [transcript, meeting?.id])
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -501,15 +530,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const handleAudioPlayerRef = (ref: HTMLAudioElement | null): void => {
     audioPlayerRef.current = ref
   }
-
-  // Auto-save effect
-  useEffect(() => {
-    if (needsAutoSave && meeting?.id && recordedAudioBlob && totalTime > 0) {
-      console.log('🔄 Auto-save triggered')
-      setNeedsAutoSave(false)
-      handleSaveMeeting()
-    }
-  }, [needsAutoSave, meeting?.id, recordedAudioBlob, totalTime])
 
   const handleSaveMeeting = async (): Promise<void> => {
     if (!meeting?.id) {

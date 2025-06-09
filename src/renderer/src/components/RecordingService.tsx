@@ -152,7 +152,11 @@ export const useRecordingService = ({
         text: result.text.trim()
       }
 
-      transcriptRef.current = [...transcriptRef.current, newLine]
+      const updatedTranscript = [...transcriptRef.current, newLine]
+      transcriptRef.current = updatedTranscript
+      
+      console.log('📝 Added transcript line:', newLine, 'Total lines:', updatedTranscript.length)
+      
       onTranscriptionResult(result)
     } else if (result.type === 'error') {
       console.error('Transcription error:', result.message)
@@ -551,6 +555,8 @@ export const useRecordingService = ({
   // Stop combined recording
   const stopCombinedRecording = useCallback(async (): Promise<void> => {
     try {
+      console.log('🛑 Stopping combined recording with transcript length:', transcriptRef.current.length)
+      
       const result = await (window.api as any).swiftRecorder.stopCombinedRecording()
 
       if (result.success) {
@@ -571,7 +577,7 @@ export const useRecordingService = ({
       audioStreamRef.current = null
     }
 
-    // Clean up common recording state
+    // Clean up common recording state but preserve transcript
     isCombinedRecordingRef.current = false
     transcriptionStatusRef.current = 'ready'
     onTranscriptionStatusChange('ready')
@@ -581,7 +587,7 @@ export const useRecordingService = ({
       recordingInterval.current = null
     }
 
-    console.log('✅ Combined recording cleanup completed. Duration:', formatTime(currentTimeRef.current))
+    console.log('✅ Combined recording cleanup completed. Duration:', formatTime(currentTimeRef.current), 'Transcript lines preserved:', transcriptRef.current.length)
   }, [formatTime, onTranscriptionStatusChange])
 
   // Stop microphone recording
@@ -659,6 +665,12 @@ export const useRecordingService = ({
     combinedRecordingPath: combinedRecordingPathRef.current,
     recordedAudioBlob: recordedAudioBlobRef.current
   }), [])
+
+  // Force save transcript function for manual triggering
+  const forceTranscriptSave = useCallback(() => {
+    console.log('🔄 Force saving transcript with', transcriptRef.current.length, 'lines')
+    return transcriptRef.current
+  }, [])
 
   // Initialize service
   const initializeService = useCallback(async (): Promise<void> => {

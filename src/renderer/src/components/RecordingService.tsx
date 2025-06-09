@@ -561,6 +561,12 @@ export const useRecordingService = ({
 
       if (result.success) {
         console.log('✅ Combined recording stopped successfully')
+        
+        // Set the recording path if available
+        if (result.path) {
+          console.log('📁 RecordingService: Setting combined recording path:', result.path)
+          combinedRecordingPathRef.current = result.path
+        }
       } else {
         console.error('Failed to stop combined recording:', result.error)
       }
@@ -577,7 +583,7 @@ export const useRecordingService = ({
       audioStreamRef.current = null
     }
 
-    // Clean up common recording state but preserve transcript
+    // Clean up common recording state but preserve transcript and recording path
     isCombinedRecordingRef.current = false
     transcriptionStatusRef.current = 'ready'
     onTranscriptionStatusChange('ready')
@@ -587,7 +593,7 @@ export const useRecordingService = ({
       recordingInterval.current = null
     }
 
-    console.log('✅ Combined recording cleanup completed. Duration:', formatTime(currentTimeRef.current), 'Transcript lines preserved:', transcriptRef.current.length)
+    console.log('✅ Combined recording cleanup completed. Duration:', formatTime(currentTimeRef.current), 'Transcript lines preserved:', transcriptRef.current.length, 'Recording path:', combinedRecordingPathRef.current)
   }, [formatTime, onTranscriptionStatusChange])
 
   // Stop microphone recording

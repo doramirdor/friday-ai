@@ -240,9 +240,16 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     setRecordingWarning(null)
 
       if (result.path) {
+        console.log('📁 Setting combined recording path from result:', result.path)
         setCombinedRecordingPath(result.path)
         console.log('📁 Stored combined recording path:', result.path)
         loadRecording(result.path)
+        
+        // Force auto-save trigger since we have a new recording path
+        console.log('🔄 Forcing auto-save due to new recording path')
+        setTimeout(() => setNeedsAutoSave(true), 500)
+      } else {
+        console.warn('⚠️ No recording path in combined recording result:', result)
       }
   }, [loadRecording])
 

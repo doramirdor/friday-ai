@@ -841,7 +841,8 @@ function createWindow() {
     height: 800,
     show: false,
     autoHideMenuBar: true,
-    ...process.platform === "linux" ? { icon } : {},
+    icon,
+    // Use Friday logo for all platforms
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       sandbox: false,

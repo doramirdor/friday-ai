@@ -46,6 +46,21 @@ interface RecordingResult {
   screen_permission?: boolean
 }
 
+interface EnhancedAIOptions {
+  type: 'slack' | 'email'
+  title?: string
+  description?: string
+  contextText?: string
+  notes?: string
+  summary?: string
+  transcript?: TranscriptLine[]
+  actionItems?: Array<{ id: number; text: string; completed: boolean }>
+  questionHistory?: Array<any>
+  followupQuestions?: Array<any>
+  followupRisks?: Array<any>
+  followupComments?: Array<any>
+}
+
 const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -97,9 +112,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     try {
       console.log('🔄 Loading recording file via IPC...')
 
-      const result = await (window.api as any).transcription.loadRecording(filePath)
+      const result = await (window.api as any).transcription?.loadRecording(filePath)
 
-      if (result.success && result.buffer) {
+      if (result?.success && result.buffer) {
         const isMP3 = filePath.toLowerCase().endsWith('.mp3')
         const mimeType = isMP3 ? 'audio/mpeg' : 'audio/webm'
 
@@ -108,7 +123,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         setRecordedAudioUrl(audioUrl)
         console.log(`✅ Recording loaded for playback via IPC (${mimeType})`)
       } else {
-        console.error('Failed to load recording file:', result.error)
+        console.error('Failed to load recording file:', result?.error || 'No transcription API available')
       }
     } catch (error) {
       console.error('Failed to load existing recording:', error)
@@ -136,12 +151,12 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     if (enabledKeywords.length === 0) return
 
     try {
-      const result = await window.api.alerts.checkKeywords({
+      const result = await (window.api as any).alerts?.checkKeywords({
         transcript: transcriptText,
         keywords: enabledKeywords
       })
 
-      if (result.success && result.matches && result.matches.length > 0) {
+      if (result?.success && result.matches && result.matches.length > 0) {
         // Show visual alert for the first match
         if (result.matches.length > 0) {
           setCurrentAlert(result.matches[0])
@@ -155,7 +170,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         }
         
         // Log alerts
-        result.matches.forEach(match => {
+        result.matches.forEach((match: any) => {
           console.log(`🚨 ALERT: Keyword "${match.keyword}" detected (${(match.similarity * 100).toFixed(1)}% match)`)
           console.log(`   Text: "${match.text}"`)
         })
@@ -357,62 +372,85 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     const updateState = (): void => {
       const state = recordingService.getState()
       const wasRecording = isRecording
+      const previousTranscriptLength = transcript.length
+      const previousCombinedPath = combinedRecordingPath
+      
       setIsRecording(state.isRecording)
       setCurrentTime(state.currentTime)
       
-      // Sync transcript in these cases:
-      // 1. When actively recording (live updates)
-      // 2. When recording just stopped and we have new transcript data
-      if (state.isRecording || (wasRecording && !state.isRecording && state.transcript.length > 0)) {
-        console.log('📝 Syncing transcript from recording service:', state.transcript.length, 'lines')
+      // Always sync transcript from recording service if it has more data
+      if (state.transcript.length > transcript.length) {
+        console.log('📝 Syncing transcript from recording service:', state.transcript.length, 'lines (previous:', transcript.length, ')')
         setTranscript(state.transcript)
-        
-        // Trigger auto-save when recording stops and we have new transcript data
-        if (wasRecording && !state.isRecording && state.transcript.length > 0) {
-          console.log('🔄 Recording stopped with transcript data, triggering auto-save')
-          setNeedsAutoSave(true)
-        }
-      } else {
-        // console.log('📝 Preserving existing transcript, not syncing from recording service')
       }
       
+      // Sync other state
       setLiveText(state.liveText)
       setRecordingWarning(state.recordingWarning)
-      setCombinedRecordingPath(state.combinedRecordingPath)
+      
+      // Update combined recording path
+      if (state.combinedRecordingPath && state.combinedRecordingPath !== combinedRecordingPath) {
+        console.log('📁 New combined recording path:', state.combinedRecordingPath)
+        setCombinedRecordingPath(state.combinedRecordingPath)
+      }
+      
       setRecordedAudioBlob(state.recordedAudioBlob)
       
       // Set total time when recording stops
       if (!state.isRecording && state.currentTime > 0) {
         setTotalTime(Math.max(state.currentTime, 1))
       }
+      
+      // Trigger auto-save when any of these conditions are met:
+      // 1. Recording just stopped AND we have transcript data
+      // 2. Recording just stopped AND we have a new recording path
+      // 3. Recording just stopped AND we have recorded audio
+      const recordingJustStopped = wasRecording && !state.isRecording
+      const hasNewTranscript = state.transcript.length > previousTranscriptLength
+      const hasNewRecordingPath = state.combinedRecordingPath && state.combinedRecordingPath !== previousCombinedPath
+      const hasRecordedAudio = !!state.recordedAudioBlob
+      
+      if (recordingJustStopped && (hasNewTranscript || hasNewRecordingPath || hasRecordedAudio || state.currentTime > 0)) {
+        console.log('🔄 Recording stopped, triggering auto-save with:', {
+          transcriptLength: state.transcript.length,
+          hasNewTranscript,
+          hasNewRecordingPath,
+          hasRecordedAudio,
+          currentTime: state.currentTime,
+          combinedPath: state.combinedRecordingPath
+        })
+        setNeedsAutoSave(true)
+      }
     }
 
     const interval = setInterval(updateState, 100)
     return () => clearInterval(interval)
-  }, [recordingService, isRecording])
+  }, [recordingService, isRecording, transcript.length, combinedRecordingPath])
 
-  // Auto-save effect - enhanced for transcript data
+  // Auto-save effect - enhanced for better reliability
   useEffect(() => {
     if (needsAutoSave && meeting?.id) {
-      console.log('🔄 Auto-save triggered with:', {
+      console.log('🔄 Auto-save triggered with meeting ID:', meeting.id, {
         transcriptLength: transcript.length,
         totalTime,
         hasRecordedAudioBlob: !!recordedAudioBlob,
-        hasCombinedRecordingPath: !!combinedRecordingPath
+        hasCombinedRecordingPath: !!combinedRecordingPath,
+        combinedRecordingPath
       })
       setNeedsAutoSave(false)
       handleSaveMeeting()
     }
-  }, [needsAutoSave, meeting?.id, transcript.length, totalTime, recordedAudioBlob, combinedRecordingPath])
+  }, [needsAutoSave, meeting?.id, transcript, totalTime, recordedAudioBlob, combinedRecordingPath])
 
-  // Debug transcript changes
+  // Enhanced debug logging for transcript changes
   useEffect(() => {
     console.log('📝 Transcript state updated:', {
       length: transcript.length,
       lastItem: transcript[transcript.length - 1],
-      meetingId: meeting?.id
+      meetingId: meeting?.id,
+      savingMeeting
     })
-  }, [transcript, meeting?.id])
+  }, [transcript, meeting?.id, savingMeeting])
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -544,28 +582,38 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
     try {
       setSavingMeeting(true)
-      console.log('💾 Saving meeting data...')
+      console.log('💾 Saving meeting data...', {
+        meetingId: meeting.id,
+        transcriptLength: transcript.length,
+        currentCombinedPath: combinedRecordingPath,
+        existingRecordingPath: meeting.recordingPath,
+        hasRecordedAudioBlob: !!recordedAudioBlob,
+        totalTime
+      })
 
       let recordingPath = meeting.recordingPath || ''
 
+      // Priority 1: Use combined recording path if available (most recent)
       if (combinedRecordingPath) {
         recordingPath = combinedRecordingPath
         console.log('📁 Using combined recording path:', recordingPath)
-      } else if (recordedAudioBlob && !recordingPath) {
+      } 
+      // Priority 2: Save new audio blob if no existing path
+      else if (recordedAudioBlob && !recordingPath) {
         console.log('💾 Saving new audio recording...')
         try {
           const arrayBuffer = await recordedAudioBlob.arrayBuffer()
-          const result = await window.api.transcription.saveRecording(
+          const result = await (window.api as any).transcription?.saveRecording(
             arrayBuffer,
             meeting.id
           )
 
-          if (result.success && result.filePath) {
+          if (result?.success && result.filePath) {
             recordingPath = result.filePath
             console.log('✅ Audio recording saved to:', recordingPath)
             await loadRecording(recordingPath)
           } else {
-            console.error('Failed to save audio recording:', result.error)
+            console.error('Failed to save audio recording:', result?.error || 'No transcription API available')
           }
         } catch (error) {
           console.error('Error saving audio recording:', error)
@@ -579,16 +627,30 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         context: contextText,
         context_files: uploadedFiles.slice(0, 5),
         actionItems,
-        transcript,
+        transcript, // Ensure transcript is included
         duration: formatTime(totalTime),
-        recordingPath,
+        recordingPath, // Ensure recording path is included
         notes,
         summary,
         updatedAt: new Date().toISOString()
       }
 
+      console.log('💾 Saving meeting data:', {
+        transcriptLines: updatedMeetingData.transcript?.length || 0,
+        recordingPath: updatedMeetingData.recordingPath,
+        duration: updatedMeetingData.duration,
+        title: updatedMeetingData.title
+      })
+
       await window.api.db.updateMeeting(meeting.id, updatedMeetingData)
       console.log('✅ Meeting data saved successfully')
+      
+      // Verify the save by logging the key data
+      console.log('✅ Saved meeting with:', {
+        transcriptLines: transcript.length,
+        recordingPath,
+        duration: formatTime(totalTime)
+      })
     } catch (error) {
       console.error('Error saving meeting data:', error)
     } finally {
@@ -691,7 +753,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
   }
 
-  const generateAIMessage = async (type: 'slack' | 'email', enhancedOptions?: any): Promise<string | void> => {
+  const generateAIMessage = async (type: 'slack' | 'email', enhancedOptions?: EnhancedAIOptions): Promise<string | void> => {
     if (!meeting?.id) {
       alert('No meeting data available for AI generation')
       return
@@ -713,7 +775,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
           description: enhancedOptions.description || '',
           notes: enhancedOptions.notes || '',
           summary: enhancedOptions.summary || '',
-          transcript: enhancedOptions.transcript?.map((line: any) => `[${line.time}] ${line.text}`).join('\n') || '',
+          transcript: enhancedOptions.transcript?.map((line: TranscriptLine) => `[${line.time}] ${line.text}`).join('\n') || '',
           actionItems: enhancedOptions.actionItems || [],
           questionHistory: enhancedOptions.questionHistory || [],
           followupQuestions: enhancedOptions.followupQuestions || [],
@@ -733,18 +795,18 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         }
       }
 
-      const result = await window.api.gemini.generateMessage({
+      const result = await (window.api as any).gemini?.generateMessage({
         type,
         data: selectedData,
         model: 'gemini-2.5-pro-preview-06-05'
       })
       
-      if (result.success && result.message) {
+      if (result?.success && result.message) {
         console.log(`✅ ${type} message generated successfully`)
         return result.message
       } else {
-        console.error(`Failed to generate ${type} message:`, result.error)
-        alert(`Failed to generate ${type} message: ${result.error}`)
+        console.error(`Failed to generate ${type} message:`, result?.error || 'No Gemini API available')
+        alert(`Failed to generate ${type} message: ${result?.error || 'No Gemini API available'}`)
       }
     } catch (error) {
       console.error(`Error generating ${type} message:`, error)

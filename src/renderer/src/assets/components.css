@@ -1199,3 +1199,32 @@
 .ai-message-editor-container::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }
+
+/* Bluetooth Device Manager Styles */
+.bluetooth-warning {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  box-shadow: 0 2px 4px rgba(245, 158, 11, 0.1);
+}
+
+.device-option-btn {
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.device-option-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.device-option-btn:active {
+  transform: translateY(0);
+}
+
+/* Recording Interface Styles */
+.recording-interface {
+  padding: 20px;
+}

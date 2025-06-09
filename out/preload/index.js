@@ -100,6 +100,12 @@ const api = {
     dialog: {
       showOpenDialog: (options) => electron.ipcRenderer.invoke("dialog:showOpenDialog", options)
     }
+  },
+  audio: {
+    // Audio device management
+    getCurrentDevice: () => electron.ipcRenderer.invoke("audio-get-current-device"),
+    switchToBuiltInSpeakers: () => electron.ipcRenderer.invoke("audio-switch-to-built-in"),
+    enableBluetoothWorkaround: () => electron.ipcRenderer.invoke("audio-enable-bluetooth-workaround")
   }
 };
 if (process.contextIsolated) {

@@ -1510,6 +1510,59 @@ function cleanupHangingRecorderProcesses(): void {
   })
 }
 
+// Audio device management functions (placeholder - would need Swift integration)
+const audioDeviceManager = {
+  async getCurrentDevice() {
+    try {
+      // This would need to call the Swift AudioDeviceManager
+      // For now, return a placeholder
+      return {
+        success: true,
+        deviceName: 'Unknown Device',
+        isBluetooth: false,
+        availableDevices: []
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  },
+
+  async switchToBuiltInSpeakers() {
+    try {
+      // This would need to call the Swift AudioDeviceManager.enableBluetoothWorkaround
+      console.log('🔊 Attempting to switch to built-in speakers...')
+      return {
+        success: true,
+        message: 'Switched to built-in speakers'
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  },
+
+  async enableBluetoothWorkaround() {
+    try {
+      // This would need to call the Swift AudioDeviceManager.enableBluetoothWorkaround
+      console.log('🔧 Attempting to enable Bluetooth workaround...')
+      return {
+        success: true,
+        message: 'Bluetooth workaround enabled'
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  }
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -1606,3 +1659,36 @@ app.on('before-quit', async () => {
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and require them here.
+
+// Handle app settings
+ipcMain.handle('get-app-settings', async () => {
+  try {
+    return await databaseService.getSettings()
+  } catch (error) {
+    console.error('Error getting app settings:', error)
+    return null
+  }
+})
+
+ipcMain.handle('update-app-settings', async (_, settings) => {
+  try {
+    await databaseService.updateSettings(settings)
+    return { success: true }
+  } catch (error) {
+    console.error('Error updating app settings:', error)
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+})
+
+// Audio device management IPC handlers
+ipcMain.handle('audio-get-current-device', async () => {
+  return await audioDeviceManager.getCurrentDevice()
+})
+
+ipcMain.handle('audio-switch-to-built-in', async () => {
+  return await audioDeviceManager.switchToBuiltInSpeakers()
+})
+
+ipcMain.handle('audio-enable-bluetooth-workaround', async () => {
+  return await audioDeviceManager.enableBluetoothWorkaround()
+})

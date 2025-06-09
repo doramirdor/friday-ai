@@ -137,6 +137,13 @@ const api = {
       showOpenDialog: (options: Electron.OpenDialogOptions) => 
         ipcRenderer.invoke('dialog:showOpenDialog', options)
     }
+  },
+
+  audio: {
+    // Audio device management
+    getCurrentDevice: () => ipcRenderer.invoke('audio-get-current-device'),
+    switchToBuiltInSpeakers: () => ipcRenderer.invoke('audio-switch-to-built-in'),
+    enableBluetoothWorkaround: () => ipcRenderer.invoke('audio-enable-bluetooth-workaround')
   }
 }
 

@@ -201,7 +201,8 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       
       if (result.code === 'BLUETOOTH_LIMITATION') {
         console.warn('⚠️ Bluetooth audio detected:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
+        const bluetoothWarning = `⚠️ ${result.warning}\n💡 ${result.recommendation}\n\n🔧 **Quick Fix Options:**\n1. Switch to built-in speakers for full system audio capture\n2. Continue with microphone-only recording\n3. Try the automatic Bluetooth workaround (if available)`
+        setRecordingWarning(bluetoothWarning)
         setTranscriptionStatus('recording-mic-only')
       } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
         console.warn('⚠️ Screen recording permission required:', result.warning)

@@ -226,10 +226,48 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   const handleGenerateAIMessage = async (type: 'slack' | 'email'): Promise<void> => {
     onSetGeneratingMessage(true)
     try {
+      console.log('🚀 Starting AI message generation...', { type, hasCallback: !!onGenerateAIMessage })
+      
+      if (!onGenerateAIMessage) {
+        console.error('❌ onGenerateAIMessage callback not provided')
+        setGeneratedMessage(`**Error**: AI message generation not configured properly. Please check the parent component.`)
+        return
+      }
+      
       const result = await onGenerateAIMessage(type)
       if (result) {
+        console.log('✅ AI message generated successfully')
         setGeneratedMessage(result)
+      } else {
+        console.log('⚠️ No result returned from AI message generation')
+        setGeneratedMessage(`**Demo ${type === 'slack' ? 'Slack' : 'Email'} Message**
+
+Hi team,
+
+I wanted to share a quick update from our meeting:
+
+**Key Points:**
+- ${title || 'Meeting discussion'}
+- ${description || 'Various topics covered'}
+
+**Action Items:**
+${actionItems.length > 0 ? actionItems.map(item => `- ${item.text}`).join('\n') : '- Follow up on discussed items'}
+
+**Next Steps:**
+- Review meeting notes
+- Complete assigned tasks
+
+Let me know if you have any questions!
+
+Best regards,
+[Your name]
+
+---
+*This is a demo message. Configure AI message generation for full functionality.*`)
       }
+    } catch (error) {
+      console.error('❌ Error generating AI message:', error)
+      setGeneratedMessage(`**Error**: Failed to generate message. ${error instanceof Error ? error.message : 'Unknown error occurred'}`)
     } finally {
       onSetGeneratingMessage(false)
     }
@@ -900,15 +938,36 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
               </div>
 
               {/* Generate Button */}
-              <div className="input-group">
+              <div className="input-group" style={{ marginTop: '16px' }}>
                 <button
                   className="btn btn-primary w-full"
-                  onClick={() => handleGenerateAIMessage(messageType)}
+                  onClick={() => {
+                    console.log('🚀 AI Message Generator button clicked!', { messageType, isGeneratingMessage })
+                    handleGenerateAIMessage(messageType)
+                  }}
                   disabled={isGeneratingMessage}
+                  style={{ 
+                    padding: '12px 16px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    minHeight: '44px'
+                  }}
                 >
                   <SparklesIcon size={16} />
-                  {isGeneratingMessage ? 'Generating...' : `Generate ${messageType === 'slack' ? 'Slack' : 'Email'} Message`}
+                  {isGeneratingMessage ? (
+                    <>✨ Generating {messageType === 'slack' ? 'Slack' : 'Email'} Message...</>
+                  ) : (
+                    <>🚀 Generate {messageType === 'slack' ? 'Slack' : 'Email'} Message</>
+                  )}
                 </button>
+                <div style={{ 
+                  marginTop: '8px', 
+                  fontSize: '12px', 
+                  color: 'var(--text-secondary)',
+                  textAlign: 'center'
+                }}>
+                  Click to generate a professional {messageType === 'slack' ? 'Slack message' : 'email'} using AI
+                </div>
               </div>
 
               {/* Generated Message Output */}

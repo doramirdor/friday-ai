@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react'
 import {
+  SaveIcon,
+  CheckIcon,
   FolderIcon,
-  MicIcon,
   DownloadIcon,
   ExternalLinkIcon,
   HelpCircleIcon,
-  Edit2Icon,
-  FileTextIcon,
-  SaveIcon,
-  CheckIcon
+  FileTextIcon
 } from 'lucide-react'
 import { Settings } from '../types/database'
+import FridayLogo from '../assets/FridayLogoOnly.png'
 
 type TabType = 'general' | 'shortcuts' | 'transcription' | 'context' | 'about'
 
@@ -245,6 +244,21 @@ const SettingsScreen: React.FC = () => {
     }
   }
 
+  // Handle Privacy Policy
+  const handleViewPrivacyPolicy = (): void => {
+    window.open('https://friday-app.com/privacy', '_blank')
+  }
+
+  // Handle Terms of Service
+  const handleViewTerms = (): void => {
+    window.open('https://friday-app.com/terms', '_blank')
+  }
+
+  // Handle Contact Support
+  const handleContactSupport = (): void => {
+    window.open('mailto:support@friday-app.com?subject=Friday Support Request', '_blank')
+  }
+
   // Apply settings in real-time (for toggles that should work immediately)
   useEffect(() => {
     if (!settings) return
@@ -432,13 +446,13 @@ const SettingsScreen: React.FC = () => {
                               {index < formatShortcutDisplay(shortcut).split(' + ').length - 1 && ' + '}
                             </React.Fragment>
                           ))}
-                          <button 
+                          {/* <button 
                             className="btn btn-ghost btn-sm"
                             onClick={() => startEditingShortcut(key)}
                           >
                             <Edit2Icon size={14} />
                             Change
-                          </button>
+                          </button> */}
                         </div>
                       )}
                     </div>
@@ -747,7 +761,8 @@ const SettingsScreen: React.FC = () => {
                     justifyContent: 'center'
                   }}
                 >
-                  <MicIcon size={40} color="white" />
+                  {/* <MicIcon size={40} color="white" /> */}
+                  <img src={FridayLogo} alt="Friday" style={{ width: '40px', height: '40px' }} />
                 </div>
                 <h2 style={{ margin: '0 0 var(--spacing-sm) 0' }}>Friday</h2>
                 <p className="text-secondary">Version 1.0.0 (Build 2024.01.15)</p>
@@ -773,7 +788,7 @@ const SettingsScreen: React.FC = () => {
                     <p>Learn how we protect your data</p>
                   </div>
                   <div className="settings-control">
-                    <button className="btn btn-ghost">
+                    <button className="btn btn-ghost" onClick={handleViewPrivacyPolicy}>
                       <ExternalLinkIcon size={16} />
                       View Policy
                     </button>
@@ -786,7 +801,7 @@ const SettingsScreen: React.FC = () => {
                     <p>Review our terms and conditions</p>
                   </div>
                   <div className="settings-control">
-                    <button className="btn btn-ghost">
+                    <button className="btn btn-ghost" onClick={handleViewTerms}>
                       <ExternalLinkIcon size={16} />
                       View Terms
                     </button>
@@ -799,7 +814,7 @@ const SettingsScreen: React.FC = () => {
                     <p>Get help and send feedback</p>
                   </div>
                   <div className="settings-control">
-                    <button className="btn btn-ghost">
+                    <button className="btn btn-ghost" onClick={handleContactSupport}>
                       <HelpCircleIcon size={16} />
                       Contact Support
                     </button>
@@ -818,7 +833,7 @@ const SettingsScreen: React.FC = () => {
                   textAlign: 'center'
                 }}
               >
-                © 2024 Friday. All rights reserved.
+                © 2025 Friday. All rights reserved.
               </div>
             </div>
           </div>
@@ -830,79 +845,81 @@ const SettingsScreen: React.FC = () => {
   }
 
   return (
-    <div className="library-container">
-      {/* Header */}
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        marginBottom: 'var(--spacing-lg)' 
-      }}>
-        <h2 style={{ 
-          margin: 0,
-          fontSize: 'var(--font-size-xl)',
-          fontWeight: 'var(--font-weight-semibold)'
+    <div className="library-container" style={{ display: 'flex', justifyContent: 'center' }}>
+      <div style={{ maxWidth: '800px', width: '100%' }}>
+        {/* Header */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'space-between', 
+          marginBottom: 'var(--spacing-lg)' 
         }}>
-          Settings
-        </h2>
-        <button
-          className="btn btn-primary"
-          onClick={handleSaveSettings}
-          disabled={saving}
-        >
-          {saving ? (
-            'Saving...'
-          ) : saveSuccess ? (
-            <>
-              <CheckIcon size={16} />
-              Saved
-            </>
-          ) : (
-            <>
-              <SaveIcon size={16} />
-              Save Settings
-            </>
-          )}
-        </button>
-      </div>
+          <h2 style={{ 
+            margin: 0,
+            fontSize: 'var(--font-size-xl)',
+            fontWeight: 'var(--font-weight-semibold)'
+          }}>
+            Settings
+          </h2>
+          <button
+            className="btn btn-primary"
+            onClick={handleSaveSettings}
+            disabled={saving}
+          >
+            {saving ? (
+              'Saving...'
+            ) : saveSuccess ? (
+              <>
+                <CheckIcon size={16} />
+                Saved
+              </>
+            ) : (
+              <>
+                <SaveIcon size={16} />
+                Save Settings
+              </>
+            )}
+          </button>
+        </div>
 
-      {/* Tab Navigation */}
-      <div className="tabs" style={{ marginBottom: 'var(--spacing-lg)' }}>
-        <button
-          className={`tab ${activeTab === 'general' ? 'active' : ''}`}
-          onClick={() => setActiveTab('general')}
-        >
-          General
-        </button>
-        <button
-          className={`tab ${activeTab === 'shortcuts' ? 'active' : ''}`}
-          onClick={() => setActiveTab('shortcuts')}
-        >
-          Shortcuts
-        </button>
-        <button
-          className={`tab ${activeTab === 'transcription' ? 'active' : ''}`}
-          onClick={() => setActiveTab('transcription')}
-        >
-          Transcription
-        </button>
-        <button
-          className={`tab ${activeTab === 'context' ? 'active' : ''}`}
-          onClick={() => setActiveTab('context')}
-        >
-          Context
-        </button>
-        <button
-          className={`tab ${activeTab === 'about' ? 'active' : ''}`}
-          onClick={() => setActiveTab('about')}
-        >
-          About
-        </button>
-      </div>
+        {/* Tab Navigation */}
+        <div className="tabs" style={{ marginBottom: 'var(--spacing-lg)' }}>
+          <button
+            className={`tab ${activeTab === 'general' ? 'active' : ''}`}
+            onClick={() => setActiveTab('general')}
+          >
+            General
+          </button>
+          <button
+            className={`tab ${activeTab === 'shortcuts' ? 'active' : ''}`}
+            onClick={() => setActiveTab('shortcuts')}
+          >
+            Shortcuts
+          </button>
+          <button
+            className={`tab ${activeTab === 'transcription' ? 'active' : ''}`}
+            onClick={() => setActiveTab('transcription')}
+          >
+            Transcription
+          </button>
+          <button
+            className={`tab ${activeTab === 'context' ? 'active' : ''}`}
+            onClick={() => setActiveTab('context')}
+          >
+            Context
+          </button>
+          <button
+            className={`tab ${activeTab === 'about' ? 'active' : ''}`}
+            onClick={() => setActiveTab('about')}
+          >
+            About
+          </button>
+        </div>
 
-      {/* Tab Content */}
-      <div style={{ maxWidth: '800px' }}>
-        {renderTabContent()}
+        {/* Tab Content */}
+        <div>
+          {renderTabContent()}
+        </div>
       </div>
     </div>
   )

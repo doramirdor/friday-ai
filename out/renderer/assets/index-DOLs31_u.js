@@ -90102,7 +90102,7 @@ const SettingsScreen = () => {
                   color: "var(--text-secondary)",
                   textAlign: "center"
                 },
-                children: "© 2024 Friday. All rights reserved."
+                children: "© 2025 Friday. All rights reserved."
               }
             )
           ] })

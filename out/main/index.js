@@ -28,7 +28,7 @@ const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 const net__namespace = /* @__PURE__ */ _interopNamespaceDefault(net);
-const icon = path.join(__dirname, "../../resources/icon.png");
+const icon = path.join(__dirname, "../../resources/FridayLogoOnly.png");
 class DatabaseService {
   db = null;
   dbPath;
@@ -821,10 +821,16 @@ let actualTranscriptionPort = 9001;
 let swiftRecorderProcess = null;
 let isSwiftRecorderAvailable = false;
 const currentShortcuts = {
-  "toggle-recording": "CmdOrCtrl+L",
-  "quick-note": "CmdOrCtrl+Shift+N",
-  "show-hide": "CmdOrCtrl+Shift+F",
-  "pause-resume": "CmdOrCtrl+P"
+  "toggle-recording": "CmdOrCtrl+Alt+R",
+  "quick-note": "CmdOrCtrl+Alt+N",
+  "show-hide": "CmdOrCtrl+Shift+H",
+  "pause-resume": "CmdOrCtrl+Alt+P"
+};
+const fallbackShortcuts = {
+  "toggle-recording": ["CmdOrCtrl+L", "CmdOrCtrl+Shift+R", "F9"],
+  "quick-note": ["CmdOrCtrl+Shift+N", "CmdOrCtrl+Alt+Q", "F10"],
+  "show-hide": ["CmdOrCtrl+Alt+H", "CmdOrCtrl+Shift+H", "F11"],
+  "pause-resume": ["CmdOrCtrl+P", "CmdOrCtrl+Shift+P", "F8"]
 };
 const activeChunkedRecordings = /* @__PURE__ */ new Map();
 const CHUNK_DURATION_MS = 5 * 60 * 1e3;
@@ -1682,19 +1688,46 @@ electron.ipcMain.handle("dialog:showOpenDialog", async (_, options) => {
 });
 function registerGlobalShortcuts() {
   electron.globalShortcut.unregisterAll();
-  electron.globalShortcut.register(currentShortcuts["toggle-recording"], () => {
+  const registrationResults = [];
+  const tryRegisterShortcut = (key, handler) => {
+    const primaryShortcut = currentShortcuts[key];
+    try {
+      if (electron.globalShortcut.register(primaryShortcut, handler)) {
+        registrationResults.push({ key, shortcut: primaryShortcut, success: true });
+        return;
+      }
+    } catch (error) {
+      console.log(`❌ Primary shortcut ${primaryShortcut} failed for ${key}:`, error);
+    }
+    const fallbacks = fallbackShortcuts[key] || [];
+    for (const fallbackShortcut of fallbacks) {
+      try {
+        if (electron.globalShortcut.register(fallbackShortcut, handler)) {
+          console.log(`✅ Using fallback shortcut ${fallbackShortcut} for ${key}`);
+          currentShortcuts[key] = fallbackShortcut;
+          registrationResults.push({ key, shortcut: fallbackShortcut, success: true });
+          return;
+        }
+      } catch (error) {
+        console.log(`❌ Fallback shortcut ${fallbackShortcut} failed for ${key}:`, error);
+      }
+    }
+    console.log(`❌ All shortcuts failed for ${key}, disabling shortcut`);
+    registrationResults.push({ key, shortcut: primaryShortcut, success: false });
+  };
+  tryRegisterShortcut("toggle-recording", () => {
     console.log("🎙️ Global shortcut: Start/Stop Recording");
     if (mainWindow) {
       mainWindow.webContents.send("shortcut:toggle-recording");
     }
   });
-  electron.globalShortcut.register(currentShortcuts["quick-note"], () => {
+  tryRegisterShortcut("quick-note", () => {
     console.log("📝 Global shortcut: Quick Note");
     if (mainWindow) {
       mainWindow.webContents.send("shortcut:quick-note");
     }
   });
-  electron.globalShortcut.register(currentShortcuts["show-hide"], () => {
+  tryRegisterShortcut("show-hide", () => {
     console.log("👁️ Global shortcut: Show/Hide Window");
     if (mainWindow) {
       if (mainWindow.isVisible()) {
@@ -1705,13 +1738,22 @@ function registerGlobalShortcuts() {
       }
     }
   });
-  electron.globalShortcut.register(currentShortcuts["pause-resume"], () => {
+  tryRegisterShortcut("pause-resume", () => {
     console.log("⏸️ Global shortcut: Pause/Resume Recording");
     if (mainWindow) {
       mainWindow.webContents.send("shortcut:pause-resume");
     }
   });
-  console.log("✅ Global shortcuts registered:", currentShortcuts);
+  const successfulRegistrations = registrationResults.filter((r) => r.success);
+  const failedRegistrations = registrationResults.filter((r) => !r.success);
+  if (successfulRegistrations.length > 0) {
+    console.log("✅ Global shortcuts registered:", Object.fromEntries(
+      successfulRegistrations.map((r) => [r.key, r.shortcut])
+    ));
+  }
+  if (failedRegistrations.length > 0) {
+    console.log("❌ Some shortcut registrations failed:", failedRegistrations);
+  }
 }
 function unregisterGlobalShortcuts() {
   electron.globalShortcut.unregisterAll();

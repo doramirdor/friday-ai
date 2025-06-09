@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, Tray, Menu } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import icon from '../../resources/FridayLogoOnly.png?asset'
 import { databaseService, Meeting, Settings } from './database'
 import { seedDatabase } from './seedData'
 import { spawn, ChildProcess } from 'child_process'
@@ -27,11 +27,19 @@ let swiftRecorderProcess: ChildProcess | null = null
 let isSwiftRecorderAvailable = false
 
 // Current shortcuts state
-const currentShortcuts = {
-  'toggle-recording': 'CmdOrCtrl+L',
-  'quick-note': 'CmdOrCtrl+Shift+N',
-  'show-hide': 'CmdOrCtrl+Shift+F',
-  'pause-resume': 'CmdOrCtrl+P'
+const currentShortcuts: Record<string, string> = {
+  'toggle-recording': 'CmdOrCtrl+Alt+R',
+  'quick-note': 'CmdOrCtrl+Alt+N',
+  'show-hide': 'CmdOrCtrl+Shift+H',
+  'pause-resume': 'CmdOrCtrl+Alt+P'
+}
+
+// Fallback shortcuts in case primary ones fail
+const fallbackShortcuts: Record<string, string[]> = {
+  'toggle-recording': ['CmdOrCtrl+L', 'CmdOrCtrl+Shift+R', 'F9'],
+  'quick-note': ['CmdOrCtrl+Shift+N', 'CmdOrCtrl+Alt+Q', 'F10'],
+  'show-hide': ['CmdOrCtrl+Alt+H', 'CmdOrCtrl+Shift+H', 'F11'],
+  'pause-resume': ['CmdOrCtrl+P', 'CmdOrCtrl+Shift+P', 'F8']
 }
 
 // Add interfaces for chunked recording at the top
@@ -1204,8 +1212,44 @@ function registerGlobalShortcuts(): void {
   // Clear any existing shortcuts first
   globalShortcut.unregisterAll()
 
+  const registrationResults: Array<{ key: string; shortcut: string; success: boolean }> = []
+
+  // Helper function to try registering a shortcut with fallbacks
+  const tryRegisterShortcut = (key: string, handler: () => void): void => {
+    const primaryShortcut = currentShortcuts[key]
+    
+    // Try primary shortcut first
+    try {
+      if (globalShortcut.register(primaryShortcut, handler)) {
+        registrationResults.push({ key, shortcut: primaryShortcut, success: true })
+        return
+      }
+    } catch (error) {
+      console.log(`❌ Primary shortcut ${primaryShortcut} failed for ${key}:`, error)
+    }
+
+    // Try fallback shortcuts
+    const fallbacks = fallbackShortcuts[key] || []
+    for (const fallbackShortcut of fallbacks) {
+      try {
+        if (globalShortcut.register(fallbackShortcut, handler)) {
+          console.log(`✅ Using fallback shortcut ${fallbackShortcut} for ${key}`)
+          currentShortcuts[key] = fallbackShortcut // Update current shortcuts
+          registrationResults.push({ key, shortcut: fallbackShortcut, success: true })
+          return
+        }
+      } catch (error) {
+        console.log(`❌ Fallback shortcut ${fallbackShortcut} failed for ${key}:`, error)
+      }
+    }
+
+    // All attempts failed
+    console.log(`❌ All shortcuts failed for ${key}, disabling shortcut`)
+    registrationResults.push({ key, shortcut: primaryShortcut, success: false })
+  }
+
   // Start/Stop Recording
-  globalShortcut.register(currentShortcuts['toggle-recording'], () => {
+  tryRegisterShortcut('toggle-recording', () => {
     console.log('🎙️ Global shortcut: Start/Stop Recording')
     if (mainWindow) {
       mainWindow.webContents.send('shortcut:toggle-recording')
@@ -1213,7 +1257,7 @@ function registerGlobalShortcuts(): void {
   })
 
   // Quick Note
-  globalShortcut.register(currentShortcuts['quick-note'], () => {
+  tryRegisterShortcut('quick-note', () => {
     console.log('📝 Global shortcut: Quick Note')
     if (mainWindow) {
       mainWindow.webContents.send('shortcut:quick-note')
@@ -1221,7 +1265,7 @@ function registerGlobalShortcuts(): void {
   })
 
   // Show/Hide Window
-  globalShortcut.register(currentShortcuts['show-hide'], () => {
+  tryRegisterShortcut('show-hide', () => {
     console.log('👁️ Global shortcut: Show/Hide Window')
     if (mainWindow) {
       if (mainWindow.isVisible()) {
@@ -1234,14 +1278,26 @@ function registerGlobalShortcuts(): void {
   })
 
   // Pause/Resume Recording
-  globalShortcut.register(currentShortcuts['pause-resume'], () => {
+  tryRegisterShortcut('pause-resume', () => {
     console.log('⏸️ Global shortcut: Pause/Resume Recording')
     if (mainWindow) {
       mainWindow.webContents.send('shortcut:pause-resume')
     }
   })
 
-  console.log('✅ Global shortcuts registered:', currentShortcuts)
+  // Report results
+  const successfulRegistrations = registrationResults.filter(r => r.success)
+  const failedRegistrations = registrationResults.filter(r => !r.success)
+
+  if (successfulRegistrations.length > 0) {
+    console.log('✅ Global shortcuts registered:', Object.fromEntries(
+      successfulRegistrations.map(r => [r.key, r.shortcut])
+    ))
+  }
+
+  if (failedRegistrations.length > 0) {
+    console.log('❌ Some shortcut registrations failed:', failedRegistrations)
+  }
 }
 
 // Add shortcut unregistration

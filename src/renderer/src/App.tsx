@@ -5,8 +5,9 @@ import TranscriptScreen from './components/TranscriptScreen'
 import SettingsScreen from './components/SettingsScreen'
 import NewMeetingDialog from './components/NewMeetingDialog'
 import { Meeting } from './types/database'
+import HelpScreen from './components/HelpScreen'
 
-type Screen = 'library' | 'transcript' | 'settings'
+type Screen = 'library' | 'transcript' | 'settings' | 'help'
 type Theme = 'light' | 'dark'
 
 function App(): React.JSX.Element {
@@ -131,11 +132,6 @@ function App(): React.JSX.Element {
     setCurrentScreen('transcript')
   }
 
-  const handleBackToLibrary = (): void => {
-    setCurrentMeeting(null)
-    setCurrentScreen('library')
-  }
-
   const handleNewMeeting = (): void => {
     setShowNewMeetingDialog(true)
   }
@@ -176,6 +172,8 @@ function App(): React.JSX.Element {
         )
       case 'settings':
         return <SettingsScreen />
+      case 'help':
+        return <HelpScreen />
       default:
         return (
           <LibraryScreen
@@ -219,7 +217,11 @@ function App(): React.JSX.Element {
             <SettingsIcon size={18} />
           </button>
 
-          <button className="btn btn-ghost btn-icon" title="Help">
+          <button
+            className="btn btn-ghost btn-icon"
+            onClick={() => setCurrentScreen('help')}
+            title="Help"
+          >
             <HelpCircleIcon size={18} />
           </button>
         </div>

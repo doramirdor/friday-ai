@@ -853,7 +853,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
             <div className="card-header">
               <h3 className="card-title">✉️ AI Message Generator</h3>
             </div>
-            <div className="card-body">
+            <div className="card-body ai-message-generator">
               <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
                 Generate professional Slack messages or emails based on your meeting content.
               </div>
@@ -925,12 +925,14 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
                       Copy
                     </button>
                   </div>
-                  <BlockNoteEditor
-                    value={generatedMessage}
-                    onChange={setGeneratedMessage}
-                    placeholder="Generated message will appear here..."
-                    height={300}
-                  />
+                  <div className="ai-message-editor-container">
+                    <BlockNoteEditor
+                      value={generatedMessage}
+                      onChange={setGeneratedMessage}
+                      placeholder="Generated message will appear here..."
+                      height={300}
+                    />
+                  </div>
                   <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     You can edit the message above and copy it to your clipboard
                   </div>

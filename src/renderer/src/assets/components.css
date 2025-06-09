@@ -671,6 +671,58 @@
   background: var(--text-secondary);
 }
 
+/* Main Screen Containers */
+.library-container {
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+  padding-right: var(--spacing-xs);
+}
+
+.library-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.library-container::-webkit-scrollbar-track {
+  background: var(--surface-secondary);
+  border-radius: 3px;
+}
+
+.library-container::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+  transition: background-color var(--transition-fast);
+}
+
+.library-container::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Ensure main content area is scrollable */
+.main-content {
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+}
+
+.main-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.main-content::-webkit-scrollbar-track {
+  background: var(--surface-secondary);
+  border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+  transition: background-color var(--transition-fast);
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
 .action-item {
   display: flex;
   align-items: flex-start;
@@ -1033,5 +1085,117 @@
 }
 
 .question-history-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Help Screen Styles */
+.help-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.help-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.step-number {
+  width: 32px;
+  height: 32px;
+  background: var(--green-primary);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+.step-content h4 {
+  margin: 0 0 var(--spacing-xs) 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.step-content p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+
+.shortcut-keys {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-family: var(--font-family-mono);
+}
+
+.shortcut-description {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* AI Message Generator Specific Styles */
+.ai-message-generator {
+  max-height: calc(70vh - 100px);
+  overflow-y: auto;
+}
+
+.ai-message-generator::-webkit-scrollbar {
+  width: 4px;
+}
+
+.ai-message-generator::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-message-generator::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 2px;
+}
+
+.ai-message-generator::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
+}
+
+/* Enhanced scrolling for BlockNote editor container */
+.ai-message-editor-container {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ai-message-editor-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ai-message-editor-container::-webkit-scrollbar-track {
+  background: var(--surface-secondary);
+  border-radius: 3px;
+}
+
+.ai-message-editor-container::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+  transition: background-color var(--transition-fast);
+}
+
+.ai-message-editor-container::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }

@@ -243,15 +243,36 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         console.log('📁 Setting combined recording path from result:', result.path)
         setCombinedRecordingPath(result.path)
         console.log('📁 Stored combined recording path:', result.path)
-        loadRecording(result.path)
+        
+        // Load the recording for immediate playback with proper timing
+        console.log('🎵 Loading recording for playback:', result.path)
+        setTimeout(async () => {
+          try {
+            if (result.path) {
+              await loadRecording(result.path)
+              console.log('✅ Recording loaded successfully for playback')
+              
+              // Set total time if not already set
+              if (totalTime === 0 && currentTime > 0) {
+                setTotalTime(currentTime)
+                const mins = Math.floor(currentTime / 60)
+                const secs = currentTime % 60
+                const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+                console.log('⏱️ Set total time to:', timeStr)
+              }
+            }
+          } catch (error) {
+            console.error('❌ Failed to load recording for playback:', error)
+          }
+        }, 1000) // Wait 1 second to ensure file is fully written
         
         // Force auto-save trigger since we have a new recording path
         console.log('🔄 Forcing auto-save due to new recording path')
-        setTimeout(() => setNeedsAutoSave(true), 500)
+        setTimeout(() => setNeedsAutoSave(true), 1500) // Wait a bit longer for file operations
       } else {
         console.warn('⚠️ No recording path in combined recording result:', result)
       }
-  }, [loadRecording])
+  }, [loadRecording, currentTime, totalTime])
 
   const handleCombinedRecordingFailed = useCallback((result: RecordingResult): void => {
       console.error('❌ Recording failed during operation:', result.error)

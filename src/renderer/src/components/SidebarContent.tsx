@@ -29,6 +29,8 @@ interface AIDataSelection {
   transcript: boolean
   description: boolean
   title: boolean
+  questionHistory: boolean
+  followupQuestions: boolean
 }
 
 interface AlertKeyword {
@@ -65,7 +67,7 @@ interface SidebarContentProps {
   onSaveMeeting: () => Promise<void>
   onGenerateSummary: () => Promise<void>
   onGenerateAllContent: () => Promise<void>
-  onGenerateAIMessage: (type: 'slack' | 'email') => Promise<string | void>
+  onGenerateAIMessage: (type: 'slack' | 'email', options?: any) => Promise<string | void>
   onSetGeneratingMessage: (isGenerating: boolean) => void
   onAlertKeywordsChange: (keywords: AlertKeyword[]) => void
   transcript: Array<{ time: string; text: string }>
@@ -111,10 +113,17 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
     summary: true,
     transcript: true,
     description: true,
-    title: true
+    title: true,
+    questionHistory: true,
+    followupQuestions: true
   })
   const [generatedMessage, setGeneratedMessage] = useState('')
   const [messageType, setMessageType] = useState<'slack' | 'email'>('slack')
+  
+  // Modal state for generated message dialog
+  const [showMessageDialog, setShowMessageDialog] = useState(false)
+  const [dialogMessage, setDialogMessage] = useState('')
+  const [dialogMessageType, setDialogMessageType] = useState<'slack' | 'email'>('slack')
 
   // Followup questions state - runs in background
   const [followupEnabled, setFollowupEnabled] = useState(false)
@@ -233,14 +242,36 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
         setGeneratedMessage(`**Error**: AI message generation not configured properly. Please check the parent component.`)
         return
       }
+
+      // Prepare enhanced options including Q&A and followup data
+      const enhancedOptions = {
+        type,
+        title: aiDataSelection.title ? title : '',
+        description: aiDataSelection.description ? description : '',
+        notes: aiDataSelection.notes ? notes : '',
+        summary: aiDataSelection.summary ? summary : '',
+        transcript: aiDataSelection.transcript ? transcript : [],
+        actionItems,
+        contextText,
+        questionHistory: aiDataSelection.questionHistory ? questionHistory : [],
+        followupQuestions: aiDataSelection.followupQuestions ? followupQuestions : [],
+        followupRisks: aiDataSelection.followupQuestions ? followupRisks : [],
+        followupComments: aiDataSelection.followupQuestions ? followupComments : []
+      }
       
-      const result = await onGenerateAIMessage(type)
+      const result = await onGenerateAIMessage(type, enhancedOptions)
       if (result) {
         console.log('✅ AI message generated successfully')
-        setGeneratedMessage(result)
+        
+        // Show in dialog first
+        setDialogMessage(result)
+        setDialogMessageType(type)
+        setShowMessageDialog(true)
       } else {
         console.log('⚠️ No result returned from AI message generation')
-        setGeneratedMessage(`**Demo ${type === 'slack' ? 'Slack' : 'Email'} Message**
+        
+        // Create enhanced demo message with Q&A and followup data
+        let demoMessage = `**Demo ${type === 'slack' ? 'Slack' : 'Email'} Message**
 
 Hi team,
 
@@ -251,7 +282,36 @@ I wanted to share a quick update from our meeting:
 - ${description || 'Various topics covered'}
 
 **Action Items:**
-${actionItems.length > 0 ? actionItems.map(item => `- ${item.text}`).join('\n') : '- Follow up on discussed items'}
+${actionItems.length > 0 ? actionItems.map(item => `- ${item.text}`).join('\n') : '- Follow up on discussed items'}`
+
+        // Add Q&A section if there are questions
+        if (questionHistory.length > 0 && aiDataSelection.questionHistory) {
+          demoMessage += `
+
+**Questions & Answers:**
+${questionHistory.slice(-3).map(qa => `
+Q: ${qa.question}
+A: ${qa.answer.substring(0, 100)}${qa.answer.length > 100 ? '...' : ''}`).join('\n')}`
+        }
+
+        // Add followup section if there are followup items
+        if ((followupQuestions.length > 0 || followupRisks.length > 0) && aiDataSelection.followupQuestions) {
+          demoMessage += `
+
+**Follow-up Items:**`
+          
+          if (followupQuestions.length > 0) {
+            demoMessage += `
+- Questions to explore: ${followupQuestions.slice(0, 2).join(', ')}`
+          }
+          
+          if (followupRisks.length > 0) {
+            demoMessage += `
+- Risks to monitor: ${followupRisks.slice(0, 2).join(', ')}`
+          }
+        }
+
+        demoMessage += `
 
 **Next Steps:**
 - Review meeting notes
@@ -263,22 +323,43 @@ Best regards,
 [Your name]
 
 ---
-*This is a demo message. Configure AI message generation for full functionality.*`)
+*This is a demo message. Configure AI message generation for full functionality.*`
+
+        // Show demo message in dialog
+        setDialogMessage(demoMessage)
+        setDialogMessageType(type)
+        setShowMessageDialog(true)
       }
     } catch (error) {
       console.error('❌ Error generating AI message:', error)
-      setGeneratedMessage(`**Error**: Failed to generate message. ${error instanceof Error ? error.message : 'Unknown error occurred'}`)
+      const errorMessage = `**Error**: Failed to generate message. ${error instanceof Error ? error.message : 'Unknown error occurred'}`
+      
+      // Show error in dialog
+      setDialogMessage(errorMessage)
+      setDialogMessageType(type)
+      setShowMessageDialog(true)
     } finally {
       onSetGeneratingMessage(false)
     }
   }
 
-  const copyToClipboard = async (): Promise<void> => {
+  const handleDialogAccept = (): void => {
+    // Save to the main editor
+    setGeneratedMessage(dialogMessage)
+    setMessageType(dialogMessageType)
+    setShowMessageDialog(false)
+  }
+
+  const handleDialogCancel = (): void => {
+    setShowMessageDialog(false)
+  }
+
+  const copyDialogMessage = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(generatedMessage)
-      console.log('✅ Message copied to clipboard')
+      await navigator.clipboard.writeText(dialogMessage)
+      console.log('✅ Dialog message copied to clipboard')
     } catch (error) {
-      console.error('Failed to copy to clipboard:', error)
+      console.error('Failed to copy dialog message to clipboard:', error)
       alert('Failed to copy to clipboard')
     }
   }
@@ -907,7 +988,11 @@ Best regards,
                         checked={value}
                         onChange={() => toggleDataSelection(key as keyof AIDataSelection)}
                       />
-                      <span style={{ textTransform: 'capitalize' }}>{key}</span>
+                      <span style={{ textTransform: 'capitalize' }}>
+                        {key === 'questionHistory' ? 'Questions & Answers' : 
+                         key === 'followupQuestions' ? 'Followup Items' : 
+                         key}
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -977,7 +1062,15 @@ Best regards,
                     <label className="demo-label">Generated Message</label>
                     <button
                       className="btn btn-ghost btn-sm"
-                      onClick={copyToClipboard}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(generatedMessage)
+                          console.log('✅ Message copied to clipboard')
+                        } catch (error) {
+                          console.error('Failed to copy to clipboard:', error)
+                          alert('Failed to copy to clipboard')
+                        }
+                      }}
                       title="Copy to clipboard"
                     >
                       <CopyIcon size={16} />
@@ -994,6 +1087,122 @@ Best regards,
                   </div>
                   <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     You can edit the message above and copy it to your clipboard
+                  </div>
+                </div>
+              )}
+
+              {/* Message Generation Dialog */}
+              {showMessageDialog && (
+                <div 
+                  style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000
+                  }}
+                  onClick={(e) => {
+                    if (e.target === e.currentTarget) {
+                      handleDialogCancel()
+                    }
+                  }}
+                >
+                  <div 
+                    style={{
+                      backgroundColor: 'var(--surface)',
+                      borderRadius: 'var(--radius-lg)',
+                      border: '1px solid var(--border)',
+                      maxWidth: '600px',
+                      maxHeight: '80vh',
+                      width: '90%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      boxShadow: '0 20px 40px rgba(0, 0, 0, 0.1)'
+                    }}
+                  >
+                    {/* Dialog Header */}
+                    <div style={{
+                      padding: '20px 24px 16px',
+                      borderBottom: '1px solid var(--border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}>
+                      <h3 style={{ 
+                        margin: 0, 
+                        fontSize: '18px',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        {dialogMessageType === 'slack' ? <MessageSquareIcon size={20} /> : <MailIcon size={20} />}
+                        Generated {dialogMessageType === 'slack' ? 'Slack Message' : 'Email'}
+                      </h3>
+                      <button
+                        className="btn btn-ghost btn-icon"
+                        onClick={handleDialogCancel}
+                        style={{ padding: '8px' }}
+                      >
+                        <XIcon size={20} />
+                      </button>
+                    </div>
+
+                    {/* Dialog Content */}
+                    <div style={{
+                      padding: '20px 24px',
+                      overflow: 'auto',
+                      flex: 1
+                    }}>
+                      <div style={{
+                        background: 'var(--surface-secondary)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '16px',
+                        fontSize: '14px',
+                        lineHeight: '1.6',
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'var(--font-mono)',
+                        maxHeight: '400px',
+                        overflow: 'auto'
+                      }}>
+                        {dialogMessage}
+                      </div>
+                    </div>
+
+                    {/* Dialog Actions */}
+                    <div style={{
+                      padding: '16px 24px 20px',
+                      borderTop: '1px solid var(--border)',
+                      display: 'flex',
+                      gap: '12px',
+                      justifyContent: 'flex-end'
+                    }}>
+                      <button
+                        className="btn btn-ghost"
+                        onClick={copyDialogMessage}
+                      >
+                        <CopyIcon size={16} />
+                        Copy to Clipboard
+                      </button>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={handleDialogCancel}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="btn btn-primary"
+                        onClick={handleDialogAccept}
+                      >
+                        <SaveIcon size={16} />
+                        Save to Editor
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

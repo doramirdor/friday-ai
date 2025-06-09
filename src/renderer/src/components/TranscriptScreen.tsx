@@ -671,7 +671,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
   }
 
-  const generateAIMessage = async (type: 'slack' | 'email'): Promise<string | void> => {
+  const generateAIMessage = async (type: 'slack' | 'email', enhancedOptions?: any): Promise<string | void> => {
     if (!meeting?.id) {
       alert('No meeting data available for AI generation')
       return
@@ -683,14 +683,34 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       
       const settings = await window.api.db.getSettings()
       
-      const selectedData = {
-        globalContext: settings.globalContext || '',
-        meetingContext: contextText,
-        title,
-        description,
-        notes,
-        summary,
-        transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
+      // Use enhanced options if provided, otherwise fall back to legacy data
+      let selectedData
+      if (enhancedOptions) {
+        selectedData = {
+          globalContext: settings.globalContext || '',
+          meetingContext: enhancedOptions.contextText || '',
+          title: enhancedOptions.title || '',
+          description: enhancedOptions.description || '',
+          notes: enhancedOptions.notes || '',
+          summary: enhancedOptions.summary || '',
+          transcript: enhancedOptions.transcript?.map((line: any) => `[${line.time}] ${line.text}`).join('\n') || '',
+          actionItems: enhancedOptions.actionItems || [],
+          questionHistory: enhancedOptions.questionHistory || [],
+          followupQuestions: enhancedOptions.followupQuestions || [],
+          followupRisks: enhancedOptions.followupRisks || [],
+          followupComments: enhancedOptions.followupComments || []
+        }
+      } else {
+        // Legacy fallback
+        selectedData = {
+          globalContext: settings.globalContext || '',
+          meetingContext: contextText,
+          title,
+          description,
+          notes,
+          summary,
+          transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
+        }
       }
 
       const result = await window.api.gemini.generateMessage({

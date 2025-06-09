@@ -667,6 +667,34 @@ ${data.notes}`);
         contextSections.push(`TRANSCRIPT:
 ${data.transcript}`);
       }
+      if (data.actionItems && data.actionItems.length > 0) {
+        const actionItemsText = data.actionItems.map((item) => `- ${item.text}${item.completed ? " (completed)" : ""}`).join("\n");
+        contextSections.push(`ACTION ITEMS:
+${actionItemsText}`);
+      }
+      if (data.questionHistory && data.questionHistory.length > 0) {
+        const qaText = data.questionHistory.slice(-5).map((qa) => `Q: ${qa.question}
+A: ${qa.answer}`).join("\n\n");
+        contextSections.push(`QUESTIONS & ANSWERS:
+${qaText}`);
+      }
+      const followupSections = [];
+      if (data.followupQuestions && data.followupQuestions.length > 0) {
+        followupSections.push(`Suggested Questions:
+${data.followupQuestions.map((q) => `- ${q}`).join("\n")}`);
+      }
+      if (data.followupRisks && data.followupRisks.length > 0) {
+        followupSections.push(`Identified Risks:
+${data.followupRisks.map((r) => `- ${r}`).join("\n")}`);
+      }
+      if (data.followupComments && data.followupComments.length > 0) {
+        followupSections.push(`AI Comments:
+${data.followupComments.map((c) => `- ${c}`).join("\n")}`);
+      }
+      if (followupSections.length > 0) {
+        contextSections.push(`FOLLOW-UP INSIGHTS:
+${followupSections.join("\n\n")}`);
+      }
       const contextText = contextSections.join("\n\n");
       let prompt = "";
       if (type === "slack") {
@@ -678,8 +706,10 @@ Please create a well-formatted Slack message that:
 - Is professional yet conversational for team communication
 - Highlights key points and outcomes
 - Includes action items if any
+- References important Q&A points if available
+- Mentions follow-up insights or risks if relevant
 - Uses appropriate Slack formatting (bold for emphasis, bullet points for lists)
-- Is concise but informative
+- Is concise but informative (aim for under 500 words)
 - Suitable for posting in a team channel
 
 Generate only the message content in rich text format, no additional explanations.`;
@@ -693,6 +723,8 @@ Please create a well-formatted email message that:
 - Includes a clear structure with paragraphs
 - Highlights key points and outcomes
 - Includes action items if any
+- References important Q&A discussions if available
+- Mentions follow-up insights, risks, or suggestions if relevant
 - Uses appropriate formatting for email (headings, bullet points)
 - Is comprehensive but well-organized
 - Suitable for sending to stakeholders or team members

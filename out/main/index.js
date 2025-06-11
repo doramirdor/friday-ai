@@ -810,7 +810,10 @@ Guidelines:
   async askQuestion(options) {
     try {
       const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
-      const prompt = `You are an AI assistant with access to a meeting's complete information. Please answer the user's question based on the available data.
+      const prompt = `You are an AI assistant with access to both meeting information and general knowledge. Please answer the user's question using:
+1. The available meeting data (primary source when relevant)
+2. Your general knowledge to provide comprehensive context and insights
+3. Best practices and expertise relevant to the topic
 
 MEETING CONTEXT:
 Title: ${options.title || "Meeting"}
@@ -829,9 +832,16 @@ ${options.summary || "No summary"}
 USER QUESTION:
 ${options.question}
 
-Please provide a helpful, accurate answer based on the meeting information available. If the information needed to answer the question is not available in the meeting data, please say so clearly. Be specific and reference relevant parts of the transcript when possible.
+Instructions:
+- If the question relates to specific meeting content, reference the transcript, notes, or summary directly
+- If the question requires general knowledge or expertise, provide comprehensive insights from your knowledge base
+- Combine meeting-specific information with general knowledge for a complete answer
+- If you're making connections or providing context beyond the meeting data, make it clear what's from the meeting vs. your general knowledge
+- Be helpful, accurate, and thorough
+- Use specific examples from the meeting when available
+- Provide actionable insights and recommendations when appropriate
 
-Respond with only the answer, no additional formatting or explanations.`;
+Respond with a well-structured, informative answer that combines both sources appropriately.`;
       const result = await this.makeGeminiRequest(prompt);
       if (!result.success || !result.content) {
         return { success: false, error: result.error || "Failed to get answer" };

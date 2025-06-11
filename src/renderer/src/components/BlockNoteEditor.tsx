@@ -25,8 +25,8 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
   // Handle content changes
   const handleChange = React.useCallback(async (): Promise<void> => {
     try {
-      // Get the content as HTML
-      const htmlContent = await editor.blocksToHTMLLossy(editor.document)
+      // Get the content as full HTML to better preserve whitespace
+      const htmlContent = await editor.blocksToFullHTML(editor.document)
       onChange(htmlContent)
     } catch (error) {
       console.error('Failed to convert blocks to HTML:', error)
@@ -42,7 +42,7 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
   React.useEffect(() => {
     const updateContent = async (): Promise<void> => {
       try {
-        if (value && value.trim() !== '') {
+        if (value !== '') {
           // Convert HTML to blocks and replace content
           const blocks = await editor.tryParseHTMLToBlocks(value)
           editor.replaceBlocks(editor.document, blocks)
@@ -91,6 +91,7 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
             font-family: var(--font-family);
             font-size: 14px;
             line-height: 1.5;
+            white-space: pre-wrap;
           }
           
           .bn-editor [data-node-type="paragraph"][data-is-empty="true"]::before {
@@ -98,6 +99,18 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
             color: var(--text-tertiary);
             opacity: 0.6;
             pointer-events: none;
+          }
+          
+          .bn-editor [data-node-type="paragraph"] {
+            white-space: pre-wrap;
+          }
+          
+          .bn-editor p {
+            white-space: pre-wrap;
+          }
+          
+          .bn-editor .bn-inline-content {
+            white-space: pre-wrap;
           }
           
           .bn-side-menu {

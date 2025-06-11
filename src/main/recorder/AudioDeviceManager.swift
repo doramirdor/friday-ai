@@ -330,6 +330,35 @@ class AudioDeviceManager {
     
     // MARK: - Multi-Output Device Management for Bluetooth Audio
     
+    /// Gets the current default output device ID
+    static func getCurrentDefaultOutputDevice() -> AudioDeviceID? {
+        var defAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let result = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &defAddr, 0, nil, &size, &deviceID)
+        
+        return result == noErr ? deviceID : nil
+    }
+    
+    /// Checks if the current default output device is Bluetooth
+    static func isCurrentOutputDeviceBluetooth() -> Bool {
+        guard let deviceID = getCurrentDefaultOutputDevice() else { return false }
+        
+        var transport: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var tProp = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        
+        let result = AudioObjectGetPropertyData(deviceID, &tProp, 0, nil, &size, &transport)
+        return result == noErr && (transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE)
+    }
+    
     /// Returns the AudioDeviceID for the built-in speakers.
     static func builtInOutputID() -> AudioDeviceID? {
         var propAddr = AudioObjectPropertyAddress(
@@ -404,198 +433,6 @@ class AudioDeviceManager {
         return nil
     }
     
-    /// Gets the current default output device ID
-    static func getCurrentDefaultOutputDevice() -> AudioDeviceID? {
-        var defAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var deviceID: AudioDeviceID = 0
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let result = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &defAddr, 0, nil, &size, &deviceID)
-        
-        return result == noErr ? deviceID : nil
-    }
-    
-    /// Sets the default output device
-    static func setDefaultOutputDevice(_ deviceID: AudioDeviceID) -> Bool {
-        var defAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        
-        var mutableDeviceID = deviceID
-        let result = AudioObjectSetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &defAddr, 0, nil,
-            UInt32(MemoryLayout<AudioDeviceID>.size), &mutableDeviceID)
-        
-        return result == noErr
-    }
-    
-    /// Checks if the current default output device is Bluetooth
-    static func isCurrentOutputDeviceBluetooth() -> Bool {
-        guard let deviceID = getCurrentDefaultOutputDevice() else { return false }
-        
-        var transport: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        var tProp = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        
-        let result = AudioObjectGetPropertyData(deviceID, &tProp, 0, nil, &size, &transport)
-        return result == noErr && (transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE)
-    }
-    
-    /// Creates a multi-output device that includes both Bluetooth and built-in speakers
-    /// This allows users to hear through Bluetooth while ScreenCaptureKit captures from built-in speakers
-    static func createMultiOutputDevice(bluetoothDeviceID: AudioDeviceID, builtInDeviceID: AudioDeviceID) -> AudioDeviceID? {
-        print("🔧 Creating multi-output device for Bluetooth workaround...")
-        
-        // Get UIDs for both devices
-        guard let bluetoothUID = getDeviceUID(bluetoothDeviceID),
-              let builtInUID = getDeviceUID(builtInDeviceID) else {
-            print("❌ Could not get device UIDs")
-            return nil
-        }
-        
-        print("   📱 Bluetooth UID: \(bluetoothUID)")
-        print("   🔊 Built-in UID: \(builtInUID)")
-        
-        // Generate a unique UID for this aggregate device
-        let uniqueUID = "com.friday.multi-output-\(Date().timeIntervalSince1970)"
-        
-        // Create aggregate device description using correct HAL API
-        let subDevices: [[String: Any]] = [
-            [
-                kAudioSubDeviceUIDKey: bluetoothUID,
-                kAudioSubDeviceDriftCompensationKey: NSNumber(value: 1)
-            ],
-            [
-                kAudioSubDeviceUIDKey: builtInUID,
-                kAudioSubDeviceDriftCompensationKey: NSNumber(value: 0) // Master device doesn't need drift compensation
-            ]
-        ]
-        
-        let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "Friday Multi-Output",
-            kAudioAggregateDeviceUIDKey: uniqueUID,
-            kAudioAggregateDeviceIsPrivateKey: NSNumber(value: 1),
-            kAudioAggregateDeviceIsStackedKey: NSNumber(value: 0),
-            kAudioAggregateDeviceMasterSubDeviceKey: builtInUID, // Built-in as master
-            kAudioAggregateDeviceClockDeviceKey: builtInUID, // Use built-in for clock
-            kAudioAggregateDeviceSubDeviceListKey: subDevices
-        ]
-        
-        print("🔧 Creating aggregate device with UID: \(uniqueUID)")
-        
-        // Use the correct HAL API for creating aggregate devices
-        var aggregateDeviceID: AudioDeviceID = 0
-        let cfDescription = description as CFDictionary
-        
-        // First, try the HAL Audio System Object plugin route
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyPlugInForBundleID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        
-        let halPluginBundleID = "com.apple.audio.CoreAudio" as CFString
-        var propertySize = UInt32(MemoryLayout<CFString>.size)
-        var audioPluginID: AudioObjectID = 0
-        
-        var result = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            UInt32(MemoryLayout<CFString>.size),
-            UnsafeMutableRawPointer(mutating: Unmanaged.passUnretained(halPluginBundleID).toOpaque()),
-            &propertySize,
-            &audioPluginID
-        )
-        
-        if result == noErr && audioPluginID != 0 {
-            print("🔧 Using HAL plugin ID: \(audioPluginID)")
-            
-            // Create the aggregate device via the plugin
-            propertyAddress.mSelector = kAudioPlugInCreateAggregateDevice
-            propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
-            
-            result = AudioObjectGetPropertyData(
-                audioPluginID,
-                &propertyAddress,
-                UInt32(MemoryLayout<CFDictionary>.size),
-                UnsafeMutableRawPointer(mutating: Unmanaged.passUnretained(cfDescription).toOpaque()),
-                &propertySize,
-                &aggregateDeviceID
-            )
-        } else {
-            print("🔧 HAL plugin not found, using system object directly")
-            
-            // Fallback: Use system object directly (may require admin privileges)
-            propertyAddress.mSelector = kAudioPlugInCreateAggregateDevice
-            propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
-            
-            result = AudioObjectGetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject),
-                &propertyAddress,
-                UInt32(MemoryLayout<CFDictionary>.size),
-                UnsafeMutableRawPointer(mutating: Unmanaged.passUnretained(cfDescription).toOpaque()),
-                &propertySize,
-                &aggregateDeviceID
-            )
-        }
-        
-        if result == noErr && aggregateDeviceID != 0 {
-            print("✅ Multi-output device created successfully (ID: \(aggregateDeviceID))")
-            
-            // Give the system time to initialize the device
-            print("🔄 Waiting for device to initialize...")
-            usleep(2000000) // 2 seconds for better stability
-            
-            // Verify the device is accessible
-            if let deviceName = getDeviceName(aggregateDeviceID) {
-                print("✅ Device verification successful: '\(deviceName)'")
-                return aggregateDeviceID
-            } else {
-                print("❌ Device created but not accessible, cleaning up...")
-                _ = destroyAggregateDevice(aggregateDeviceID)
-                return nil
-            }
-        } else {
-            print("❌ Failed to create multi-output device (error: \(result))")
-            
-            // Provide more specific error information
-            switch result {
-            case 2003332927: // kCMIOHardwareUnknownPropertyError ('who?')
-                print("   Error: Core Audio 'who?' error - property not recognized")
-                print("   This typically indicates insufficient permissions or incompatible device configuration")
-                print("   Try: 1) Restart the app with admin privileges, 2) Check device compatibility")
-            case kAudioHardwareUnsupportedOperationError:
-                print("   Error: Unsupported operation - may need admin privileges")
-            case kAudioHardwareNotRunningError:
-                print("   Error: Audio hardware not running")
-            case kAudioHardwareBadPropertySizeError:
-                print("   Error: Bad property size in device description")
-            case kAudioHardwareIllegalOperationError:
-                print("   Error: Illegal operation - check device permissions")
-            default:
-                let errorString = String(format: "0x%08X", result)
-                print("   Error code: \(result) (\(errorString))")
-                
-                // Convert to ASCII if possible for 'who?' type errors
-                if result > 0x20000000 {
-                    let bytes = withUnsafeBytes(of: result.bigEndian) { Data($0) }
-                    if let ascii = String(data: bytes, encoding: .ascii) {
-                        print("   ASCII representation: '\(ascii)'")
-                    }
-                }
-            }
-            
-            return nil
-        }
-    }
-    
     /// Gets the name of an audio device by ID
     static func getDeviceName(_ deviceID: AudioDeviceID) -> String? {
         var propertyAddress = AudioObjectPropertyAddress(
@@ -622,6 +459,195 @@ class AudioDeviceManager {
         }
         
         return nil
+    }
+    
+    /// Gets the UID for a given audio device ID
+    static func getDeviceUID(_ deviceID: AudioDeviceID) -> String? {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var uidRef: CFString?
+        var propertySize = UInt32(MemoryLayout<CFString>.size)
+        
+        let result = AudioObjectGetPropertyData(
+            deviceID,
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &uidRef
+        )
+        
+        if result == noErr, let uid = uidRef {
+            return uid as String
+        }
+        
+        return nil
+    }
+    
+    /// Sets the default output device
+    static func setDefaultOutputDevice(_ deviceID: AudioDeviceID) -> Bool {
+        print("🔧 Setting default output device to ID: \(deviceID)")
+        
+        var defAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        
+        var mutableDeviceID = deviceID
+        let result = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &defAddr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &mutableDeviceID)
+        
+        if result == noErr {
+            print("✅ Default output device set successfully")
+            
+            // Verify the change took effect
+            usleep(500000) // 0.5 second delay for system to process
+            
+            if let currentDevice = getCurrentDefaultOutputDevice(), currentDevice == deviceID {
+                if let deviceName = getDeviceName(deviceID) {
+                    print("✅ Verified: Default output is now '\(deviceName)' (ID: \(deviceID))")
+                }
+                return true
+            } else {
+                print("❌ Warning: Default output device may not have changed properly")
+                return false
+            }
+        } else {
+            print("❌ Failed to set default output device (error: \(result))")
+            return false
+        }
+    }
+    
+    /// Creates a multi-output device that includes both Bluetooth and built-in speakers
+    static func createMultiOutputDevice(bluetoothDeviceID: AudioDeviceID, builtInDeviceID: AudioDeviceID) -> AudioDeviceID? {
+        print("🔧 Creating multi-output device for Bluetooth workaround...")
+        
+        // Get UIDs for both devices
+        guard let bluetoothUID = getDeviceUID(bluetoothDeviceID),
+              let builtInUID = getDeviceUID(builtInDeviceID) else {
+            print("❌ Could not get device UIDs")
+            return nil
+        }
+        
+        print("   📱 Bluetooth UID: \(bluetoothUID)")
+        print("   🔊 Built-in UID: \(builtInUID)")
+        
+        // Generate a unique UID for this aggregate device
+        let uniqueUID = "com.friday.multi-output-\(Date().timeIntervalSince1970)"
+        
+        // Create aggregate device description
+        let subDevices: [[String: Any]] = [
+            [
+                kAudioSubDeviceUIDKey as String: bluetoothUID,
+                kAudioSubDeviceDriftCompensationKey as String: 1
+            ],
+            [
+                kAudioSubDeviceUIDKey as String: builtInUID,
+                kAudioSubDeviceDriftCompensationKey as String: 0
+            ]
+        ]
+        
+        let description: [String: Any] = [
+            kAudioAggregateDeviceNameKey as String: "Friday Multi-Output Device",
+            kAudioAggregateDeviceUIDKey as String: uniqueUID,
+            kAudioAggregateDeviceSubDeviceListKey as String: subDevices,
+            kAudioAggregateDeviceMasterSubDeviceKey as String: builtInUID,
+            kAudioAggregateDeviceIsPrivateKey as String: 1
+        ]
+        
+        print("🔧 Creating aggregate device with UID: \(uniqueUID)")
+        
+        var aggregateDeviceID: AudioDeviceID = 0
+        
+        // Try to create aggregate device
+        if let deviceID = createAggregateDeviceViaPlugin(description: description) {
+            aggregateDeviceID = deviceID
+        } else {
+            print("❌ Aggregate device creation failed")
+            return nil
+        }
+        
+        print("✅ Multi-output device created successfully (ID: \(aggregateDeviceID))")
+        
+        // Give the system time to initialize the device
+        print("🔄 Waiting for device to initialize...")
+        usleep(2000000) // 2 seconds for system to stabilize
+        
+        // Verify the device is accessible
+        if let deviceName = getDeviceName(aggregateDeviceID) {
+            print("✅ Device verification successful: '\(deviceName)'")
+            return aggregateDeviceID
+        } else {
+            print("❌ Device created but not accessible, cleaning up...")
+            _ = destroyAggregateDevice(aggregateDeviceID)
+            return nil
+        }
+    }
+    
+    /// Creates aggregate device via HAL plugin
+    private static func createAggregateDeviceViaPlugin(description: [String: Any]) -> AudioDeviceID? {
+        print("🔧 Attempting aggregate device creation via HAL plugin...")
+        
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioPlugInCreateAggregateDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        // Find the HAL plugin
+        let bundleID = "com.apple.audio.CoreAudio"
+        let cfBundleID = bundleID as CFString
+        var pluginPropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyPlugInForBundleID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var pluginID: AudioObjectID = 0
+        var propertySize = UInt32(MemoryLayout<AudioObjectID>.size)
+        
+        let pluginStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &pluginPropertyAddress,
+            UInt32(MemoryLayout<CFString>.size),
+            UnsafeMutableRawPointer(mutating: Unmanaged.passUnretained(cfBundleID).toOpaque()),
+            &propertySize,
+            &pluginID
+        )
+        
+        guard pluginStatus == noErr && pluginID != 0 else {
+            print("❌ Could not find HAL plugin")
+            return nil
+        }
+        
+        print("✅ Found HAL plugin ID: \(pluginID)")
+        
+        // Create the aggregate device using the plugin
+        let cfDesc = description as CFDictionary
+        propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var aggregateDeviceID: AudioDeviceID = 0
+        
+        let result = AudioObjectGetPropertyData(
+            pluginID,
+            &propertyAddress,
+            UInt32(MemoryLayout<CFDictionary>.size),
+            UnsafeMutableRawPointer(mutating: Unmanaged.passUnretained(cfDesc).toOpaque()),
+            &propertySize,
+            &aggregateDeviceID
+        )
+        
+        if result == noErr && aggregateDeviceID != 0 {
+            print("✅ HAL plugin method succeeded")
+            return aggregateDeviceID
+        } else {
+            print("❌ HAL plugin method failed (error: \(result))")
+            return nil
+        }
     }
     
     /// Destroys an aggregate device
@@ -657,7 +683,6 @@ class AudioDeviceManager {
     private static var multiOutputDevice: AudioDeviceID?
     
     /// Enables multi-output device for Bluetooth audio recording
-    /// This allows users to hear through Bluetooth while system audio is captured from built-in speakers
     static func enableBluetoothWorkaround() -> Bool {
         print("🔧 Starting Bluetooth workaround setup...")
         
@@ -673,7 +698,6 @@ class AudioDeviceManager {
         
         guard let builtInDevice = builtInOutputID() else {
             print("❌ Could not find built-in speakers for workaround")
-            print("   This Mac may not have built-in speakers available")
             return false
         }
         
@@ -684,263 +708,94 @@ class AudioDeviceManager {
         print("   📱 Bluetooth device ID: \(bluetoothDevice)")
         print("   🔊 Built-in device ID: \(builtInDevice)")
         
-        // Verify both devices are accessible before proceeding
-        if let btName = getDeviceName(bluetoothDevice) {
-            print("   📱 Bluetooth device: '\(btName)'")
-        } else {
-            print("❌ Cannot access Bluetooth device information")
-            return false
-        }
-        
-        if let biName = getDeviceName(builtInDevice) {
-            print("   🔊 Built-in device: '\(biName)'")
-        } else {
-            print("❌ Cannot access built-in device information")
-            return false
-        }
-        
-        // Create multi-output device
-        guard let multiDevice = createMultiOutputDevice(
+        // Try to create multi-output device
+        if let multiDevice = createMultiOutputDevice(
             bluetoothDeviceID: bluetoothDevice,
             builtInDeviceID: builtInDevice
-        ) else {
-            print("❌ Failed to create multi-output device")
-            return false
-        }
-        
-        multiOutputDevice = multiDevice
-        
-        // Set multi-output device as default with verification
-        print("🔧 Setting multi-output device as default...")
-        if setDefaultOutputDevice(multiDevice) {
-            // Verify the device was actually set
-            if let currentDevice = getCurrentDefaultOutputDevice(), currentDevice == multiDevice {
-                print("✅ Bluetooth workaround enabled successfully!")
-                print("   Users will hear through Bluetooth while system audio is captured from built-in speakers")
-                print("   Recording should now work with full system audio capture")
-                return true
+        ) {
+            multiOutputDevice = multiDevice
+            
+            // Set multi-output device as default
+            if setDefaultOutputDevice(multiDevice) {
+                print("🔄 Waiting for audio system to stabilize...")
+                usleep(1000000) // 1 second delay
+                
+                if let currentDevice = getCurrentDefaultOutputDevice(), currentDevice == multiDevice {
+                    print("✅ Bluetooth workaround enabled successfully!")
+                    return true
+                } else {
+                    print("❌ Multi-output device was not set as default properly")
+                }
             } else {
-                print("❌ Multi-output device was not set as default properly")
+                print("❌ Failed to set multi-output device as default")
             }
-        } else {
-            print("❌ Failed to set multi-output device as default")
-        }
-        
-        // Clean up on failure
-        print("🧹 Cleaning up failed workaround attempt...")
+            
+                    // Clean up on failure
         _ = destroyAggregateDevice(multiDevice)
         multiOutputDevice = nil
-        originalDefaultDevice = nil
+        } else {
+            print("❌ Failed to create multi-output device")
+        }
         
+        // No fallback strategy - preserve user's Bluetooth experience
+        print("ℹ️ Multi-output device creation failed")
+        print("   Bluetooth audio will remain active for user")
+        print("   System audio capture may be limited, but microphone recording will work")
+        print("   User experience is preserved - they keep hearing through Bluetooth")
+        
+        originalDefaultDevice = nil
         return false
     }
     
     /// Disables the Bluetooth workaround and restores original audio device
     static func disableBluetoothWorkaround() -> Bool {
+        print("🔧 Disabling Bluetooth workaround...")
         var success = true
         
-        // Restore original default device
-        if let originalDevice = originalDefaultDevice {
-            if setDefaultOutputDevice(originalDevice) {
-                print("✅ Restored original default audio device")
-            } else {
-                print("❌ Failed to restore original default audio device")
-                success = false
-            }
-            originalDefaultDevice = nil
-        }
-        
-        // Destroy multi-output device
+        // Destroy multi-output device if it was created
         if let multiDevice = multiOutputDevice {
+            print("🗑️ Cleaning up multi-output device...")
             if destroyAggregateDevice(multiDevice) {
-                print("✅ Cleaned up multi-output device")
+                print("✅ Multi-output device destroyed successfully")
             } else {
-                print("❌ Failed to clean up multi-output device")
+                print("❌ Failed to destroy multi-output device")
                 success = false
             }
             multiOutputDevice = nil
         }
         
-        return success
-    }
-    
-    /// Gets the UID for a given audio device ID
-    static func getDeviceUID(_ deviceID: AudioDeviceID) -> String? {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        
-        var uidRef: CFString?
-        var propertySize = UInt32(MemoryLayout<CFString>.size)
-        
-        let result = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &propertySize,
-            &uidRef
-        )
-        
-        if result == noErr, let uid = uidRef {
-            return uid as String
-        }
-        
-        return nil
-    }
-    
-    // MARK: - Audio Device Optimization Functions
-    
-    /// Gets the preferred sample rate for a given audio device
-    static func getDeviceSampleRate(_ deviceID: AudioDeviceID) -> Double? {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyNominalSampleRate,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        
-        var sampleRate: Float64 = 0.0
-        var propertySize = UInt32(MemoryLayout<Float64>.size)
-        
-        let result = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &propertySize,
-            &sampleRate
-        )
-        
-        if result == noErr {
-            return sampleRate
-        }
-        
-        return nil
-    }
-    
-    /// Gets the channel count for a given audio device
-    static func getDeviceChannelCount(_ deviceID: AudioDeviceID, scope: AudioObjectPropertyScope = kAudioDevicePropertyScopeOutput) -> UInt32? {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: scope,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        
-        var propertySize: UInt32 = 0
-        var result = AudioObjectGetPropertyDataSize(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &propertySize
-        )
-        
-        guard result == noErr else { return nil }
-        
-        let bufferListSize = Int(propertySize)
-        let bufferListPointer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferListSize)
-        defer { bufferListPointer.deallocate() }
-        
-        result = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &propertySize,
-            bufferListPointer
-        )
-        
-        guard result == noErr else { return nil }
-        
-        return bufferListPointer.withMemoryRebound(to: AudioBufferList.self, capacity: 1) { bufferListPtr in
-            let bufferList = bufferListPtr.pointee
-            var totalChannels: UInt32 = 0
-            
-            withUnsafePointer(to: bufferList.mBuffers) { buffersPtr in
-                let buffers = UnsafeBufferPointer<AudioBuffer>(
-                    start: buffersPtr,
-                    count: Int(bufferList.mNumberBuffers)
-                )
+        // Restore original default device
+        if let originalDevice = originalDefaultDevice {
+            print("🔄 Restoring original audio device...")
+            if setDefaultOutputDevice(originalDevice) {
+                print("✅ Original audio device restored successfully")
                 
-                for buffer in buffers {
-                    totalChannels += buffer.mNumberChannels
+                // Give system time to process the change
+                usleep(500000) // 0.5 seconds
+                
+                // Verify restoration
+                if let currentDevice = getCurrentDefaultOutputDevice() {
+                    if let deviceName = getDeviceName(currentDevice) {
+                        print("✅ Current audio device: '\(deviceName)'")
+                    }
                 }
+            } else {
+                print("❌ Failed to restore original audio device")
+                success = false
             }
-            
-            return totalChannels
-        }
-    }
-    
-    /// Gets comprehensive audio device information for optimization
-    static func getDeviceAudioInfo(_ deviceID: AudioDeviceID) -> [String: Any] {
-        var info: [String: Any] = [:]
-        
-        // Device name
-        if let name = getDeviceName(deviceID) {
-            info["name"] = name
+            originalDefaultDevice = nil
+        } else {
+            print("ℹ️ No original device to restore (no device switching occurred)")
         }
         
-        // Device UID
-        if let uid = getDeviceUID(deviceID) {
-            info["uid"] = uid
+        if success {
+            print("✅ Bluetooth workaround disabled successfully")
+        } else {
+            print("⚠️ Bluetooth workaround disabled with some issues")
+            print("   You may need to manually check your audio device settings")
         }
         
-        // Sample rate
-        if let sampleRate = getDeviceSampleRate(deviceID) {
-            info["sampleRate"] = sampleRate
-        }
-        
-        // Output channels
-        if let outputChannels = getDeviceChannelCount(deviceID, scope: kAudioDevicePropertyScopeOutput) {
-            info["outputChannels"] = outputChannels
-        }
-        
-        // Input channels
-        if let inputChannels = getDeviceChannelCount(deviceID, scope: kAudioDevicePropertyScopeInput) {
-            info["inputChannels"] = inputChannels
-        }
-        
-        // Transport type
-        var transport: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        var tProp = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        
-        if AudioObjectGetPropertyData(deviceID, &tProp, 0, nil, &size, &transport) == noErr {
-            let transportTypeString: String
-            switch transport {
-            case kAudioDeviceTransportTypeBuiltIn:
-                transportTypeString = "Built-in"
-            case kAudioDeviceTransportTypeBluetooth:
-                transportTypeString = "Bluetooth"
-            case kAudioDeviceTransportTypeBluetoothLE:
-                transportTypeString = "Bluetooth LE"
-            case kAudioDeviceTransportTypeUSB:
-                transportTypeString = "USB"
-            case kAudioDeviceTransportTypeFireWire:
-                transportTypeString = "FireWire"
-            case kAudioDeviceTransportTypeHDMI:
-                transportTypeString = "HDMI"
-            case kAudioDeviceTransportTypeDisplayPort:
-                transportTypeString = "DisplayPort"
-            case kAudioDeviceTransportTypeAirPlay:
-                transportTypeString = "AirPlay"
-            case kAudioDeviceTransportTypeAggregate:
-                transportTypeString = "Aggregate"
-            case kAudioDeviceTransportTypeVirtual:
-                transportTypeString = "Virtual"
-            default:
-                transportTypeString = "Unknown (\(transport))"
-            }
-            info["transportType"] = transportTypeString
-        }
-        
-        return info
+        return success
     }
     
     /// Logs detailed audio device information for debugging
@@ -951,43 +806,47 @@ class AudioDeviceManager {
         // Get current default output device
         if let defaultOutputID = getCurrentDefaultOutputDevice() {
             print("\n🔊 Default Output Device:")
-            let outputInfo = getDeviceAudioInfo(defaultOutputID)
-            for (key, value) in outputInfo {
-                print("   \(key): \(value)")
-            }
-        }
-        
-        // Get current default input device
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        
-        var defaultInputID: AudioDeviceID = 0
-        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        
-        if AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &propertySize,
-            &defaultInputID
-        ) == noErr {
-            print("\n🎤 Default Input Device:")
-            let inputInfo = getDeviceAudioInfo(defaultInputID)
-            for (key, value) in inputInfo {
-                print("   \(key): \(value)")
+            if let deviceName = getDeviceName(defaultOutputID) {
+                print("   Name: \(deviceName)")
+                print("   ID: \(defaultOutputID)")
+                if let uid = getDeviceUID(defaultOutputID) {
+                    print("   UID: \(uid)")
+                }
+                
+                // Check transport type
+                var transport: UInt32 = 0
+                var size = UInt32(MemoryLayout<UInt32>.size)
+                var tProp = AudioObjectPropertyAddress(
+                    mSelector: kAudioDevicePropertyTransportType,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                
+                if AudioObjectGetPropertyData(defaultOutputID, &tProp, 0, nil, &size, &transport) == noErr {
+                    let transportTypeString: String
+                    switch transport {
+                    case kAudioDeviceTransportTypeBuiltIn:
+                        transportTypeString = "Built-in"
+                    case kAudioDeviceTransportTypeBluetooth:
+                        transportTypeString = "Bluetooth"
+                    case kAudioDeviceTransportTypeBluetoothLE:
+                        transportTypeString = "Bluetooth LE"
+                    case kAudioDeviceTransportTypeUSB:
+                        transportTypeString = "USB"
+                    default:
+                        transportTypeString = "Unknown (\(transport))"
+                    }
+                    print("   Transport: \(transportTypeString)")
+                }
             }
         }
         
         // Check if built-in speakers are available
         if let builtInID = builtInOutputID() {
             print("\n🔊 Built-in Output Device:")
-            let builtInInfo = getDeviceAudioInfo(builtInID)
-            for (key, value) in builtInInfo {
-                print("   \(key): \(value)")
+            if let deviceName = getDeviceName(builtInID) {
+                print("   Name: \(deviceName)")
+                print("   ID: \(builtInID)")
             }
         }
         

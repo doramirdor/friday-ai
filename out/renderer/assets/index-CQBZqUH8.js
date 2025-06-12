@@ -1,4 +1,4 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./index-CJ7uhJzI.js","./index-GxHjvpnR.js","./index-DD2_lbmV.js","./default-BS6z0SoE.js","./index-d8Q-uoc3.js","./index-BmUztF0Q.js","./index-D4jd7gzl.js","./index-BEZf1ZPW.js","./index-zIlfN-Ki.js","./index-G-ora8YN.js","./index-UocK1Af-.js","./index-BzFicUpK.js","./index-BdpVYl51.js","./index-DP-HoFPF.js","./index-DAUtpLsD.js","./index-Db1BflSh.js","./index-BQQO4o33.js","./index-DZUfWD1-.js","./index-cbiyYImb.js","./index-D9ux-QLO.js","./blank-line-B1FU30m6.js","./index-Bq0gbX2R.js","./index-D0qL-C7F.js","./index-C1E4TE6-.js","./index-DfVJMZTK.js","./index-DcqjCtfs.js","./index-BEC76WiQ.js","./index-BhtqkrT8.js","./index-H4R0JEEP.js"])))=>i.map(i=>d[i]);
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./index-CJ7uhJzI.js","./index-GxHjvpnR.js","./index-DD2_lbmV.js","./default-BS6z0SoE.js","./index-d8Q-uoc3.js","./index-BmUztF0Q.js","./index-D4jd7gzl.js","./index-BEZf1ZPW.js","./index-zIlfN-Ki.js","./index-G-ora8YN.js","./index-CnMPMwxJ.js","./index-BzFicUpK.js","./index-BdpVYl51.js","./index-DP-HoFPF.js","./index-DAUtpLsD.js","./index-Db1BflSh.js","./index-BQQO4o33.js","./index-DZUfWD1-.js","./index-cbiyYImb.js","./index-D9ux-QLO.js","./blank-line-B1FU30m6.js","./index-Bq0gbX2R.js","./index-D0qL-C7F.js","./index-C1E4TE6-.js","./index-DfVJMZTK.js","./index-DcqjCtfs.js","./index-BEC76WiQ.js","./index-BhtqkrT8.js","./index-H4R0JEEP.js"])))=>i.map(i=>d[i]);
 function _mergeNamespaces(n, m) {
   for (var i = 0; i < m.length; i++) {
     const e = m[i];
@@ -48865,7 +48865,7 @@ async function Tt$2() {
   const e = await Promise.all([
     __vitePreload(() => import("./index-CJ7uhJzI.js"), true ? __vite__mapDeps([0,1,2,3,4,5]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-D4jd7gzl.js"), true ? __vite__mapDeps([6,4,7,8,9]) : void 0, import.meta.url),
-    __vitePreload(() => import("./index-UocK1Af-.js"), true ? __vite__mapDeps([10,1,2]) : void 0, import.meta.url),
+    __vitePreload(() => import("./index-CnMPMwxJ.js"), true ? __vite__mapDeps([10,1,2]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-BzFicUpK.js"), true ? __vite__mapDeps([11,5,4]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-BdpVYl51.js"), true ? __vite__mapDeps([12,13,14,15,9,16,17,18]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-D9ux-QLO.js"), true ? __vite__mapDeps([19,20,21,22,8,3,15,23,17,18,16]) : void 0, import.meta.url),
@@ -72510,7 +72510,7 @@ const useRecordingService = ({
   }, [onSwiftRecorderAvailabilityChange]);
   const handleTranscriptionResult = reactExports.useCallback((result) => {
     console.log("📝 Received transcription:", result);
-    if (result.type === "transcript" && result.text && result.text !== "undefined") {
+    if (result.type === "transcript" && result.text && result.text.trim() !== "" && result.text !== "undefined") {
       const recordingElapsed = Date.now() - recordingStartTime.current;
       const recordingSeconds = Math.floor(recordingElapsed / 1e3);
       const currentTimestamp = formatTime(recordingSeconds);
@@ -72527,6 +72527,8 @@ const useRecordingService = ({
       console.error("Transcription error:", result.message);
       transcriptionStatusRef.current = "error";
       onTranscriptionStatusChange("error");
+    } else if (result.type === "transcript" && (!result.text || result.text.trim() === "")) {
+      console.log("📝 Received empty transcription result - likely silence or no audio content");
     }
   }, [formatTime, onTranscriptionResult, onTranscriptionStatusChange]);
   const startCombinedRecording = reactExports.useCallback(async () => {
@@ -72567,16 +72569,32 @@ const useRecordingService = ({
   }, [onTranscriptionStatusChange]);
   const startParallelTranscriptionRecording = reactExports.useCallback(async () => {
     try {
-      console.log("🎤 Starting parallel microphone recording for transcription...");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16e3,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false
-        }
-      });
+      console.log("🎤 Starting system audio capture for transcription...");
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: false,
+          audio: {
+            channelCount: 1,
+            sampleRate: 16e3,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+        console.log("✅ System audio capture started for transcription");
+      } catch (displayError) {
+        console.log("⚠️ System audio capture failed, falling back to microphone for transcription:", displayError);
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16e3,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false
+          }
+        });
+      }
       audioStreamRef.current = stream;
       chunkCounter.current = 0;
       const transcriptionQueue = [];
@@ -72695,9 +72713,10 @@ const useRecordingService = ({
         }
       };
       transcriptionLoop();
-      console.log("✅ Parallel transcription recording started (with queue resilience)");
+      console.log("✅ System audio transcription started (with queue resilience)");
     } catch (error) {
-      console.error("Failed to start parallel transcription recording:", error);
+      console.error("Failed to start system audio transcription:", error);
+      console.log("⚠️ Continuing with recording without live transcription");
     }
   }, []);
   const startMicrophoneRecording = reactExports.useCallback(async () => {

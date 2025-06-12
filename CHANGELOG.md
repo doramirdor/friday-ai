@@ -5,29 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2025-01-12
-
-### Fixed
-- **Live Transcription Empty Results**: Fixed issue where recordings were successful but transcription returned empty text
-  - **Root Cause**: Transcription was processing microphone audio instead of system audio, resulting in silence during movie/video playback
-  - **Solution**: Implemented system audio capture using `getDisplayMedia` API for live transcription
-  - **Fallback**: Added automatic fallback to microphone if system audio capture fails
-  - **Improved Logging**: Enhanced empty transcription result handling with better diagnostic messages
-  - **User Experience**: Live transcription now properly captures and transcribes system audio content (movies, music, etc.)
-
-### Enhanced
-- **System Audio Transcription**: Replaced microphone-only transcription with intelligent audio source selection
-  - Uses `getDisplayMedia` to capture system audio for transcription while Swift recorder handles final recording
-  - Maintains dual recording approach: system audio for transcription + combined recording for final output
-  - Graceful degradation to microphone transcription if system audio capture is denied
-  - Better error handling that doesn't fail entire recording if transcription fails
-
-### Technical Details
-- **RecordingService.tsx**: Modified `startParallelTranscriptionRecording` to use system audio capture
-- **Audio Source Selection**: Prioritizes system audio capture over microphone for live transcription
-- **Error Resilience**: Transcription failures no longer prevent successful recording completion
-- **TypeScript Fixes**: Resolved compilation errors in Settings, SidebarContent, and TranscriptScreen components
-
 ## [Unreleased]
 
 ### Fixed

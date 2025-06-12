@@ -60,7 +60,6 @@ interface RecordingServiceAPI {
   stopRecording: () => Promise<void>
   getState: () => RecordingServiceState
   initializeService: () => Promise<void>
-  getTranscribeRecordedFile: () => (filePath: string) => Promise<void>
 }
 
 export const useRecordingService = ({
@@ -204,7 +203,7 @@ export const useRecordingService = ({
           currentTimeRef.current += 1
         }, 1000)
 
-        // Also start parallel transcription recording
+        // Also start parallel microphone recording for real-time transcription
         await startParallelTranscriptionRecording()
 
         console.log('✅ Combined recording started successfully')
@@ -220,36 +219,44 @@ export const useRecordingService = ({
     }
   }, [onTranscriptionStatusChange])
 
-  // Start parallel transcription recording (disabled for combined recording with Bluetooth)
+  // Start parallel transcription recording using system audio capture
   const startParallelTranscriptionRecording = useCallback(async (): Promise<void> => {
     try {
-      console.log('🎤 Starting transcription setup...')
+      console.log('🎤 Starting system audio capture for transcription...')
 
-      // For combined recording with Bluetooth, live transcription is not reliable
-      // because we can't access the system audio stream directly
-      if (isCombinedRecordingRef.current) {
-        console.log('⚠️ Live transcription disabled for combined recording with Bluetooth audio')
-        console.log('💡 Tip: Use post-recording transcription for system audio content')
+      // Try to capture system audio using getDisplayMedia
+      let stream: MediaStream
+      
+      try {
+        // Request screen capture with audio to get system audio
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: false,
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        })
         
-        // Set transcription status to indicate it's disabled
-        transcriptionStatusRef.current = 'disabled'
-        onTranscriptionStatusChange('disabled')
+        console.log('✅ System audio capture started for transcription')
+      } catch (displayError) {
+        console.log('⚠️ System audio capture failed, falling back to microphone for transcription:', displayError)
         
-        return
+        // Fallback to microphone if system audio capture fails
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false
+          }
+        })
       }
 
-      // For microphone-only recording, use standard microphone capture
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false
-        }
-      })
-      
-      console.log('🎤 Using microphone capture for transcription')
+      // Store stream reference for cleanup
       audioStreamRef.current = stream
 
       // Reset transcription state
@@ -301,7 +308,7 @@ export const useRecordingService = ({
 
       // Function to create and process transcription segments
       const processTranscriptionSegment = async (): Promise<void> => {
-        if (!isRecordingRef.current || !audioStreamRef.current) return
+        if (!isRecordingRef.current) return
 
         return new Promise<void>((resolve) => {
           // Use compatible audio format for transcription
@@ -311,7 +318,7 @@ export const useRecordingService = ({
               ? 'audio/webm'
               : 'audio/wav'
 
-          const recorder = new MediaRecorder(audioStreamRef.current!, {
+          const recorder = new MediaRecorder(stream, {
             mimeType,
             audioBitsPerSecond: 32000
           })
@@ -412,15 +419,13 @@ export const useRecordingService = ({
       // Start the transcription loop
       transcriptionLoop()
 
-      console.log('✅ Microphone transcription started')
+      console.log('✅ System audio transcription started (with queue resilience)')
     } catch (error) {
-      console.error('Failed to start transcription:', error)
+      console.error('Failed to start system audio transcription:', error)
       // Don't fail the entire recording if transcription fails
       console.log('⚠️ Continuing with recording without live transcription')
-      transcriptionStatusRef.current = 'error'
-      onTranscriptionStatusChange('error')
     }
-  }, [onTranscriptionStatusChange])
+  }, [])
 
   // Start microphone recording
   const startMicrophoneRecording = useCallback(async (): Promise<void> => {
@@ -723,63 +728,11 @@ export const useRecordingService = ({
     }
   }, [handleTranscriptionResult, onCombinedRecordingStarted, onCombinedRecordingStopped, onCombinedRecordingFailed])
 
-  // Post-recording transcription for system audio files
-  const transcribeRecordedFile = useCallback(async (filePath: string): Promise<void> => {
-    try {
-      console.log('🎵 Starting post-recording transcription for:', filePath)
-      
-      // Load the recorded file
-      const result = await (window.api as any).transcription.loadRecording(filePath)
-      if (!result.success) {
-        console.error('Failed to load recording for transcription:', result.error)
-        return
-      }
-      
-      // Process the entire file in chunks
-      const audioBuffer = result.buffer
-      const chunkSize = 1024 * 1024 // 1MB chunks
-      let offset = 0
-      
-      while (offset < audioBuffer.byteLength) {
-        const chunk = audioBuffer.slice(offset, offset + chunkSize)
-        
-        try {
-          const statusResult = await (window.api as any).transcription.isReady()
-          if (statusResult.ready) {
-            const transcriptionResult = await (window.api as any).transcription.processChunk(chunk)
-            if (transcriptionResult.success) {
-              console.log('✅ Post-recording chunk processed successfully')
-            } else {
-              console.error('Failed to process post-recording chunk:', transcriptionResult.error)
-            }
-          }
-        } catch (error) {
-          console.error('Error processing post-recording chunk:', error)
-        }
-        
-        offset += chunkSize
-        
-        // Small delay between chunks to avoid overwhelming the service
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-      
-      console.log('✅ Post-recording transcription completed')
-    } catch (error) {
-      console.error('Failed to transcribe recorded file:', error)
-    }
-  }, [])
-
-  // Get the transcription function for external use
-  const getTranscribeRecordedFile = useCallback(() => {
-    return transcribeRecordedFile
-  }, [transcribeRecordedFile])
-
   return {
     startRecording,
     stopRecording,
     getState,
-    initializeService,
-    getTranscribeRecordedFile
+    initializeService
   }
 }
 

@@ -109,10 +109,7 @@ const SettingsScreen: React.FC = () => {
     }
   }
 
-  const startEditingShortcut = (shortcutKey: string): void => {
-    setEditingShortcut(shortcutKey)
-    setNewShortcut('')
-  }
+
 
   const handleKeyDown = (event: React.KeyboardEvent): void => {
     if (!editingShortcut) return

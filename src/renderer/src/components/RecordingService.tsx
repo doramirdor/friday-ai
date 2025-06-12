@@ -137,7 +137,7 @@ export const useRecordingService = ({
   const handleTranscriptionResult = useCallback((result: TranscriptionResult): void => {
     console.log('📝 Received transcription:', result)
 
-    if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
+    if (result.type === 'transcript' && result.text && result.text.trim() !== '' && result.text !== 'undefined') {
       // Calculate proper timestamp based on recording start time
       const recordingElapsed = Date.now() - recordingStartTime.current
       const recordingSeconds = Math.floor(recordingElapsed / 1000)
@@ -162,6 +162,8 @@ export const useRecordingService = ({
       console.error('Transcription error:', result.message)
       transcriptionStatusRef.current = 'error'
       onTranscriptionStatusChange('error')
+    } else if (result.type === 'transcript' && (!result.text || result.text.trim() === '')) {
+      console.log('📝 Received empty transcription result - likely silence or no audio content')
     }
   }, [formatTime, onTranscriptionResult, onTranscriptionStatusChange])
 
@@ -217,21 +219,42 @@ export const useRecordingService = ({
     }
   }, [onTranscriptionStatusChange])
 
-  // Start parallel transcription recording
+  // Start parallel transcription recording using system audio capture
   const startParallelTranscriptionRecording = useCallback(async (): Promise<void> => {
     try {
-      console.log('🎤 Starting parallel microphone recording for transcription...')
+      console.log('🎤 Starting system audio capture for transcription...')
 
-      // Get user media with optimal settings for transcription
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false
-        }
-      })
+      // Try to capture system audio using getDisplayMedia
+      let stream: MediaStream
+      
+      try {
+        // Request screen capture with audio to get system audio
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: false,
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        })
+        
+        console.log('✅ System audio capture started for transcription')
+      } catch (displayError) {
+        console.log('⚠️ System audio capture failed, falling back to microphone for transcription:', displayError)
+        
+        // Fallback to microphone if system audio capture fails
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false
+          }
+        })
+      }
 
       // Store stream reference for cleanup
       audioStreamRef.current = stream
@@ -396,9 +419,11 @@ export const useRecordingService = ({
       // Start the transcription loop
       transcriptionLoop()
 
-      console.log('✅ Parallel transcription recording started (with queue resilience)')
+      console.log('✅ System audio transcription started (with queue resilience)')
     } catch (error) {
-      console.error('Failed to start parallel transcription recording:', error)
+      console.error('Failed to start system audio transcription:', error)
+      // Don't fail the entire recording if transcription fails
+      console.log('⚠️ Continuing with recording without live transcription')
     }
   }, [])
 

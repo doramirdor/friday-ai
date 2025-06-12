@@ -363,34 +363,23 @@ async function startCombinedRecording(
                 if (mainWindow) {
                   mainWindow.webContents.send('combined-recording-started', result)
                 }
-              } else if ((result.code === 'BLUETOOTH_LIMITATION' || 
-                          result.code === 'SCREEN_PERMISSION_REQUIRED' || 
-                          result.code === 'SYSTEM_AUDIO_UNAVAILABLE' ||
-                          result.code === 'RECORDING_STARTED_MIC_ONLY') && !hasStarted) {
-                hasStarted = true
-                clearInterval(hangDetectionInterval)
-                resolve({ 
-                  success: true, 
-                  path: result.path, 
-                  warning: result.warning,
-                  recommendation: result.recommendation
-                })
-
-                // Notify renderer about recording start with warning
-                if (mainWindow) {
-                  mainWindow.webContents.send('combined-recording-started', result)
-                }
-                
-                console.log('✅ Microphone-only recording started, process still tracked for stopping')
-              } else if (result.code === 'SYSTEM_AUDIO_FAILED' && !hasStarted) {
+                            } else if ((result.code === 'COMBINED_RECORDING_FAILED_BLUETOOTH' ||
+                          result.code === 'COMBINED_RECORDING_FAILED_PERMISSION' || 
+                          result.code === 'COMBINED_RECORDING_FAILED_SYSTEM') && !hasStarted) {
                 hasStarted = true
                 clearInterval(hangDetectionInterval)
                 resolve({ 
                   success: false, 
                   error: result.error,
-                  cause: result.cause,
-                  solution: result.solution
+                  recommendation: result.recommendation
                 })
+
+                // Notify renderer about recording failure
+                if (mainWindow) {
+                  mainWindow.webContents.send('combined-recording-failed', result)
+                }
+                
+                console.log('❌ Combined recording failed:', result.error)
               } else if (result.code === 'RECORDING_STOPPED') {
                 // Notify renderer about recording completion
                 if (mainWindow) {

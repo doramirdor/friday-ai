@@ -21,12 +21,31 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
 }) => {
   // Create the BlockNote editor instance
   const editor = useCreateBlockNote()
+  
+  // Track if we're updating from external value to prevent loops
+  const isUpdatingFromValue = React.useRef(false)
 
   // Handle content changes
   const handleChange = React.useCallback(async (): Promise<void> => {
+    // Don't trigger onChange if we're updating from external value
+    if (isUpdatingFromValue.current) {
+      return
+    }
+    
     try {
-      // Get the content as full HTML to better preserve whitespace
-      const htmlContent = await editor.blocksToFullHTML(editor.document)
+      // Get the content as HTML
+      let htmlContent = await editor.blocksToHTMLLossy(editor.document)
+      
+      // Replace trailing spaces with non-breaking spaces to preserve them
+      // This regex finds spaces at the end of text content within HTML tags
+      htmlContent = htmlContent.replace(/(\S) +(<\/[^>]+>)/g, (match, beforeSpace, closeTag) => {
+        const spaceMatch = match.match(/ +/)
+        if (!spaceMatch) return match
+        const spaces = spaceMatch[0]
+        const nbspSpaces = spaces.replace(/ /g, '&nbsp;')
+        return beforeSpace + nbspSpaces + closeTag
+      })
+      
       onChange(htmlContent)
     } catch (error) {
       console.error('Failed to convert blocks to HTML:', error)
@@ -42,6 +61,16 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
   React.useEffect(() => {
     const updateContent = async (): Promise<void> => {
       try {
+        // Get current content to compare
+        const currentContent = await editor.blocksToHTMLLossy(editor.document)
+        
+        // Only update if the value is actually different
+        if (currentContent === value) {
+          return
+        }
+        
+        isUpdatingFromValue.current = true
+        
         if (value !== '') {
           // Convert HTML to blocks and replace content
           const blocks = await editor.tryParseHTMLToBlocks(value)
@@ -50,8 +79,11 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
           // Clear the editor
           editor.replaceBlocks(editor.document, [])
         }
+        
+        isUpdatingFromValue.current = false
       } catch (error) {
         console.warn('Failed to update editor content:', error)
+        isUpdatingFromValue.current = false
       }
     }
 
@@ -91,7 +123,6 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
             font-family: var(--font-family);
             font-size: 14px;
             line-height: 1.5;
-            white-space: pre-wrap;
           }
           
           .bn-editor [data-node-type="paragraph"][data-is-empty="true"]::before {
@@ -99,18 +130,6 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
             color: var(--text-tertiary);
             opacity: 0.6;
             pointer-events: none;
-          }
-          
-          .bn-editor [data-node-type="paragraph"] {
-            white-space: pre-wrap;
-          }
-          
-          .bn-editor p {
-            white-space: pre-wrap;
-          }
-          
-          .bn-editor .bn-inline-content {
-            white-space: pre-wrap;
           }
           
           .bn-side-menu {

@@ -199,28 +199,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.log('🎙️ Combined recording started:', result)
     setIsRecording(true)
       
-      if (result.code === 'BLUETOOTH_LIMITATION') {
-        console.warn('⚠️ Bluetooth audio detected:', result.warning)
-        const bluetoothWarning = `⚠️ ${result.warning}\n💡 ${result.recommendation}\n\n🔧 **Quick Fix Options:**\n1. Switch to built-in speakers for full system audio capture\n2. Continue with microphone-only recording\n3. Try the automatic Bluetooth workaround (if available)`
-        setRecordingWarning(bluetoothWarning)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
-        console.warn('⚠️ Screen recording permission required:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}\n\nPlease grant screen recording permission in System Settings > Privacy & Security > Screen Recording`)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'SYSTEM_AUDIO_UNAVAILABLE') {
-        console.warn('⚠️ System audio unavailable:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
-        console.warn('⚠️ System audio capture failed (legacy):', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}`)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
+      // Note: Combined recording failures are now handled in handleCombinedRecordingFailed
+      // No more warning states for Bluetooth - these should be complete failures
+      if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
         console.error('❌ Recording failed:', result.error)
         setRecordingWarning(`❌ Recording failed: ${result.error}`)
         setTranscriptionStatus('error')
-      setIsRecording(false)
+        setIsRecording(false)
       } else if (result.code === 'RECORDING_STARTED') {
         setRecordingWarning(null)
         setTranscriptionStatus('recording')
@@ -713,7 +698,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
-      const result = await window.api.gemini.generateSummary(options)
+      const result = await (window.api as any).gemini.generateSummary(options)
       
       if (result.success && result.summary) {
         setSummary(result.summary)
@@ -757,7 +742,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
-      const result = await window.api.gemini.generateContent(options)
+      const result = await (window.api as any).gemini.generateContent(options)
       
       if (result.success && result.data) {
         const { summary: newSummary, description: newDescription, actionItems: newActionItems, tags: newTags } = result.data

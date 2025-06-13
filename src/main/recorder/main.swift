@@ -1,12 +1,11 @@
 import Foundation
 
-// Main entry point for the Swift Recorder
-print("🎙️ Starting Friday Audio Recorder...")
+print("DEBUG: Swift recorder starting")
+print("DEBUG: CLI args  →", CommandLine.arguments)
 
-if #available(macOS 13.0, *) {
-    let recorder = RecorderCLI()
-    recorder.executeRecordingProcess()
-} else {
-    print("❌ This recorder requires macOS 13.0 or later")
-    exit(1)
-} 
+// Kick off the recorder
+let recorder = RecorderCLI()
+recorder.executeRecordingProcess()
+
+// NOTE: RecorderCLI exits the process itself via ResponseHandler,
+// so there’s nothing else to do here.

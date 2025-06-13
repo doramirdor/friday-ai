@@ -1,4 +1,4 @@
-SWIFT_FILES = Recorder.swift AudioDeviceManager.swift main.swift
+SWIFT_FILES = Recorder.swift AudioDeviceManager.swift main.swift Extensions.swift PermissionsRequester.swift ResponseHandler.swift
 EXECUTABLE = Recorder
 BUILD_DIR = build
 SWIFT_FLAGS = -framework AVFoundation -framework ScreenCaptureKit -framework CoreAudio -framework Foundation

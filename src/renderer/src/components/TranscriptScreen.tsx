@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { BlockNoteEditor } from './BlockNoteEditor' // Added import
+import './TranscriptScreen.css' // Import the new CSS file
 import { Meeting } from '../types/database'
 import { AlertKeyword, AlertMatch } from '../types/electron'
 import RecordingInterface from './RecordingInterface'
@@ -106,6 +108,31 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
+
+  // --- BlockNoteEditor Integration ---
+  // Function to convert transcript to HTML for BlockNoteEditor
+  const transcriptToHtml = (transcriptLines: TranscriptLine[]): string => {
+    if (!transcriptLines || transcriptLines.length === 0) {
+      return '<p></p>' // Return an empty paragraph if transcript is empty
+    }
+    return transcriptLines
+      .map(
+        (line) =>
+          `<p><strong>${line.time}</strong>: ${line.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`
+      )
+      .join('')
+  }
+
+  // Placeholder for onChange for BlockNoteEditor - to be implemented later
+  const handleEditorChange = (newHtml: string): void => {
+    console.log('BlockNoteEditor HTML changed (not yet updating state):', newHtml)
+    // For now, we are not parsing HTML back to TranscriptLine[]
+    // This will be implemented in a future step.
+    // Example of what might be needed:
+    // const newTranscript = parseHtmlToTranscript(newHtml);
+    // setTranscript(newTranscript);
+  }
+  // --- End BlockNoteEditor Integration ---
 
   // Function to load existing recording file
   const loadExistingRecording = useCallback(async (filePath: string): Promise<void> => {
@@ -577,6 +604,11 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     const newTime = timeToSeconds(line.time)
     setCurrentTime(newTime)
     setActiveLineIndex(index)
+    // TODO: Adapt this if BlockNoteEditor selection can be tied to transcript lines
+    // For now, this function might not work as expected if clicks are on BlockNoteEditor
+    console.warn(
+      'handleTranscriptLineClick may not function correctly with BlockNoteEditor yet'
+    )
   }
 
   const handleAudioPlayerRef = (ref: HTMLAudioElement | null): void => {
@@ -910,12 +942,24 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
             onAudioPlayerRef={handleAudioPlayerRef}
           />
         )}
+        {/* --- BlockNoteEditor Integration for transcript --- */}
+        <div className="blocknote-editor-wrapper">
+          {/* The H3 title is optional, styled in CSS if kept */}
+          {/* <h3>Editable Transcript (BlockNoteEditor)</h3> */}
+          <BlockNoteEditor
+            value={transcriptToHtml(transcript)}
+            onChange={handleEditorChange}
+            readOnly={isRecording || isPlaying}
+          />
+        </div>
+        {/* --- End BlockNoteEditor Integration --- */}
               </div>
 
-      {/* Sidebar (Right 50%) */}
-      <SidebarContent
-        meeting={meeting}
-        title={title}
+      {/* Sidebar */}
+      <div className="transcript-sidebar">
+        <SidebarContent
+          meeting={meeting}
+          title={title}
         description={description}
         tags={tags}
         contextText={contextText}
@@ -942,9 +986,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         onGenerateAIMessage={generateAIMessage}
         transcript={transcript}
         isGeneratingMessage={isGeneratingMessage}
-        onSetGeneratingMessage={handleSetGeneratingMessage}
-        onAlertKeywordsChange={setAlertKeywords}
-      />
+          onSetGeneratingMessage={handleSetGeneratingMessage}
+          onAlertKeywordsChange={setAlertKeywords}
+        />
+      </div>
 
       {/* Full-Screen AI Loading Overlay */}
       {isAIGenerating && (

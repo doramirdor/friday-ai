@@ -11,11 +11,11 @@ interface PlaybackInterfaceProps {
   currentTime: number
   totalTime: number
   recordedAudioUrl: string | null
-  transcript: TranscriptLine[]
-  activeLineIndex: number
+  // transcript: TranscriptLine[] // Removed
+  // activeLineIndex: number // Removed
   onTogglePlayback: () => Promise<void>
   onSeek: (event: React.MouseEvent<HTMLDivElement>) => void
-  onTranscriptLineClick: (line: TranscriptLine, index: number) => void
+  // onTranscriptLineClick: (line: TranscriptLine, index: number) => void // Removed
   onAudioPlayerRef: (ref: HTMLAudioElement | null) => void
 }
 
@@ -24,11 +24,11 @@ const PlaybackInterface: React.FC<PlaybackInterfaceProps> = ({
   currentTime,
   totalTime,
   recordedAudioUrl,
-  transcript,
-  activeLineIndex,
+  // transcript, // Removed
+  // activeLineIndex, // Removed
   onTogglePlayback,
   onSeek,
-  onTranscriptLineClick,
+  // onTranscriptLineClick, // Removed
   onAudioPlayerRef
 }) => {
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
@@ -46,7 +46,7 @@ const PlaybackInterface: React.FC<PlaybackInterfaceProps> = ({
   }
 
   const progressPercentage = totalTime > 0 ? (currentTime / totalTime) * 100 : 0
-  const hasTranscript = transcript && transcript.length > 0
+  // const hasTranscript = transcript && transcript.length > 0 // Removed
 
   return (
     <>
@@ -117,40 +117,7 @@ const PlaybackInterface: React.FC<PlaybackInterfaceProps> = ({
         </div>
       </div>
 
-      {/* Transcript Content */}
-      <div className="transcript-content">
-        <h3 style={{ marginTop: 0, color: 'var(--text-primary)' }}>Transcript</h3>
-        <div className="transcript-lines">
-          {hasTranscript ? (
-            transcript.map((line, index) => (
-              <div
-                key={index}
-                className={`transcript-line ${index === activeLineIndex ? 'active' : ''}`}
-                onClick={() => onTranscriptLineClick(line, index)}
-              >
-                <div className="transcript-time">{line.time}</div>
-                <div
-                  className="transcript-text"
-                  contentEditable
-                  suppressContentEditableWarning
-                >
-                  {line.text}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div
-              style={{
-                textAlign: 'center',
-                padding: 'var(--spacing-xl)',
-                color: 'var(--text-secondary)'
-              }}
-            >
-              <p>No transcript available.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Transcript Content removed as BlockNoteEditor in parent now handles transcript display */}
     </>
   )
 }

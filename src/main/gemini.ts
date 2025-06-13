@@ -50,9 +50,8 @@ interface FollowupQuestionsOptions {
 interface FollowupQuestionsResult {
   success: boolean
   data?: {
-    questions: string[]
-    risks: string[]
-    comments: string[]
+    transcriptSummary: string
+    predictedNextSentence: string
   }
   error?: string
 }
@@ -368,7 +367,7 @@ Generate only the email body content in rich text format, no subject line or add
         .map(line => `[${line.time}] ${line.text}`)
         .join('\n')
 
-      const prompt = `You are an AI assistant analyzing an ongoing meeting. Based on the current transcript and context, please generate followup questions, identify potential risks, and provide helpful comments.
+      const prompt = `You are an AI assistant analyzing an ongoing meeting transcript. Based on the current transcript and context, please provide a summary of the latest information and predict what the next sentence in the transcript might be.
 
 MEETING CONTEXT:
 Title: ${options.title || 'Meeting'}
@@ -386,32 +385,24 @@ ${options.summary || 'No summary yet'}
 
 Please provide your response in the following JSON format:
 {
-  "questions": [
-    "What specific question should be asked to clarify a point?",
-    "What details need more elaboration?"
-  ],
-  "risks": [
-    "What potential issues or concerns were identified?",
-    "What problems might arise from the current discussion?"
-  ],
-  "comments": [
-    "What important observations about the meeting flow?",
-    "What suggestions for improving the discussion?"
-  ]
+  "transcriptSummary": "A concise summary of the latest and most important information from the transcript",
+  "predictedNextSentence": "A realistic prediction of what might be said next based on the conversation flow and context"
 }
 
 Guidelines:
-- Questions: Generate 2-4 relevant followup questions that would help clarify or expand on the current discussion
-- Risks: Identify 1-3 potential issues, concerns, or problems mentioned or implied in the discussion
-- Comments: Provide 1-3 helpful observations or suggestions about the meeting progress
-- Make suggestions actionable and specific to the current context
-- If no relevant items exist for a category, provide an empty array
+- Transcript Summary: Summarize the most recent and relevant information from the conversation, focusing on the current topic and key points
+- Predicted Next Sentence: Analyze the conversation flow, context, and patterns to predict what someone might realistically say next. Consider:
+  - The current speaker and topic
+  - Natural conversation patterns
+  - Unresolved questions or incomplete thoughts
+  - Meeting dynamics and typical responses
+- Make predictions realistic and contextually appropriate
 - Ensure the JSON is properly formatted`
 
       const result = await this.makeGeminiRequest(prompt)
       
       if (!result.success || !result.content) {
-        return { success: false, error: result.error || 'Failed to generate followup questions' }
+        return { success: false, error: result.error || 'Failed to generate transcript prediction' }
       }
 
       try {
@@ -425,16 +416,15 @@ Guidelines:
         return {
           success: true,
           data: {
-            questions: Array.isArray(parsedData.questions) ? parsedData.questions : [],
-            risks: Array.isArray(parsedData.risks) ? parsedData.risks : [],
-            comments: Array.isArray(parsedData.comments) ? parsedData.comments : []
+            transcriptSummary: parsedData.transcriptSummary || 'No summary available',
+            predictedNextSentence: parsedData.predictedNextSentence || 'Unable to predict next sentence'
           }
         }
       } catch (parseError) {
         return { success: false, error: `Failed to parse Gemini response: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` }
       }
     } catch (error) {
-      return { success: false, error: `Followup questions generation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }
+      return { success: false, error: `Transcript prediction generation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }
     }
   }
 
@@ -477,7 +467,7 @@ Instructions:
 
 Respond with a well-structured, informative answer that combines both sources appropriately.`
 
-      const result = await this.makeGeminiRequest(prompt)
+      const result = await this.makeGeminiRequest(prompt, 'gemini-2.0-flash-exp')
       
       if (!result.success || !result.content) {
         return { success: false, error: result.error || 'Failed to get answer' }

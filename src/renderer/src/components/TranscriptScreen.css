@@ -1,0 +1,98 @@
+/* Styles for TranscriptScreen.tsx */
+
+.transcript-layout {
+  display: flex;
+  height: 100%; /* Assumes parent (.main-content in App.tsx) provides a flex context that allows this */
+  width: 100%;
+  background-color: var(--surface-primary); /* Background for the entire screen */
+}
+
+.transcript-main {
+  flex: 3; /* Takes more space, e.g., 3 parts of 4, or 75% */
+  padding: 1rem; /* Padding around the main content area */
+  display: flex;
+  flex-direction: column; /* To stack recording interface/playback and editor wrapper */
+  overflow: hidden; /* Prevent this container from scrolling; children should scroll */
+}
+
+/* This wrapper will contain the BlockNoteEditor and be styled like paper */
+.blocknote-editor-wrapper {
+  flex-grow: 1; /* Takes available vertical space in transcript-main */
+  border: 1px solid var(--border-secondary); /* Subtle border for the paper */
+  border-radius: var(--radius-lg); /* Slightly larger radius for a softer look */
+  padding: 1.5rem; /* More padding inside the 'paper' */
+  overflow-y: auto; /* Allow editor content to scroll */
+  display: flex; /* To make BlockNoteEditor fill this wrapper */
+  flex-direction: column;
+}
+
+/* Specific styling for BlockNoteEditor component if needed */
+.blocknote-editor-wrapper > .bn-editor { /* Target the actual BlockNote editor class if known, or its direct child */
+  flex-grow: 1; /* Make the editor itself fill the wrapper */
+  background-color: transparent !important; /* Ensure editor background doesn't override wrapper */
+}
+
+
+/* Theme-specific paper styles */
+html[data-theme='light'] .blocknote-editor-wrapper {
+  background-color: #ffffff; /* Cleaner white for light theme paper */
+  color: #1a1a1a; /* Darker text for better contrast on white */
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1); /* Subtle shadow for depth */
+}
+
+html[data-theme='dark'] .blocknote-editor-wrapper {
+  background-color: #252525; /* Darker paper for dark theme, less stark than #333 */
+  color: #e0e0e0; /* Lighter text for dark background */
+  border-color: var(--border-tertiary); /* Slightly lighter border for dark themes */
+}
+
+.transcript-sidebar {
+  flex: 1; /* Takes less space, e.g., 1 part of 4, or 25% */
+  overflow-y: auto; /* Allow sidebar content to scroll independently */
+  border-left: 1px solid var(--border-primary);
+  background-color: var(--surface-secondary); /* Sidebar's own background */
+  padding: 0; /* Remove padding if SidebarContent's internal cards handle it */
+}
+
+/* Ensure SidebarContent's internal structure fits well */
+.transcript-sidebar .sidebar-content-wrapper { /* Assuming SidebarContent is wrapped in this */
+  padding: 1rem; /* Add padding here if SidebarContent itself doesn't have it */
+}
+
+/* Styles for the Recording/Playback interface part if it's above the editor */
+.transcript-main > div:first-child { /* Targets RecordingInterface/PlaybackInterface/LiveRecordingInterface */
+  margin-bottom: 1rem; /* Space between controls and editor */
+  flex-shrink: 0; /* Prevent it from shrinking */
+}
+
+/* H3 inside the editor wrapper was for the "Editable Transcript" title, can be removed or styled */
+.blocknote-editor-wrapper h3 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem; /* Smaller, less obtrusive */
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-align: center;
+}
+
+/* Ensure the actual BlockNote editor toolbar is styled correctly (these are guesses) */
+.bn-toolbar {
+  background-color: var(--surface-tertiary) !important;
+  border-bottom: 1px solid var(--border-secondary) !important;
+}
+
+html[data-theme='light'] .bn-toolbar button {
+  color: #333 !important;
+}
+html[data-theme='dark'] .bn-toolbar button {
+  color: #f1f1f1 !important;
+}
+
+html[data-theme='light'] .bn-toolbar button:hover {
+  background-color: rgba(0,0,0,0.1) !important;
+}
+html[data-theme='dark'] .bn-toolbar button:hover {
+  background-color: rgba(255,255,255,0.1) !important;
+}
+
+```

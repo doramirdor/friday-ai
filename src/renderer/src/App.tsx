@@ -228,7 +228,17 @@ function App(): React.JSX.Element {
       </div>
 
       {/* Main Content */}
-      <div className="main-content">{renderScreen()}</div>
+      <div
+        className="main-content"
+        style={{
+          flexGrow: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden' /* Prevent App-level scroll, TranscriptScreen should manage its own scroll */
+        }}
+      >
+        {renderScreen()}
+      </div>
 
       {/* New Meeting Dialog */}
       <NewMeetingDialog

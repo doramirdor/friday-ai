@@ -125,12 +125,11 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   const [dialogMessage, setDialogMessage] = useState('')
   const [dialogMessageType, setDialogMessageType] = useState<'slack' | 'email'>('slack')
 
-  // Followup questions state - runs in background
+  // Transcript prediction state - runs in background
   const [followupEnabled, setFollowupEnabled] = useState(false)
   const [followupInterval, setFollowupInterval] = useState(30) // seconds
-  const [followupQuestions, setFollowupQuestions] = useState<string[]>([])
-  const [followupRisks, setFollowupRisks] = useState<string[]>([])
-  const [followupComments, setFollowupComments] = useState<string[]>([])
+  const [transcriptSummary, setTranscriptSummary] = useState<string>('')
+  const [predictedNextSentence, setPredictedNextSentence] = useState<string>('')
   const [isGeneratingFollowup, setIsGeneratingFollowup] = useState(false)
   const [lastFollowupTime, setLastFollowupTime] = useState<number>(0)
 
@@ -243,7 +242,7 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
         return
       }
 
-      // Prepare enhanced options including Q&A and followup data
+      // Prepare enhanced options including Q&A and transcript prediction data
       const enhancedOptions = {
         type,
         title: aiDataSelection.title ? title : '',
@@ -254,9 +253,8 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
         actionItems,
         contextText,
         questionHistory: aiDataSelection.questionHistory ? questionHistory : [],
-        followupQuestions: aiDataSelection.followupQuestions ? followupQuestions : [],
-        followupRisks: aiDataSelection.followupQuestions ? followupRisks : [],
-        followupComments: aiDataSelection.followupQuestions ? followupComments : []
+        transcriptSummary: aiDataSelection.followupQuestions ? transcriptSummary : '',
+        predictedNextSentence: aiDataSelection.followupQuestions ? predictedNextSentence : ''
       }
       
       const result = await onGenerateAIMessage(type, enhancedOptions)
@@ -294,20 +292,20 @@ Q: ${qa.question}
 A: ${qa.answer.substring(0, 100)}${qa.answer.length > 100 ? '...' : ''}`).join('\n')}`
         }
 
-        // Add followup section if there are followup items
-        if ((followupQuestions.length > 0 || followupRisks.length > 0) && aiDataSelection.followupQuestions) {
+        // Add transcript prediction section if available
+        if ((transcriptSummary || predictedNextSentence) && aiDataSelection.followupQuestions) {
           demoMessage += `
 
-**Follow-up Items:**`
+**Transcript Analysis:**`
           
-          if (followupQuestions.length > 0) {
+          if (transcriptSummary) {
             demoMessage += `
-- Questions to explore: ${followupQuestions.slice(0, 2).join(', ')}`
+- Current Summary: ${transcriptSummary.substring(0, 100)}${transcriptSummary.length > 100 ? '...' : ''}`
           }
           
-          if (followupRisks.length > 0) {
+          if (predictedNextSentence) {
             demoMessage += `
-- Risks to monitor: ${followupRisks.slice(0, 2).join(', ')}`
+- Predicted Next: ${predictedNextSentence}`
           }
         }
 
@@ -406,7 +404,7 @@ Best regards,
 
     try {
       setIsGeneratingFollowup(true)
-      console.log('🤖 Generating followup questions with Gemini...')
+      console.log('🤖 Generating transcript prediction with Gemini...')
       
       const options = {
         transcript,
@@ -417,19 +415,18 @@ Best regards,
         summary
       }
 
-      const result = await window.api.gemini.generateFollowupQuestions(options)
+      const result = await (window.api as any).gemini.generateFollowupQuestions(options)
       
       if (result.success && result.data) {
-        setFollowupQuestions(result.data.questions || [])
-        setFollowupRisks(result.data.risks || [])
-        setFollowupComments(result.data.comments || [])
+        setTranscriptSummary(result.data.transcriptSummary || 'No summary available')
+        setPredictedNextSentence(result.data.predictedNextSentence || 'Unable to predict next sentence')
         setLastFollowupTime(Date.now())
-        console.log('✅ Followup questions generated successfully')
+        console.log('✅ Transcript prediction generated successfully')
       } else {
-        console.error('Failed to generate followup questions:', result.error)
+        console.error('Failed to generate transcript prediction:', result.error)
       }
     } catch (error) {
-      console.error('Error generating followup questions:', error)
+      console.error('Error generating transcript prediction:', error)
     } finally {
       setIsGeneratingFollowup(false)
     }
@@ -454,7 +451,7 @@ Best regards,
         summary
       }
 
-      const result = await window.api.gemini.askQuestion(options)
+      const result = await (window.api as any).gemini.askQuestion(options)
       
       if (result.success && result.answer) {
         setQuestionAnswer(result.answer)
@@ -770,7 +767,7 @@ Best regards,
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">
-                💡 Followup Questions
+                🔮 Transcript Prediction
                 {followupEnabled && (
                   <span style={{ 
                     marginLeft: '8px', 
@@ -787,7 +784,7 @@ Best regards,
             </div>
             <div className="card-body">
               <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
-                AI automatically analyzes your meeting transcript and generates relevant followup questions, identifies potential risks, and provides helpful comments.
+                AI automatically analyzes your meeting transcript to summarize the latest information and predict what might be said next.
               </div>
 
               <div className="input-group">
@@ -831,54 +828,47 @@ Best regards,
                   disabled={isGeneratingFollowup || transcript.length === 0}
                 >
                   <SparklesIcon size={16} />
-                  {isGeneratingFollowup ? 'Generating...' : 'Generate Now'}
+                  {isGeneratingFollowup ? 'Generating...' : 'Generate Prediction'}
                 </button>
               </div>
 
-              {(followupQuestions.length > 0 || followupRisks.length > 0 || followupComments.length > 0) && (
+              {(transcriptSummary || predictedNextSentence) && (
                 <div className="followup-results">
-                  {followupQuestions.length > 0 && (
+                  {transcriptSummary && (
                     <div className="followup-section">
                       <h5 style={{ color: 'var(--interactive-primary)', marginBottom: '8px' }}>
-                        💡 Suggested Questions
+                        📋 Latest Information Summary
                       </h5>
-                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
-                        {followupQuestions.map((question, index) => (
-                          <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
-                            {question}
-                          </li>
-                        ))}
-                      </ul>
+                      <div style={{ 
+                        padding: '12px', 
+                        background: 'var(--surface-secondary)', 
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '14px',
+                        lineHeight: 'var(--line-height-relaxed)',
+                        color: 'var(--text-primary)'
+                      }}>
+                        {transcriptSummary}
+                      </div>
                     </div>
                   )}
 
-                  {followupRisks.length > 0 && (
+                  {predictedNextSentence && (
                     <div className="followup-section">
-                      <h5 style={{ color: 'var(--status-error)', marginBottom: '8px' }}>
-                        ⚠️ Potential Risks
+                      <h5 style={{ color: 'var(--status-success)', marginBottom: '8px' }}>
+                        🔮 Predicted Next Sentence
                       </h5>
-                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
-                        {followupRisks.map((risk, index) => (
-                          <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
-                            {risk}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {followupComments.length > 0 && (
-                    <div className="followup-section">
-                      <h5 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>
-                        💬 Comments
-                      </h5>
-                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
-                        {followupComments.map((comment, index) => (
-                          <li key={index} style={{ marginBottom: '4px', fontSize: '14px' }}>
-                            {comment}
-                          </li>
-                        ))}
-                      </ul>
+                      <div style={{ 
+                        padding: '12px', 
+                        background: 'var(--surface-secondary)', 
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '14px',
+                        lineHeight: 'var(--line-height-relaxed)',
+                        color: 'var(--text-primary)',
+                        fontStyle: 'italic',
+                        border: '1px dashed var(--border)'
+                      }}>
+                        &ldquo;{predictedNextSentence}&rdquo;
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1021,7 +1011,7 @@ Best regards,
                       />
                       <span style={{ textTransform: 'capitalize' }}>
                         {key === 'questionHistory' ? 'Questions & Answers' : 
-                         key === 'followupQuestions' ? 'Followup Items' : 
+                         key === 'followupQuestions' ? 'Transcript Prediction' : 
                          key}
                       </span>
                     </label>

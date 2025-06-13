@@ -10,8 +10,8 @@ interface LiveRecordingInterfaceProps {
   currentTime: number
   transcriptionStatus: string
   recordingWarning: string | null
-  transcript: TranscriptLine[]
-  liveText: string
+  // transcript: TranscriptLine[] // Removed
+  // liveText: string // Removed
   onStopRecording: () => Promise<void>
 }
 
@@ -19,8 +19,8 @@ const LiveRecordingInterface: React.FC<LiveRecordingInterfaceProps> = ({
   currentTime,
   transcriptionStatus,
   recordingWarning,
-  transcript,
-  liveText,
+  // transcript, // Removed
+  // liveText, // Removed
   onStopRecording
 }) => {
   const formatTime = (seconds: number): string => {
@@ -98,49 +98,7 @@ const LiveRecordingInterface: React.FC<LiveRecordingInterfaceProps> = ({
         </div>
       )}
 
-      {/* Live Transcript */}
-      <div className="transcript-content" style={{ flex: 1, overflow: 'auto' }}>
-        <h3 style={{ marginTop: 0, color: 'var(--text-primary)' }}>Live Transcript</h3>
-        <div className="transcript-lines">
-          {transcript.length > 0 ? (
-            transcript.map((line, index) => (
-              <div
-                key={index}
-                className={`transcript-line ${index === transcript.length - 1 ? 'active' : ''}`}
-              >
-                <div className="transcript-time">{line.time}</div>
-                <div className="transcript-text">{line.text}</div>
-              </div>
-            ))
-          ) : (
-            <div
-              style={{
-                textAlign: 'center',
-                padding: 'var(--spacing-xl)',
-                color: 'var(--text-secondary)'
-              }}
-            >
-              <p>Speak to start transcribing...</p>
-            </div>
-          )}
-
-          {/* Live text preview */}
-          {liveText && (
-            <div
-              style={{
-                padding: 'var(--spacing-sm)',
-                background: 'var(--surface-tertiary)',
-                borderRadius: 'var(--radius-sm)',
-                marginTop: 'var(--spacing-sm)',
-                fontStyle: 'italic',
-                color: 'var(--text-secondary)'
-              }}
-            >
-              Processing: &ldquo;{liveText}&rdquo;
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Live Transcript section removed as BlockNoteEditor in parent now handles transcript display */}
     </div>
   )
 }

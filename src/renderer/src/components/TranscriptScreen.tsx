@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { BlockNoteEditor } from './BlockNoteEditor' // Added import
+import './TranscriptScreen.css' // Import the new CSS file
 import { Meeting } from '../types/database'
 import { AlertKeyword, AlertMatch } from '../types/electron'
 import RecordingInterface from './RecordingInterface'
@@ -107,6 +109,31 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
 
+  // --- BlockNoteEditor Integration ---
+  // Function to convert transcript to HTML for BlockNoteEditor
+  const transcriptToHtml = (transcriptLines: TranscriptLine[]): string => {
+    if (!transcriptLines || transcriptLines.length === 0) {
+      return '<p></p>' // Return an empty paragraph if transcript is empty
+    }
+    return transcriptLines
+      .map(
+        (line) =>
+          `<p><strong>${line.time}</strong>: ${line.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`
+      )
+      .join('')
+  }
+
+  // Placeholder for onChange for BlockNoteEditor - to be implemented later
+  const handleEditorChange = (newHtml: string): void => {
+    console.log('BlockNoteEditor HTML changed (not yet updating state):', newHtml)
+    // For now, we are not parsing HTML back to TranscriptLine[]
+    // This will be implemented in a future step.
+    // Example of what might be needed:
+    // const newTranscript = parseHtmlToTranscript(newHtml);
+    // setTranscript(newTranscript);
+  }
+  // --- End BlockNoteEditor Integration ---
+
   // Function to load existing recording file
   const loadExistingRecording = useCallback(async (filePath: string): Promise<void> => {
     try {
@@ -199,28 +226,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.log('🎙️ Combined recording started:', result)
     setIsRecording(true)
       
-      if (result.code === 'BLUETOOTH_LIMITATION') {
-        console.warn('⚠️ Bluetooth audio detected:', result.warning)
-        const bluetoothWarning = `⚠️ ${result.warning}\n💡 ${result.recommendation}\n\n🔧 **Quick Fix Options:**\n1. Switch to built-in speakers for full system audio capture\n2. Continue with microphone-only recording\n3. Try the automatic Bluetooth workaround (if available)`
-        setRecordingWarning(bluetoothWarning)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'SCREEN_PERMISSION_REQUIRED') {
-        console.warn('⚠️ Screen recording permission required:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}\n\nPlease grant screen recording permission in System Settings > Privacy & Security > Screen Recording`)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'SYSTEM_AUDIO_UNAVAILABLE') {
-        console.warn('⚠️ System audio unavailable:', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}\n💡 ${result.recommendation}`)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'RECORDING_STARTED_MIC_ONLY') {
-        console.warn('⚠️ System audio capture failed (legacy):', result.warning)
-        setRecordingWarning(`⚠️ ${result.warning}`)
-        setTranscriptionStatus('recording-mic-only')
-      } else if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
+      // Note: Combined recording failures are now handled in handleCombinedRecordingFailed
+      // No more warning states for Bluetooth - these should be complete failures
+      if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
         console.error('❌ Recording failed:', result.error)
         setRecordingWarning(`❌ Recording failed: ${result.error}`)
         setTranscriptionStatus('error')
-      setIsRecording(false)
+        setIsRecording(false)
       } else if (result.code === 'RECORDING_STARTED') {
         setRecordingWarning(null)
         setTranscriptionStatus('recording')
@@ -592,6 +604,11 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     const newTime = timeToSeconds(line.time)
     setCurrentTime(newTime)
     setActiveLineIndex(index)
+    // TODO: Adapt this if BlockNoteEditor selection can be tied to transcript lines
+    // For now, this function might not work as expected if clicks are on BlockNoteEditor
+    console.warn(
+      'handleTranscriptLineClick may not function correctly with BlockNoteEditor yet'
+    )
   }
 
   const handleAudioPlayerRef = (ref: HTMLAudioElement | null): void => {
@@ -713,7 +730,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
-      const result = await window.api.gemini.generateSummary(options)
+      const result = await (window.api as any).gemini.generateSummary(options)
       
       if (result.success && result.summary) {
         setSummary(result.summary)
@@ -757,7 +774,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
-      const result = await window.api.gemini.generateContent(options)
+      const result = await (window.api as any).gemini.generateContent(options)
       
       if (result.success && result.data) {
         const { summary: newSummary, description: newDescription, actionItems: newActionItems, tags: newTags } = result.data
@@ -925,12 +942,24 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
             onAudioPlayerRef={handleAudioPlayerRef}
           />
         )}
+        {/* --- BlockNoteEditor Integration for transcript --- */}
+        <div className="blocknote-editor-wrapper">
+          {/* The H3 title is optional, styled in CSS if kept */}
+          {/* <h3>Editable Transcript (BlockNoteEditor)</h3> */}
+          <BlockNoteEditor
+            value={transcriptToHtml(transcript)}
+            onChange={handleEditorChange}
+            readOnly={isRecording || isPlaying}
+          />
+        </div>
+        {/* --- End BlockNoteEditor Integration --- */}
               </div>
 
-      {/* Sidebar (Right 50%) */}
-      <SidebarContent
-        meeting={meeting}
-        title={title}
+      {/* Sidebar */}
+      <div className="transcript-sidebar">
+        <SidebarContent
+          meeting={meeting}
+          title={title}
         description={description}
         tags={tags}
         contextText={contextText}
@@ -957,9 +986,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         onGenerateAIMessage={generateAIMessage}
         transcript={transcript}
         isGeneratingMessage={isGeneratingMessage}
-        onSetGeneratingMessage={handleSetGeneratingMessage}
-        onAlertKeywordsChange={setAlertKeywords}
-      />
+          onSetGeneratingMessage={handleSetGeneratingMessage}
+          onAlertKeywordsChange={setAlertKeywords}
+        />
+      </div>
 
       {/* Full-Screen AI Loading Overlay */}
       {isAIGenerating && (

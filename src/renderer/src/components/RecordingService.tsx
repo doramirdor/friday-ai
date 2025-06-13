@@ -203,10 +203,11 @@ export const useRecordingService = ({
           currentTimeRef.current += 1
         }, 1000)
 
-        // Also start parallel microphone recording for real-time transcription
-        await startParallelTranscriptionRecording()
+        // Start microphone-only transcription (avoiding system audio conflicts)
+        await startMicrophoneOnlyTranscription()
 
         console.log('✅ Combined recording started successfully')
+        console.log('✅ Microphone transcription enabled for combined recording')
       } else {
         console.error('Failed to start combined recording:', result.error)
         transcriptionStatusRef.current = 'error'
@@ -219,40 +220,226 @@ export const useRecordingService = ({
     }
   }, [onTranscriptionStatusChange])
 
-  // Start parallel transcription recording using system audio capture
+  // Start microphone-only transcription for combined recording (avoids system audio conflicts)
+  const startMicrophoneOnlyTranscription = useCallback(async (): Promise<void> => {
+    try {
+      console.log('🎤 Starting microphone-only transcription for combined recording...')
+
+      // Check transcription service status
+      const statusResult = await (window.api as any).transcription.isReady()
+      if (!statusResult.ready) {
+        console.error('Transcription service not ready')
+        return
+      }
+
+      // Get microphone access for transcription only (not recording)
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioInputs = devices.filter(device => device.kind === 'audioinput')
+      
+      // Use Bluetooth microphone for transcription (same as recording)
+      const bluetoothMic = audioInputs.find(device => 
+        device.label.toLowerCase().includes('bluetooth') ||
+        device.label.toLowerCase().includes('airpods') ||
+        device.label.toLowerCase().includes('headphones') ||
+        device.label.toLowerCase().includes('headset')
+      )
+      
+      // Configure audio constraints based on device type with improved Bluetooth settings
+      const audioConstraints: MediaTrackConstraints = bluetoothMic && bluetoothMic.deviceId ? {
+        deviceId: { exact: bluetoothMic.deviceId },
+        channelCount: 1,
+        sampleRate: { ideal: 16000, min: 8000, max: 48000 }, // Flexible sample rate for Bluetooth
+        echoCancellation: false, // Bluetooth handles this
+        noiseSuppression: false, // Disable to preserve speech clarity
+        autoGainControl: true,
+        volume: 1.0 // Maximum volume
+      } : {
+        deviceId: 'default',
+        channelCount: 1,
+        sampleRate: { ideal: 16000, min: 8000, max: 48000 },
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: true,
+        volume: 1.0
+      }
+      
+      // Log which microphone is being used and device details
+      if (bluetoothMic && bluetoothMic.deviceId) {
+        console.log('🎧 Using Bluetooth microphone for transcription:', bluetoothMic.label)
+        console.log('🔧 Bluetooth device ID:', bluetoothMic.deviceId)
+        console.log('🔧 Audio constraints:', audioConstraints)
+      } else {
+        console.log('🎤 Using default microphone for transcription')
+        console.log('🔧 Audio constraints:', audioConstraints)
+      }
+      
+      // Get microphone stream for transcription
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
+      })
+      
+      console.log('✅ Microphone transcription stream started')
+      audioStreamRef.current = stream
+
+      // Start transcription processing with improved audio handling
+      const processTranscriptionChunk = async (): Promise<void> => {
+        if (!isRecordingRef.current || !isCombinedRecordingRef.current) return
+
+        return new Promise<void>((resolve) => {
+          const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+            ? 'audio/webm;codecs=opus'
+            : 'audio/webm'
+
+          const recorder = new MediaRecorder(stream, {
+            mimeType,
+            audioBitsPerSecond: 48000 // Higher bitrate for better quality
+          })
+
+          const chunks: Blob[] = []
+
+          // Monitor audio levels to ensure we're getting audio
+          const audioContext = new AudioContext()
+          const source = audioContext.createMediaStreamSource(stream)
+          const analyser = audioContext.createAnalyser()
+          analyser.fftSize = 256
+          source.connect(analyser)
+          
+          const dataArray = new Uint8Array(analyser.frequencyBinCount)
+          let hasAudio = false
+
+          const checkAudioLevel = () => {
+            analyser.getByteFrequencyData(dataArray)
+            const average = dataArray.reduce((a, b) => a + b) / dataArray.length
+            if (average > 10) { // Threshold for detecting audio
+              hasAudio = true
+            }
+          }
+
+          const audioCheckInterval = setInterval(checkAudioLevel, 100)
+
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              chunks.push(event.data)
+            }
+          }
+
+          recorder.onstop = async () => {
+            clearInterval(audioCheckInterval)
+            audioContext.close()
+            
+            try {
+              if (chunks.length > 0) {
+                const completeBlob = new Blob(chunks, { type: mimeType })
+                console.log(`🎤 Audio chunk: ${completeBlob.size} bytes, hasAudio: ${hasAudio}`)
+                
+                // Only process if we have sufficient audio data and detected audio activity
+                if (completeBlob.size > 2000 && hasAudio) {
+                  const arrayBuffer = await completeBlob.arrayBuffer()
+                  const result = await (window.api as any).transcription.processChunk(arrayBuffer)
+                  if (result.success) {
+                    console.log('✅ Microphone transcription chunk processed with audio activity')
+                  }
+                } else {
+                  console.log('⚠️ Skipping transcription - insufficient audio activity or data size')
+                }
+              }
+            } catch (error) {
+              console.log('⚠️ Error processing transcription chunk:', error)
+            }
+            resolve()
+          }
+
+          recorder.onerror = () => {
+            clearInterval(audioCheckInterval)
+            audioContext.close()
+            resolve()
+          }
+
+          recorder.start()
+          setTimeout(() => {
+            if (recorder.state === 'recording') {
+              recorder.stop()
+            }
+          }, 5000) // Increased to 5 seconds for better speech detection
+        })
+      }
+
+      // Start transcription loop
+      const transcriptionLoop = async (): Promise<void> => {
+        while (isRecordingRef.current && isCombinedRecordingRef.current) {
+          await processTranscriptionChunk()
+          if (isRecordingRef.current && isCombinedRecordingRef.current) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 500))
+          }
+        }
+      }
+
+      transcriptionLoop()
+      console.log('✅ Microphone transcription started for combined recording')
+    } catch (error) {
+      console.error('Failed to start microphone transcription:', error)
+    }
+  }, [])
+
+  // Start parallel transcription recording using microphone (disabled for combined recording)
   const startParallelTranscriptionRecording = useCallback(async (): Promise<void> => {
     try {
-      console.log('🎤 Starting system audio capture for transcription...')
+      console.log('🎤 Starting microphone capture for transcription...')
 
-      // Try to capture system audio using getDisplayMedia
-      let stream: MediaStream
+      // Get available audio devices first for better Bluetooth handling
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioInputs = devices.filter(device => device.kind === 'audioinput')
+      console.log('📱 Available audio input devices:', audioInputs.map(d => ({ id: d.deviceId, label: d.label })))
       
-      try {
-        // Request screen capture with audio to get system audio
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: false,
-          audio: {
-            channelCount: 1,
-            sampleRate: 16000,
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false
-          }
-        })
-        
-        console.log('✅ System audio capture started for transcription')
-      } catch (displayError) {
-        console.log('⚠️ System audio capture failed, falling back to microphone for transcription:', displayError)
-        
-        // Fallback to microphone if system audio capture fails
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: 16000,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: false
-          }
+      // Look for Bluetooth devices (usually have "Bluetooth" or specific names like "AirPods" in label)
+      const bluetoothDevice = audioInputs.find(device => 
+        device.label.toLowerCase().includes('bluetooth') ||
+        device.label.toLowerCase().includes('airpods') ||
+        device.label.toLowerCase().includes('headphones') ||
+        device.label.toLowerCase().includes('headset')
+      )
+      
+      let audioConstraints: MediaTrackConstraints = {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+      
+      // If Bluetooth device found, specifically request it and use optimal settings
+      if (bluetoothDevice && bluetoothDevice.deviceId) {
+        console.log('🎧 Bluetooth device detected, using optimized settings:', bluetoothDevice.label)
+        audioConstraints = {
+          deviceId: { exact: bluetoothDevice.deviceId },
+          channelCount: 1,
+          sampleRate: 16000, // Lower sample rate works better with Bluetooth
+          echoCancellation: false, // Let Bluetooth device handle this
+          noiseSuppression: false, // Bluetooth devices often have built-in processing
+          autoGainControl: true
+        }
+      } else {
+        console.log('🎤 Using default/built-in microphone')
+        audioConstraints.deviceId = 'default'
+      }
+      
+      // Request microphone access with optimized settings
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
+      })
+      
+      console.log('✅ Microphone capture started for transcription')
+      
+      // Log available audio tracks for debugging
+      const audioTracks = stream.getAudioTracks()
+      if (audioTracks.length > 0) {
+        const track = audioTracks[0]
+        console.log('📊 Audio track info:', {
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState,
+          settings: track.getSettings()
         })
       }
 
@@ -439,16 +626,59 @@ export const useRecordingService = ({
         return
       }
 
-      // Get user media with optimal settings
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
+      // Get available audio devices first for better Bluetooth handling
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioInputs = devices.filter(device => device.kind === 'audioinput')
+      console.log('📱 Available audio input devices for microphone recording:', audioInputs.map(d => ({ id: d.deviceId, label: d.label })))
+      
+      // Look for Bluetooth devices
+      const bluetoothDevice = audioInputs.find(device => 
+        device.label.toLowerCase().includes('bluetooth') ||
+        device.label.toLowerCase().includes('airpods') ||
+        device.label.toLowerCase().includes('headphones') ||
+        device.label.toLowerCase().includes('headset')
+      )
+      
+      let audioConstraints: MediaTrackConstraints = {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: false, // Keep background noise for better speech detection
+        autoGainControl: true    // Auto-adjust volume for speech
+      }
+      
+      // Optimize for Bluetooth if detected
+      if (bluetoothDevice && bluetoothDevice.deviceId) {
+        console.log('🎧 Bluetooth device detected for microphone recording:', bluetoothDevice.label)
+        audioConstraints = {
+          deviceId: { exact: bluetoothDevice.deviceId },
           channelCount: 1,
           sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false
+          echoCancellation: false, // Bluetooth handles this
+          noiseSuppression: false, // Keep for speech detection
+          autoGainControl: true
         }
+      } else {
+        console.log('🎤 Using default microphone for recording')
+        audioConstraints.deviceId = 'default'
+      }
+      
+      // Get user media with optimal settings for speech recognition
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
       })
+      
+      // Log microphone info for debugging
+      const audioTracks = stream.getAudioTracks()
+      if (audioTracks.length > 0) {
+        const track = audioTracks[0]
+        console.log('🎤 Microphone track info:', {
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState
+        })
+      }
 
       // Store stream reference for cleanup
       audioStreamRef.current = stream
@@ -496,9 +726,12 @@ export const useRecordingService = ({
 
           recorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
+              console.log(`🎵 Audio data available: ${event.data.size} bytes`)
               chunks.push(event.data)
               // Also save for complete recording
               recordingChunksRef.current.push(event.data)
+            } else {
+              console.log('⚠️ Empty audio data received')
             }
           }
 
@@ -665,12 +898,18 @@ export const useRecordingService = ({
 
   // Main start recording function
   const startRecording = useCallback(async (mode: 'microphone' | 'combined'): Promise<void> => {
+    // Always prefer microphone recording to avoid screen permission issues
+    // Combined recording will be handled by the Swift recorder's fallback logic
     if (mode === 'combined' && isSwiftRecorderAvailableRef.current) {
+      console.log('🎙️ Starting combined recording (with automatic fallback to mic-only if screen permissions denied)')
       await startCombinedRecording()
     } else {
+      console.log('🎤 Starting microphone-only recording')
       await startMicrophoneRecording()
+      // Start parallel transcription for microphone-only mode
+      await startParallelTranscriptionRecording()
     }
-  }, [startCombinedRecording, startMicrophoneRecording])
+  }, [startCombinedRecording, startMicrophoneRecording, startParallelTranscriptionRecording, startMicrophoneOnlyTranscription])
 
   // Main stop recording function
   const stopRecording = useCallback(async (): Promise<void> => {

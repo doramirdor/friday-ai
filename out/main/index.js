@@ -1026,24 +1026,27 @@ async function startCombinedRecording(recordingPath, filename) {
         // Force unbuffered output
       });
       let hasStarted = false;
+      let hasCompleted = false;
       let outputReceived = false;
       let lastOutputTime = Date.now();
+      let bluetoothMicStarted = false;
+      let systemAudioStarted = false;
       const outputTimeoutId = setTimeout(() => {
         if (!outputReceived) {
-          console.log("❌ HANG DETECTION: No output received from Swift recorder after 10 seconds");
-          console.log("   Process may be hanging in Electron app context vs manual terminal execution");
-          if (swiftRecorderProcess) {
-            console.log("   Process PID:", swiftRecorderProcess.pid);
-            console.log("   Process killed status:", swiftRecorderProcess.killed);
-            console.log("   Terminating hanging process...");
+          console.log("❌ TIMEOUT: No output received from Swift recorder after 10 seconds");
+          console.log("   This indicates the process failed to start or crashed immediately");
+          console.log("   Process exists:", !!swiftRecorderProcess);
+          console.log("   Process killed status:", swiftRecorderProcess?.killed);
+          if (swiftRecorderProcess && !swiftRecorderProcess.killed) {
             swiftRecorderProcess.kill("SIGKILL");
+            swiftRecorderProcess = null;
           }
           if (!hasStarted) {
             resolve({
               success: false,
-              error: "Swift recorder process hanging - no output received after 10 seconds",
-              cause: "Process spawned but appears to be stuck in initialization",
-              solution: "This may indicate permission issues or Swift recorder compatibility problems in app context"
+              error: "Swift recorder failed to produce any output",
+              cause: "Process started but produced no output within 10 seconds",
+              solution: "Check if the recorder binary exists and has proper permissions"
             });
           }
         }
@@ -1051,8 +1054,8 @@ async function startCombinedRecording(recordingPath, filename) {
       const hangDetectionInterval = setInterval(() => {
         const now = Date.now();
         const timeSinceLastOutput = now - lastOutputTime;
-        if (outputReceived && timeSinceLastOutput > 15e3 && !hasStarted) {
-          console.log("❌ HANG DETECTION: Output stopped flowing for 15+ seconds during initialization");
+        if (outputReceived && timeSinceLastOutput > 25e3 && !hasStarted) {
+          console.log("❌ HANG DETECTION: Output stopped flowing for 25+ seconds during initialization");
           console.log(`   Last output was ${timeSinceLastOutput}ms ago`);
           if (swiftRecorderProcess && !swiftRecorderProcess.killed) {
             console.log("   Terminating stalled process...");
@@ -1099,6 +1102,7 @@ async function startCombinedRecording(recordingPath, filename) {
               }
               console.log("❌ Combined recording failed:", result.error);
             } else if (result.code === "RECORDING_STOPPED") {
+              hasCompleted = true;
               if (mainWindow) {
                 mainWindow.webContents.send("combined-recording-stopped", result);
               }
@@ -1119,6 +1123,27 @@ async function startCombinedRecording(recordingPath, filename) {
               }
             }
           } catch {
+            const logLine = line.toLowerCase();
+            if (logLine.includes("bluetooth microphone recording started") || logLine.includes("microphone recording started")) {
+              bluetoothMicStarted = true;
+              console.log("🎧 Detected: Bluetooth microphone started");
+            }
+            if (logLine.includes("system audio recording started")) {
+              systemAudioStarted = true;
+              console.log("🔊 Detected: System audio started");
+            }
+            if (bluetoothMicStarted && systemAudioStarted && !hasStarted) {
+              console.log("✅ Both recording components started - marking as successful");
+              hasStarted = true;
+              clearInterval(hangDetectionInterval);
+              resolve({ success: true });
+              if (mainWindow) {
+                mainWindow.webContents.send("combined-recording-started", {
+                  code: "RECORDING_STARTED",
+                  message: "Both Bluetooth microphone and system audio started successfully"
+                });
+              }
+            }
             console.log("Swift recorder log:", line);
           }
         }
@@ -1137,13 +1162,17 @@ async function startCombinedRecording(recordingPath, filename) {
         clearTimeout(outputTimeoutId);
         clearInterval(hangDetectionInterval);
         swiftRecorderProcess = null;
-        if (!hasStarted) {
+        if (!hasStarted && !hasCompleted) {
           resolve({
             success: false,
             error: `Recorder exited unexpectedly with code ${code}`,
             cause: signal ? `Process terminated by signal: ${signal}` : `Exit code: ${code}`,
             solution: "Check console logs for detailed error information"
           });
+        } else if (hasCompleted && code === 0) {
+          console.log("✅ Recording completed successfully");
+        } else if (code !== 0 && hasStarted) {
+          console.log(`❌ Recording failed with exit code ${code}`);
         }
       });
       swiftRecorderProcess.on("error", (error) => {
@@ -1185,20 +1214,42 @@ async function stopCombinedRecording() {
     }
     console.log("🛑 Stopping combined recording...");
     let hasFinished = false;
+    let recordingPath;
     const handleOutput = (data) => {
       const lines = data.toString().split("\n").filter((line) => line.trim());
       for (const line of lines) {
         try {
           const result = JSON.parse(line);
+          console.log("📝 Stop process received:", result);
           if (result.code === "RECORDING_STOPPED" && !hasFinished) {
             hasFinished = true;
+            recordingPath = result.path;
+            console.log("✅ Recording stopped successfully with path:", recordingPath);
             resolve({ success: true, path: result.path });
           }
         } catch {
+          console.log("Swift recorder stop log:", line);
+          if (line.includes("Processing final recording") || line.includes("RECORDING_STOPPED")) {
+            console.log("🔄 Detected recording completion in progress...");
+          }
+        }
+      }
+    };
+    const handleExit = (code, signal) => {
+      console.log(`Swift recorder process exited during stop with code ${code}, signal: ${signal}`);
+      if (!hasFinished) {
+        if (code === 0) {
+          console.log("✅ Recording process exited normally - assuming successful completion");
+          resolve({ success: true, path: recordingPath });
+        } else {
+          console.log("❌ Recording process exited with error during stop");
+          resolve({ success: false, error: `Process exited with code ${code}` });
         }
       }
     };
     swiftRecorderProcess.stdout?.on("data", handleOutput);
+    swiftRecorderProcess.once("exit", handleExit);
+    console.log("📤 Sending SIGINT to Swift recorder for graceful shutdown...");
     swiftRecorderProcess.kill("SIGINT");
     setTimeout(() => {
       if (!hasFinished) {
@@ -1206,7 +1257,7 @@ async function stopCombinedRecording() {
           swiftRecorderProcess.kill("SIGTERM");
           swiftRecorderProcess = null;
         }
-        resolve({ success: false, error: "Stop timeout" });
+        resolve({ success: false, error: "Stop timeout - recording may have completed but response was not received" });
       }
     }, 3e4);
   });

@@ -1,4 +1,4 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./index-CJ7uhJzI.js","./index-GxHjvpnR.js","./index-DD2_lbmV.js","./default-BS6z0SoE.js","./index-d8Q-uoc3.js","./index-BmUztF0Q.js","./index-D4jd7gzl.js","./index-BEZf1ZPW.js","./index-zIlfN-Ki.js","./index-G-ora8YN.js","./index-CnMPMwxJ.js","./index-BzFicUpK.js","./index-BdpVYl51.js","./index-DP-HoFPF.js","./index-DAUtpLsD.js","./index-Db1BflSh.js","./index-BQQO4o33.js","./index-DZUfWD1-.js","./index-cbiyYImb.js","./index-D9ux-QLO.js","./blank-line-B1FU30m6.js","./index-Bq0gbX2R.js","./index-D0qL-C7F.js","./index-C1E4TE6-.js","./index-DfVJMZTK.js","./index-DcqjCtfs.js","./index-BEC76WiQ.js","./index-BhtqkrT8.js","./index-H4R0JEEP.js"])))=>i.map(i=>d[i]);
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./index-CJ7uhJzI.js","./index-GxHjvpnR.js","./index-DD2_lbmV.js","./default-BS6z0SoE.js","./index-d8Q-uoc3.js","./index-BmUztF0Q.js","./index-D4jd7gzl.js","./index-BEZf1ZPW.js","./index-zIlfN-Ki.js","./index-G-ora8YN.js","./index-CGJU9wqj.js","./index-BzFicUpK.js","./index-BdpVYl51.js","./index-DP-HoFPF.js","./index-DAUtpLsD.js","./index-Db1BflSh.js","./index-BQQO4o33.js","./index-DZUfWD1-.js","./index-cbiyYImb.js","./index-D9ux-QLO.js","./blank-line-B1FU30m6.js","./index-Bq0gbX2R.js","./index-D0qL-C7F.js","./index-C1E4TE6-.js","./index-DfVJMZTK.js","./index-DcqjCtfs.js","./index-BEC76WiQ.js","./index-BhtqkrT8.js","./index-H4R0JEEP.js"])))=>i.map(i=>d[i]);
 function _mergeNamespaces(n, m) {
   for (var i = 0; i < m.length; i++) {
     const e = m[i];
@@ -48865,7 +48865,7 @@ async function Tt$2() {
   const e = await Promise.all([
     __vitePreload(() => import("./index-CJ7uhJzI.js"), true ? __vite__mapDeps([0,1,2,3,4,5]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-D4jd7gzl.js"), true ? __vite__mapDeps([6,4,7,8,9]) : void 0, import.meta.url),
-    __vitePreload(() => import("./index-CnMPMwxJ.js"), true ? __vite__mapDeps([10,1,2]) : void 0, import.meta.url),
+    __vitePreload(() => import("./index-CGJU9wqj.js"), true ? __vite__mapDeps([10,1,2]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-BzFicUpK.js"), true ? __vite__mapDeps([11,5,4]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-BdpVYl51.js"), true ? __vite__mapDeps([12,13,14,15,9,16,17,18]) : void 0, import.meta.url),
     __vitePreload(() => import("./index-D9ux-QLO.js"), true ? __vite__mapDeps([19,20,21,22,8,3,15,23,17,18,16]) : void 0, import.meta.url),
@@ -72554,8 +72554,9 @@ const useRecordingService = ({
         recordingInterval.current = setInterval(() => {
           currentTimeRef.current += 1;
         }, 1e3);
-        await startParallelTranscriptionRecording();
+        await startMicrophoneOnlyTranscription();
         console.log("✅ Combined recording started successfully");
+        console.log("✅ Microphone transcription enabled for combined recording");
       } else {
         console.error("Failed to start combined recording:", result.error);
         transcriptionStatusRef.current = "error";
@@ -72567,32 +72568,146 @@ const useRecordingService = ({
       onTranscriptionStatusChange("error");
     }
   }, [onTranscriptionStatusChange]);
+  const startMicrophoneOnlyTranscription = reactExports.useCallback(async () => {
+    try {
+      console.log("🎤 Starting microphone-only transcription for combined recording...");
+      const statusResult = await window.api.transcription.isReady();
+      if (!statusResult.ready) {
+        console.error("Transcription service not ready");
+        return;
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter((device) => device.kind === "audioinput");
+      const bluetoothMic = audioInputs.find(
+        (device) => device.label.toLowerCase().includes("bluetooth") || device.label.toLowerCase().includes("airpods") || device.label.toLowerCase().includes("headphones") || device.label.toLowerCase().includes("headset")
+      );
+      const audioConstraints = bluetoothMic && bluetoothMic.deviceId ? {
+        deviceId: { exact: bluetoothMic.deviceId },
+        channelCount: 1,
+        sampleRate: 16e3,
+        echoCancellation: false,
+        // Bluetooth handles this
+        noiseSuppression: false,
+        // Keep for better speech detection
+        autoGainControl: true
+      } : {
+        deviceId: "default",
+        channelCount: 1,
+        sampleRate: 16e3,
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: true
+      };
+      if (bluetoothMic && bluetoothMic.deviceId) {
+        console.log("🎧 Using Bluetooth microphone for transcription:", bluetoothMic.label);
+      } else {
+        console.log("🎤 Using default microphone for transcription");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
+      });
+      console.log("✅ Microphone transcription stream started");
+      audioStreamRef.current = stream;
+      const processTranscriptionChunk = async () => {
+        if (!isRecordingRef.current || !isCombinedRecordingRef.current) return;
+        return new Promise((resolve) => {
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+          const recorder = new MediaRecorder(stream, {
+            mimeType,
+            audioBitsPerSecond: 32e3
+          });
+          const chunks = [];
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              chunks.push(event.data);
+            }
+          };
+          recorder.onstop = async () => {
+            try {
+              if (chunks.length > 0) {
+                const completeBlob = new Blob(chunks, { type: mimeType });
+                if (completeBlob.size > 1e3) {
+                  const arrayBuffer = await completeBlob.arrayBuffer();
+                  const result = await window.api.transcription.processChunk(arrayBuffer);
+                  if (result.success) {
+                    console.log("✅ Microphone transcription chunk processed");
+                  }
+                }
+              }
+            } catch (error) {
+              console.log("⚠️ Error processing transcription chunk:", error);
+            }
+            resolve();
+          };
+          recorder.onerror = () => resolve();
+          recorder.start();
+          setTimeout(() => {
+            if (recorder.state === "recording") {
+              recorder.stop();
+            }
+          }, 3e3);
+        });
+      };
+      const transcriptionLoop = async () => {
+        while (isRecordingRef.current && isCombinedRecordingRef.current) {
+          await processTranscriptionChunk();
+          if (isRecordingRef.current && isCombinedRecordingRef.current) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
+      };
+      transcriptionLoop();
+      console.log("✅ Microphone transcription started for combined recording");
+    } catch (error) {
+      console.error("Failed to start microphone transcription:", error);
+    }
+  }, []);
   const startParallelTranscriptionRecording = reactExports.useCallback(async () => {
     try {
-      console.log("🎤 Starting system audio capture for transcription...");
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: false,
-          audio: {
-            channelCount: 1,
-            sampleRate: 16e3,
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false
-          }
-        });
-        console.log("✅ System audio capture started for transcription");
-      } catch (displayError) {
-        console.log("⚠️ System audio capture failed, falling back to microphone for transcription:", displayError);
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: 16e3,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: false
-          }
+      console.log("🎤 Starting microphone capture for transcription...");
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter((device) => device.kind === "audioinput");
+      console.log("📱 Available audio input devices:", audioInputs.map((d) => ({ id: d.deviceId, label: d.label })));
+      const bluetoothDevice = audioInputs.find(
+        (device) => device.label.toLowerCase().includes("bluetooth") || device.label.toLowerCase().includes("airpods") || device.label.toLowerCase().includes("headphones") || device.label.toLowerCase().includes("headset")
+      );
+      let audioConstraints = {
+        channelCount: 1,
+        sampleRate: 16e3,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      };
+      if (bluetoothDevice && bluetoothDevice.deviceId) {
+        console.log("🎧 Bluetooth device detected, using optimized settings:", bluetoothDevice.label);
+        audioConstraints = {
+          deviceId: { exact: bluetoothDevice.deviceId },
+          channelCount: 1,
+          sampleRate: 16e3,
+          // Lower sample rate works better with Bluetooth
+          echoCancellation: false,
+          // Let Bluetooth device handle this
+          noiseSuppression: false,
+          // Bluetooth devices often have built-in processing
+          autoGainControl: true
+        };
+      } else {
+        console.log("🎤 Using default/built-in microphone");
+        audioConstraints.deviceId = "default";
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
+      });
+      console.log("✅ Microphone capture started for transcription");
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        const track = audioTracks[0];
+        console.log("📊 Audio track info:", {
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState,
+          settings: track.getSettings()
         });
       }
       audioStreamRef.current = stream;
@@ -72727,15 +72842,50 @@ const useRecordingService = ({
         console.error("Transcription service not ready");
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter((device) => device.kind === "audioinput");
+      console.log("📱 Available audio input devices for microphone recording:", audioInputs.map((d) => ({ id: d.deviceId, label: d.label })));
+      const bluetoothDevice = audioInputs.find(
+        (device) => device.label.toLowerCase().includes("bluetooth") || device.label.toLowerCase().includes("airpods") || device.label.toLowerCase().includes("headphones") || device.label.toLowerCase().includes("headset")
+      );
+      let audioConstraints = {
+        channelCount: 1,
+        sampleRate: 16e3,
+        echoCancellation: true,
+        noiseSuppression: false,
+        // Keep background noise for better speech detection
+        autoGainControl: true
+        // Auto-adjust volume for speech
+      };
+      if (bluetoothDevice && bluetoothDevice.deviceId) {
+        console.log("🎧 Bluetooth device detected for microphone recording:", bluetoothDevice.label);
+        audioConstraints = {
+          deviceId: { exact: bluetoothDevice.deviceId },
           channelCount: 1,
           sampleRate: 16e3,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false
-        }
+          echoCancellation: false,
+          // Bluetooth handles this
+          noiseSuppression: false,
+          // Keep for speech detection
+          autoGainControl: true
+        };
+      } else {
+        console.log("🎤 Using default microphone for recording");
+        audioConstraints.deviceId = "default";
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
       });
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        const track = audioTracks[0];
+        console.log("🎤 Microphone track info:", {
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState
+        });
+      }
       audioStreamRef.current = stream;
       isRecordingRef.current = true;
       isCombinedRecordingRef.current = false;
@@ -72761,8 +72911,11 @@ const useRecordingService = ({
           const chunks = [];
           recorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
+              console.log(`🎵 Audio data available: ${event.data.size} bytes`);
               chunks.push(event.data);
               recordingChunksRef.current.push(event.data);
+            } else {
+              console.log("⚠️ Empty audio data received");
             }
           };
           recorder.onstop = async () => {
@@ -72874,11 +73027,14 @@ const useRecordingService = ({
   }, [formatTime, onTranscriptionStatusChange]);
   const startRecording = reactExports.useCallback(async (mode) => {
     if (mode === "combined" && isSwiftRecorderAvailableRef.current) {
+      console.log("🎙️ Starting combined recording (with automatic fallback to mic-only if screen permissions denied)");
       await startCombinedRecording();
     } else {
+      console.log("🎤 Starting microphone-only recording");
       await startMicrophoneRecording();
+      await startParallelTranscriptionRecording();
     }
-  }, [startCombinedRecording, startMicrophoneRecording]);
+  }, [startCombinedRecording, startMicrophoneRecording, startParallelTranscriptionRecording, startMicrophoneOnlyTranscription]);
   const stopRecording = reactExports.useCallback(async () => {
     console.log("🛑 Stopping recording...");
     if (isCombinedRecordingRef.current) {

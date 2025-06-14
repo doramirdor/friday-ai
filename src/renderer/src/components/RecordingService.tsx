@@ -203,11 +203,12 @@ export const useRecordingService = ({
           currentTimeRef.current += 1
         }, 1000)
 
-        // Start microphone-only transcription (avoiding system audio conflicts)
-        await startMicrophoneOnlyTranscription()
-
+        // For combined recording, disable browser transcription to avoid device conflicts
+        // The Swift recorder will handle both microphone and system audio
+        // Transcription will be done post-recording using the recorded audio file
         console.log('✅ Combined recording started successfully')
-        console.log('✅ Microphone transcription enabled for combined recording')
+        console.log('⚠️ Browser transcription disabled for combined recording to avoid device conflicts')
+        console.log('📝 Transcription will be processed after recording completes')
       } else {
         console.error('Failed to start combined recording:', result.error)
         transcriptionStatusRef.current = 'error'
@@ -219,6 +220,8 @@ export const useRecordingService = ({
       onTranscriptionStatusChange('error')
     }
   }, [onTranscriptionStatusChange])
+
+
 
   // Start microphone-only transcription for combined recording (avoids system audio conflicts)
   const startMicrophoneOnlyTranscription = useCallback(async (): Promise<void> => {

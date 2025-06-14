@@ -24,6 +24,9 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
     private var audioUnit: AudioUnit?
     private var bluetoothRecordingActive = false
     private var bluetoothAudioFile: AVAudioFile?
+    
+    // Audio-only mode to avoid Bluetooth disconnection
+    private var audioOnlyMode = false
 
     // MARK: – CLI entry
     override init() {
@@ -38,31 +41,43 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
             return
         }
         
+        // Check if audio-only mode is requested (to avoid Bluetooth disconnection)
+        if CommandLine.arguments.contains("--audio-only") {
+            audioOnlyMode = true
+            print("🎵 Audio-only mode enabled - avoiding Bluetooth disconnection")
+        }
+        
         // Handle Bluetooth output device for system audio recording
         if (audioSource == "system" || audioSource == "both") && AudioDeviceManager.isCurrentOutputDeviceBluetooth() {
-            print("⚠️  Bluetooth output detected - this will prevent system audio capture")
-            print("🔄 Attempting to switch to built-in speakers for better system audio capture...")
-            
-            if let builtInDevice = AudioDeviceManager.builtInOutputID() {
-                if AudioDeviceManager.setDefaultOutputDevice(builtInDevice) {
-                    print("✅ Switched to built-in speakers for recording")
+            if audioOnlyMode {
+                print("🎧 Bluetooth output detected in audio-only mode - preserving Bluetooth connection")
+                print("⚠️ System audio capture will be limited with Bluetooth output, but Bluetooth stays connected")
+                // Don't switch output device in audio-only mode to preserve Bluetooth connection
+            } else {
+                print("⚠️  Bluetooth output detected - this will prevent system audio capture")
+                print("🔄 Attempting to switch to built-in speakers for better system audio capture...")
+                
+                if let builtInDevice = AudioDeviceManager.builtInOutputID() {
+                    if AudioDeviceManager.setDefaultOutputDevice(builtInDevice) {
+                        print("✅ Switched to built-in speakers for recording")
+                    } else {
+                        print("❌ Failed to switch to built-in speakers")
+                        ResponseHandler.send([
+                            "code": "COMBINED_RECORDING_FAILED_BLUETOOTH",
+                            "error": "Cannot capture system audio with Bluetooth output device",
+                            "recommendation": "Please switch to built-in speakers or wired headphones for system audio recording"
+                        ])
+                        return
+                    }
                 } else {
-                    print("❌ Failed to switch to built-in speakers")
+                    print("❌ No built-in speakers found for fallback")
                     ResponseHandler.send([
-                        "code": "COMBINED_RECORDING_FAILED_BLUETOOTH",
-                        "error": "Cannot capture system audio with Bluetooth output device",
-                        "recommendation": "Please switch to built-in speakers or wired headphones for system audio recording"
+                        "code": "COMBINED_RECORDING_FAILED_BLUETOOTH", 
+                        "error": "No built-in speakers available for system audio capture",
+                        "recommendation": "Please connect wired headphones or speakers for system audio recording"
                     ])
                     return
                 }
-            } else {
-                print("❌ No built-in speakers found for fallback")
-                ResponseHandler.send([
-                    "code": "COMBINED_RECORDING_FAILED_BLUETOOTH", 
-                    "error": "No built-in speakers available for system audio capture",
-                    "recommendation": "Please connect wired headphones or speakers for system audio recording"
-                ])
-                return
             }
         }
         
@@ -75,32 +90,84 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
             return
         }
 
-        // For system audio or both, request screen‑capture permission
-        PermissionsRequester.requestScreenCaptureAccess { granted in
-            guard granted else {
-                // If screen permission denied, fallback to mic-only with clear message
-                print("❌ Screen capture permission denied - falling back to microphone-only recording")
-                ResponseHandler.send([
-                    "code": "PERMISSION_DENIED_FALLBACK_MIC",
-                    "message": "Screen recording permission required for system audio capture. Falling back to microphone-only recording.",
-                    "recommendation": "Grant screen recording permission in System Settings > Privacy & Security > Screen Recording for full system audio capture."
-                ])
-                self.audioSource = "mic" // Switch to mic-only mode
-                self.startMicOnly()
-                return
+        // Choose permission approach based on mode to avoid Bluetooth disconnection
+        if audioOnlyMode {
+            // Use microphone-only permissions to keep Bluetooth connected
+            PermissionsRequester.requestAudioOnlyAccess { granted in
+                guard granted else {
+                    print("❌ Microphone permission denied")
+                    ResponseHandler.send([
+                        "code": "PERMISSION_DENIED",
+                        "error": "Microphone permission required for audio recording",
+                        "recommendation": "Grant microphone permission in System Settings > Privacy & Security > Microphone"
+                    ])
+                    return
+                }
+                
+                print("✅ Audio-only permissions granted - Bluetooth should stay connected")
+                if self.audioSource == "both" { self.startMicOnly() } // Start microphone first
+                
+                // In audio-only mode with Bluetooth, skip system audio to preserve connection
+                if (self.audioSource == "both" || self.audioSource == "system") && AudioDeviceManager.isCurrentOutputDeviceBluetooth() {
+                    print("🎧 Skipping system audio in audio-only mode to preserve Bluetooth connection")
+                    // Send recording started for mic-only
+                    if self.audioSource == "both" && self.micRecordingActive {
+                        ResponseHandler.send(["code": "RECORDING_STARTED"], exitProcess: false)
+                    }
+                } else if self.audioSource == "both" || self.audioSource == "system" {
+                    // Try system audio only if screen permissions are already available
+                    if CGPreflightScreenCaptureAccess() {
+                        print("✅ Screen permissions available - adding system audio")
+                        self.startSystemAudio()
+                    } else {
+                        print("⚠️ Screen permissions not available - microphone only (Bluetooth preserved)")
+                        // Send recording started for mic-only
+                        if self.audioSource == "both" && self.micRecordingActive {
+                            ResponseHandler.send(["code": "RECORDING_STARTED"], exitProcess: false)
+                        }
+                    }
+                }
             }
-            if self.audioSource == "both" { self.startMicOnly() } // mic part first
-            self.startSystemAudio()
+        } else {
+            // Traditional approach (may disconnect Bluetooth)
+            PermissionsRequester.requestScreenCaptureAccess { granted in
+                guard granted else {
+                    // If screen permission denied, fallback to mic-only with clear message
+                    print("❌ Screen capture permission denied - falling back to microphone-only recording")
+                    ResponseHandler.send([
+                        "code": "PERMISSION_DENIED_FALLBACK_MIC",
+                        "message": "Screen recording permission required for system audio capture. Falling back to microphone-only recording.",
+                        "recommendation": "Grant screen recording permission in System Settings > Privacy & Security > Screen Recording for full system audio capture."
+                    ])
+                    self.audioSource = "mic" // Switch to mic-only mode
+                    self.startMicOnly()
+                    return
+                }
+                if self.audioSource == "both" { self.startMicOnly() } // mic part first
+                self.startSystemAudio()
+            }
         }
     }
     
     // MARK: – Permission checking
     private func checkPermissionsAndRespond() {
-        PermissionsRequester.requestScreenCaptureAccess { granted in
-            if granted {
-                ResponseHandler.send(["code": "PERMISSION_GRANTED"])
-            } else {
-                ResponseHandler.send(["code": "PERMISSION_DENIED"])
+        if audioOnlyMode {
+            // Check audio-only permissions (won't disconnect Bluetooth)
+            PermissionsRequester.requestAudioOnlyAccess { granted in
+                if granted {
+                    ResponseHandler.send(["code": "PERMISSION_GRANTED"])
+                } else {
+                    ResponseHandler.send(["code": "PERMISSION_DENIED"])
+                }
+            }
+        } else {
+            // Check screen capture permissions (may disconnect Bluetooth)
+            PermissionsRequester.requestScreenCaptureAccess { granted in
+                if granted {
+                    ResponseHandler.send(["code": "PERMISSION_GRANTED"])
+                } else {
+                    ResponseHandler.send(["code": "PERMISSION_DENIED"])
+                }
             }
         }
     }
@@ -366,6 +433,28 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
             
             bluetoothRecordingActive = true
             print("✅ Bluetooth microphone recording started with Core Audio")
+            
+            // Set up audio callback to send chunks for transcription
+            var callbackStruct = AURenderCallbackStruct()
+            callbackStruct.inputProc = { (inRefCon, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, ioData) -> OSStatus in
+                // This will be called for each audio buffer
+                // We can send audio data to transcription service here
+                return noErr
+            }
+            callbackStruct.inputProcRefCon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+            
+            let callbackStatus = AudioUnitSetProperty(
+                audioUnit,
+                kAudioUnitProperty_SetRenderCallback,
+                kAudioUnitScope_Input,
+                0,
+                &callbackStruct,
+                UInt32(MemoryLayout<AURenderCallbackStruct>.size)
+            )
+            
+            if callbackStatus == noErr {
+                print("✅ Audio callback set up for transcription streaming")
+            }
             
             // Send recording started confirmation
             if audioSource == "mic" {

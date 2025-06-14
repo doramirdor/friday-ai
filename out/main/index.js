@@ -977,7 +977,7 @@ async function checkSwiftRecorderAvailability() {
       resolve(false);
       return;
     }
-    const testProcess = child_process.spawn(recorderPath, ["--check-permissions"], {
+    const testProcess = child_process.spawn(recorderPath, ["--check-permissions", "--audio-only"], {
       stdio: ["pipe", "pipe", "pipe"]
     });
     let output = "";
@@ -1014,7 +1014,7 @@ async function startCombinedRecording(recordingPath, filename) {
         fs__namespace.mkdirSync(resolvedPath, { recursive: true });
       }
       const recorderPath = path__namespace.join(process.cwd(), "Recorder");
-      const args = ["--record", resolvedPath, "--source", "both"];
+      const args = ["--record", resolvedPath, "--source", "both", "--audio-only"];
       if (filename) {
         args.push("--filename", filename);
       }

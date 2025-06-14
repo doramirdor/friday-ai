@@ -206,8 +206,8 @@ async function checkSwiftRecorderAvailability(): Promise<boolean> {
       return
     }
 
-    // Test if the recorder can check permissions
-    const testProcess = spawn(recorderPath, ['--check-permissions'], {
+    // Test if the recorder can check audio-only permissions (to avoid Bluetooth disconnection)
+    const testProcess = spawn(recorderPath, ['--check-permissions', '--audio-only'], {
       stdio: ['pipe', 'pipe', 'pipe']
     })
 
@@ -273,7 +273,7 @@ async function startCombinedRecording(
         }
 
         const recorderPath = path.join(process.cwd(), 'Recorder')
-        const args = ['--record', resolvedPath, '--source', 'both']
+        const args = ['--record', resolvedPath, '--source', 'both', '--audio-only']
 
         if (filename) {
           args.push('--filename', filename)

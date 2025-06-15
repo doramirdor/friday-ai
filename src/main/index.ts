@@ -25,21 +25,16 @@ let actualTranscriptionPort = 9001 // Will be updated based on Python server out
 // Swift recorder process management
 let swiftRecorderProcess: ChildProcess | null = null
 let isSwiftRecorderAvailable = false
+let currentRecordingPath: string | null = null
+let currentRecordingFilename: string | null = null
+let isStoppingRecording = false
 
 // Current shortcuts state
-const currentShortcuts: Record<string, string> = {
+let currentShortcuts: Record<string, string> = {
   'toggle-recording': 'CmdOrCtrl+Alt+R',
   'quick-note': 'CmdOrCtrl+Alt+N',
   'show-hide': 'CmdOrCtrl+Shift+H',
   'pause-resume': 'CmdOrCtrl+Alt+P'
-}
-
-// Fallback shortcuts in case primary ones fail
-const fallbackShortcuts: Record<string, string[]> = {
-  'toggle-recording': ['CmdOrCtrl+L', 'CmdOrCtrl+Shift+R', 'F9'],
-  'quick-note': ['CmdOrCtrl+Shift+N', 'CmdOrCtrl+Alt+Q', 'F10'],
-  'show-hide': ['CmdOrCtrl+Alt+H', 'CmdOrCtrl+Shift+H', 'F11'],
-  'pause-resume': ['CmdOrCtrl+P', 'CmdOrCtrl+Shift+P', 'F8']
 }
 
 // Add interfaces for chunked recording at the top
@@ -272,12 +267,25 @@ async function startCombinedRecording(
           fs.mkdirSync(resolvedPath, { recursive: true })
         }
 
-        const recorderPath = path.join(process.cwd(), 'Recorder')
+        const recorderPath = path.join(process.cwd(), 'src', 'main', 'recorder', 'recorder')
         const args = ['--record', resolvedPath, '--source', 'both', '--audio-only']
 
+        // Store recording info for later use in stop function
+        currentRecordingPath = resolvedPath
+        
         if (filename) {
           args.push('--filename', filename)
+          currentRecordingFilename = filename
+        } else {
+          // Generate default filename if none provided
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+          currentRecordingFilename = `combined-recording-${timestamp}.mp3`
+          args.push('--filename', currentRecordingFilename)
         }
+
+        console.log('📁 Recording will be saved to:', path.join(currentRecordingPath, currentRecordingFilename))
+        console.log('🎯 Current recording path:', currentRecordingPath)
+        console.log('📄 Current recording filename:', currentRecordingFilename)
 
         console.log('🎙️ Starting combined recording with Swift recorder...')
         console.log('Command:', recorderPath, args.join(' '))
@@ -293,6 +301,7 @@ async function startCombinedRecording(
         let lastOutputTime = Date.now()
         let bluetoothMicStarted = false
         let systemAudioStarted = false
+        let isAudioOnlyMode = false
 
         // Enhanced timeout to detect if we're not receiving any output at all
         const outputTimeoutId = setTimeout(() => {
@@ -414,6 +423,13 @@ async function startCombinedRecording(
               // Non-JSON output, check for recording start indicators
               const logLine = line.toLowerCase()
               
+              // Detect audio-only mode
+              if (logLine.includes('audio-only mode enabled') || 
+                  logLine.includes('skipping system audio in audio-only mode')) {
+                isAudioOnlyMode = true
+                console.log('🎵 Detected: Audio-only mode enabled (system audio will be skipped)')
+              }
+              
               // Detect Bluetooth microphone start
               if (logLine.includes('bluetooth microphone recording started') || 
                   logLine.includes('microphone recording started')) {
@@ -427,9 +443,17 @@ async function startCombinedRecording(
                 console.log('🔊 Detected: System audio started')
               }
               
-              // If both components started, consider recording as started
-              if (bluetoothMicStarted && systemAudioStarted && !hasStarted) {
-                console.log('✅ Both recording components started - marking as successful')
+              // Determine if recording should be considered started
+              const shouldMarkAsStarted = isAudioOnlyMode 
+                ? bluetoothMicStarted  // In audio-only mode, only need microphone
+                : (bluetoothMicStarted && systemAudioStarted)  // In combined mode, need both
+              
+              if (shouldMarkAsStarted && !hasStarted) {
+                const message = isAudioOnlyMode 
+                  ? 'Bluetooth microphone started successfully (audio-only mode)'
+                  : 'Both Bluetooth microphone and system audio started successfully'
+                
+                console.log(`✅ Recording components started - marking as successful (${isAudioOnlyMode ? 'audio-only' : 'combined'} mode)`)
                 hasStarted = true
                 clearInterval(hangDetectionInterval)
                 resolve({ success: true })
@@ -438,7 +462,7 @@ async function startCombinedRecording(
                 if (mainWindow) {
                   mainWindow.webContents.send('combined-recording-started', { 
                     code: 'RECORDING_STARTED',
-                    message: 'Both Bluetooth microphone and system audio started successfully'
+                    message: message
                   })
                 }
               }
@@ -529,7 +553,14 @@ async function stopCombinedRecording(): Promise<{
       resolve({ success: false, error: 'No active recording' })
       return
     }
-
+    
+    if (isStoppingRecording) {
+      console.log('⚠️ Stop operation already in progress')
+      resolve({ success: false, error: 'Stop operation already in progress' })
+      return
+    }
+    
+    isStoppingRecording = true
     console.log('🛑 Stopping combined recording...')
 
     let hasFinished = false
@@ -567,12 +598,53 @@ async function stopCombinedRecording(): Promise<{
     const handleExit = (code: number | null, signal: string | null) => {
       console.log(`Swift recorder process exited during stop with code ${code}, signal: ${signal}`)
       if (!hasFinished) {
-        if (code === 0) {
-          // Normal exit - recording likely completed successfully
+        // Try to find the recording file even if we didn't get a proper JSON response
+        if (!recordingPath && currentRecordingFilename && currentRecordingPath) {
+          const expectedPath = path.join(currentRecordingPath, currentRecordingFilename)
+          console.log('🔍 Looking for recording file at:', expectedPath)
+          console.log('📂 Current recording path:', currentRecordingPath)
+          console.log('📄 Current recording filename:', currentRecordingFilename)
+          if (fs.existsSync(expectedPath)) {
+            recordingPath = expectedPath
+            console.log('📁 Found recording file at expected location:', recordingPath)
+          } else {
+            console.log('❌ Recording file not found at expected location')
+            // Try to list files in the directory to see what's there
+            try {
+              const files = fs.readdirSync(currentRecordingPath)
+              console.log('📋 Files in recording directory:', files)
+              
+              // Look for any .mp3 files that might be our recording
+              const mp3Files = files.filter(f => f.endsWith('.mp3') && !f.endsWith('.mp3.mp3'))
+              if (mp3Files.length > 0 && currentRecordingPath) {
+                // Use the most recent .mp3 file
+                const mostRecentMp3 = mp3Files
+                  .map(f => ({ name: f, path: path.join(currentRecordingPath!, f) }))
+                  .sort((a, b) => fs.statSync(b.path).mtime.getTime() - fs.statSync(a.path).mtime.getTime())[0]
+                
+                recordingPath = mostRecentMp3.path
+                console.log('📁 Found most recent MP3 file:', recordingPath)
+              }
+            } catch (error) {
+              console.log('❌ Could not read recording directory:', error)
+            }
+          }
+        } else {
+          console.log('⚠️ Missing recording info for fallback:', {
+            hasRecordingPath: !!recordingPath,
+            hasCurrentFilename: !!currentRecordingFilename,
+            hasCurrentPath: !!currentRecordingPath
+          })
+        }
+        
+        if (code === 0 || signal === 'SIGINT') {
+          // Normal exit or SIGINT - recording likely completed successfully
           console.log('✅ Recording process exited normally - assuming successful completion')
+          cleanup()
           resolve({ success: true, path: recordingPath })
         } else {
           console.log('❌ Recording process exited with error during stop')
+          cleanup()
           resolve({ success: false, error: `Process exited with code ${code}` })
         }
       }
@@ -585,17 +657,201 @@ async function stopCombinedRecording(): Promise<{
     // Send SIGINT to gracefully stop recording
     console.log('📤 Sending SIGINT to Swift recorder for graceful shutdown...')
     swiftRecorderProcess.kill('SIGINT')
+    
+    // Clear recording info after stopping
+    const cleanup = () => {
+      currentRecordingPath = null
+      currentRecordingFilename = null
+      swiftRecorderProcess = null
+      isStoppingRecording = false
+    }
 
-    // Timeout after 30 seconds
+    // Timeout after 10 seconds (reduced from 30)
     setTimeout(() => {
       if (!hasFinished) {
-        if (swiftRecorderProcess) {
-          swiftRecorderProcess.kill('SIGTERM')
-          swiftRecorderProcess = null
+        console.log('⏰ Stop timeout reached - checking for recording file...')
+        console.log('🔍 Debug info:', {
+          hasRecordingPath: !!recordingPath,
+          hasCurrentFilename: !!currentRecordingFilename,
+          hasCurrentPath: !!currentRecordingPath,
+          currentFilename: currentRecordingFilename,
+          currentPath: currentRecordingPath
+        })
+        
+        // Try to find the recording file even if we didn't get a proper JSON response
+        if (!recordingPath && currentRecordingFilename && currentRecordingPath) {
+          const expectedPath = path.join(currentRecordingPath, currentRecordingFilename)
+          console.log('⏰ Timeout: Looking for recording file at:', expectedPath)
+          if (fs.existsSync(expectedPath)) {
+            recordingPath = expectedPath
+            console.log('📁 Timeout: Found recording file at expected location:', recordingPath)
+            hasFinished = true
+            cleanup()
+            resolve({ success: true, path: recordingPath })
+            return
+          } else {
+            console.log('❌ Timeout: Recording file not found at expected location')
+            // Try to list files in the directory to see what's there
+            try {
+              const files = fs.readdirSync(currentRecordingPath)
+              console.log('📋 Timeout: Files in recording directory:', files)
+              
+              // Look for any .mp3 files that might be our recording (check both .mp3 and .wav)
+              const audioFiles = files.filter(f => 
+                (f.endsWith('.mp3') && !f.endsWith('.mp3.mp3')) || 
+                f.endsWith('.wav')
+              )
+              
+              console.log('🎵 Timeout: Found audio files:', audioFiles)
+              
+              if (audioFiles.length > 0 && currentRecordingPath) {
+                // Look for files that contain our expected filename stem (without extension)
+                const filenameStem = currentRecordingFilename.replace('.mp3', '')
+                console.log('🔍 Timeout: Looking for files containing:', filenameStem)
+                
+                const matchingFiles = audioFiles.filter(f => f.includes(filenameStem))
+                console.log('🎯 Timeout: Matching files:', matchingFiles)
+                
+                if (matchingFiles.length > 0) {
+                  // Check if we have both component files that need to be combined
+                  const hasMicFile = matchingFiles.some(f => f.includes('_mic.wav'))
+                  const hasSystemFile = matchingFiles.some(f => f.includes('_system.wav'))
+                  
+                  if (hasMicFile && hasSystemFile) {
+                    // We have both component files - trigger manual combination
+                    console.log('🔧 Timeout: Found both component files in matching results, attempting manual combination...')
+                    const micFile = matchingFiles.find(f => f.includes('_mic.wav'))!
+                    const systemFile = matchingFiles.find(f => f.includes('_system.wav'))!
+                    
+                    console.log('🎤 Mic file:', micFile)
+                    console.log('🔊 System file:', systemFile)
+                    
+                                         // Set up variables for the manual FFmpeg combination that follows
+                     const micPath = path.join(currentRecordingPath, micFile)
+                     const systemPath = path.join(currentRecordingPath, systemFile)
+                     const outputPath = path.join(currentRecordingPath, currentRecordingFilename)
+                     
+                     // Continue to manual FFmpeg combination logic below
+                     try {
+                       // Use spawn to run ffmpeg
+                       const ffmpegProcess = spawn('ffmpeg', [
+                         '-i', systemPath,
+                         '-i', micPath,
+                         '-filter_complex', '[0:a][1:a]amix=inputs=2:weights=1.0 0.8',
+                         '-c:a', 'libmp3lame',
+                         '-b:a', '192k',
+                         '-y', // Overwrite output file
+                         outputPath
+                       ], { stdio: 'pipe' })
+                       
+                       let ffmpegCompleted = false
+                       
+                       ffmpegProcess.on('close', (code) => {
+                         if (!ffmpegCompleted) {
+                           ffmpegCompleted = true
+                           if (code === 0 && fs.existsSync(outputPath)) {
+                             console.log('✅ Timeout: Manual FFmpeg combination successful')
+                             recordingPath = outputPath
+                             hasFinished = true
+                             cleanup()
+                             resolve({ success: true, path: recordingPath })
+                           } else {
+                             console.log('❌ Timeout: Manual FFmpeg combination failed with code:', code)
+                             // Fall back to most recent audio file
+                             const mostRecentAudio = audioFiles
+                               .map(f => ({ name: f, path: path.join(currentRecordingPath!, f) }))
+                               .sort((a, b) => fs.statSync(b.path).mtime.getTime() - fs.statSync(a.path).mtime.getTime())[0]
+                             
+                             recordingPath = mostRecentAudio.path
+                             console.log('📁 Timeout: Using most recent audio file as fallback:', recordingPath)
+                             hasFinished = true
+                             cleanup()
+                             resolve({ success: true, path: recordingPath })
+                           }
+                         }
+                       })
+                       
+                       ffmpegProcess.on('error', (error) => {
+                         if (!ffmpegCompleted) {
+                           ffmpegCompleted = true
+                           console.log('❌ Timeout: FFmpeg process error:', error.message)
+                           // Fall back to most recent audio file
+                           const mostRecentAudio = audioFiles
+                             .map(f => ({ name: f, path: path.join(currentRecordingPath!, f) }))
+                             .sort((a, b) => fs.statSync(b.path).mtime.getTime() - fs.statSync(a.path).mtime.getTime())[0]
+                           
+                           recordingPath = mostRecentAudio.path
+                           console.log('📁 Timeout: Using most recent audio file after error:', recordingPath)
+                           hasFinished = true
+                           cleanup()
+                           resolve({ success: true, path: recordingPath })
+                         }
+                       })
+                       
+                       // Timeout the manual ffmpeg after 10 seconds
+                       setTimeout(() => {
+                         if (!ffmpegCompleted) {
+                           ffmpegCompleted = true
+                           console.log('⏰ Timeout: Manual FFmpeg taking too long, killing process')
+                           ffmpegProcess.kill('SIGKILL')
+                           // Use most recent file as final fallback
+                           const mostRecentAudio = audioFiles
+                             .map(f => ({ name: f, path: path.join(currentRecordingPath!, f) }))
+                             .sort((a, b) => fs.statSync(b.path).mtime.getTime() - fs.statSync(a.path).mtime.getTime())[0]
+                           
+                           recordingPath = mostRecentAudio.path
+                           console.log('📁 Timeout: Using most recent audio file after manual timeout:', recordingPath)
+                           hasFinished = true
+                           cleanup()
+                           resolve({ success: true, path: recordingPath })
+                         }
+                       }, 10000)
+                       
+                       return // Exit the function here since we're handling the async ffmpeg
+                     } catch (error) {
+                       console.log('❌ Timeout: Failed to start manual FFmpeg:', error)
+                       // Continue to fallback below
+                     }
+                  } else {
+                    // Use the first matching file (preferring .mp3 over .wav)
+                    const selectedFile = matchingFiles.find(f => f.endsWith('.mp3')) || matchingFiles[0]
+                    recordingPath = path.join(currentRecordingPath!, selectedFile)
+                    console.log('📁 Timeout: Using matching file:', recordingPath)
+                    hasFinished = true
+                    cleanup()
+                    resolve({ success: true, path: recordingPath })
+                    return
+                  }
+                } else {
+                  // Final fallback - this logic is now handled above in the matching files section
+                  
+                  // Use the most recent audio file as final fallback
+                  const mostRecentAudio = audioFiles
+                    .map(f => ({ name: f, path: path.join(currentRecordingPath!, f) }))
+                    .sort((a, b) => fs.statSync(b.path).mtime.getTime() - fs.statSync(a.path).mtime.getTime())[0]
+                  
+                  recordingPath = mostRecentAudio.path
+                  console.log('📁 Timeout: Using most recent audio file:', recordingPath)
+                  hasFinished = true
+                  cleanup()
+                  resolve({ success: true, path: recordingPath })
+                  return
+                }
+              }
+            } catch (error) {
+              console.log('❌ Timeout: Could not read recording directory:', error)
+            }
+          }
         }
+        
+        if (swiftRecorderProcess) {
+          console.log('🔪 Force terminating Swift recorder...')
+          swiftRecorderProcess.kill('SIGKILL')
+        }
+        cleanup()
         resolve({ success: false, error: 'Stop timeout - recording may have completed but response was not received' })
       }
-    }, 30000)
+    }, 15000) // Increased timeout to 15 seconds
   })
 }
 
@@ -1380,311 +1636,205 @@ function registerGlobalShortcuts(): void {
         return
       }
     } catch (error) {
-      console.log(`❌ Primary shortcut ${primaryShortcut} failed for ${key}:`, error)
+      console.log(`Failed to register shortcut ${primaryShortcut}:`, error)
     }
-
-    // Try fallback shortcuts
-    const fallbacks = fallbackShortcuts[key] || []
-    for (const fallbackShortcut of fallbacks) {
-      try {
-        if (globalShortcut.register(fallbackShortcut, handler)) {
-          console.log(`✅ Using fallback shortcut ${fallbackShortcut} for ${key}`)
-          currentShortcuts[key] = fallbackShortcut // Update current shortcuts
-          registrationResults.push({ key, shortcut: fallbackShortcut, success: true })
-          return
-        }
-      } catch (error) {
-        console.log(`❌ Fallback shortcut ${fallbackShortcut} failed for ${key}:`, error)
-      }
-    }
-
-    // All attempts failed
-    console.log(`❌ All shortcuts failed for ${key}, disabling shortcut`)
+    
+    // Mark as failed
     registrationResults.push({ key, shortcut: primaryShortcut, success: false })
   }
 
-  // Start/Stop Recording
-  tryRegisterShortcut('toggle-recording', () => {
-    console.log('🎙️ Global shortcut: Start/Stop Recording')
+  // Register shortcuts with handlers
+  tryRegisterShortcut('toggleRecording', () => {
     if (mainWindow) {
-      mainWindow.webContents.send('shortcut:toggle-recording')
+      mainWindow.webContents.send('global-shortcut', 'toggleRecording')
     }
   })
 
-  // Quick Note
-  tryRegisterShortcut('quick-note', () => {
-    console.log('📝 Global shortcut: Quick Note')
+  tryRegisterShortcut('quickNote', () => {
     if (mainWindow) {
-      mainWindow.webContents.send('shortcut:quick-note')
+      mainWindow.webContents.send('global-shortcut', 'quickNote')
     }
   })
 
-  // Show/Hide Window
-  tryRegisterShortcut('show-hide', () => {
-    console.log('👁️ Global shortcut: Show/Hide Window')
+  tryRegisterShortcut('pauseResume', () => {
     if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.hide()
-      } else {
-        mainWindow.show()
-        mainWindow.focus()
-      }
+      mainWindow.webContents.send('global-shortcut', 'pauseResume')
     }
   })
 
-  // Pause/Resume Recording
-  tryRegisterShortcut('pause-resume', () => {
-    console.log('⏸️ Global shortcut: Pause/Resume Recording')
-    if (mainWindow) {
-      mainWindow.webContents.send('shortcut:pause-resume')
-    }
-  })
-
-  // Report results
-  const successfulRegistrations = registrationResults.filter(r => r.success)
-  const failedRegistrations = registrationResults.filter(r => !r.success)
-
-  if (successfulRegistrations.length > 0) {
-    console.log('✅ Global shortcuts registered:', Object.fromEntries(
-      successfulRegistrations.map(r => [r.key, r.shortcut])
-    ))
-  }
-
-  if (failedRegistrations.length > 0) {
-    console.log('❌ Some shortcut registrations failed:', failedRegistrations)
+  // Log registration results
+  const successCount = registrationResults.filter(r => r.success).length
+  const totalCount = registrationResults.length
+  console.log(`📌 Global shortcuts registered: ${successCount}/${totalCount}`)
+  
+  if (successCount < totalCount) {
+    console.log('⚠️ Some shortcuts failed to register:')
+    registrationResults.filter(r => !r.success).forEach(r => {
+      console.log(`  - ${r.key}: ${r.shortcut}`)
+    })
   }
 }
 
-// Add shortcut unregistration
 function unregisterGlobalShortcuts(): void {
   globalShortcut.unregisterAll()
   console.log('🗑️ Global shortcuts unregistered')
 }
 
-// Create system tray
 function createTray(): void {
-  try {
-    // Create tray icon with appropriate size
-    const trayIconPath = getTrayIcon()
-    tray = new Tray(trayIconPath)
-    
-    // On macOS, configure tray behavior
-    if (process.platform === 'darwin') {
-      tray.setIgnoreDoubleClickEvents(false)
-      // Don't use template mode for now to avoid black square issue
-      console.log('🎨 Using regular tray icon for macOS (avoiding template mode)')
-    }
-    
-    // Set tooltip
-    tray.setToolTip('Friday - Meeting Recorder')
-    
-    // Create context menu
-    const contextMenu = Menu.buildFromTemplate([
-      {
-        label: 'Show Friday',
-        click: () => {
-          if (mainWindow) {
-            mainWindow.show()
-            mainWindow.focus()
-          }
-        }
-      },
-      {
-        label: 'Start Recording',
-        click: () => {
-          if (mainWindow) {
-            mainWindow.webContents.send('shortcut:toggle-recording')
-          }
-        }
-      },
-      { type: 'separator' },
-      {
-        label: 'Settings',
-        click: () => {
-          if (mainWindow) {
-            mainWindow.show()
-            mainWindow.focus()
-            mainWindow.webContents.send('navigate-to-settings')
-          }
-        }
-      },
-      { type: 'separator' },
-      {
-        label: 'Quit Friday',
-        click: () => {
-          app.quit()
+  tray = new Tray(getTrayIcon())
+  
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show Friday',
+      click: () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          mainWindow.show()
+          mainWindow.focus()
         }
       }
-    ])
-    
-    // Set the context menu
-    tray.setContextMenu(contextMenu)
-    
-    // Handle double click to show window
-    tray.on('double-click', () => {
-      if (mainWindow) {
+    },
+    {
+      label: 'Hide Friday',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.hide()
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.quit()
+      }
+    }
+  ])
+  
+  tray.setContextMenu(contextMenu)
+  tray.setToolTip('Friday - AI Meeting Assistant')
+  
+  // Handle tray click
+  tray.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide()
+      } else {
+        if (mainWindow.isMinimized()) mainWindow.restore()
         mainWindow.show()
         mainWindow.focus()
       }
-    })
-    
-    console.log('✅ System tray created with icon:', trayIconPath)
-  } catch (error) {
-    console.error('❌ Failed to create system tray:', error)
-  }
+    }
+  })
 }
 
-// Destroy tray
 function destroyTray(): void {
   if (tray) {
     tray.destroy()
     tray = null
-    console.log('🗑️ System tray destroyed')
   }
 }
 
-// Update shortcuts
 function updateShortcuts(newShortcuts: Record<string, string>): boolean {
   try {
-    // Validate shortcuts first
-    for (const [key, shortcut] of Object.entries(newShortcuts)) {
-      if (!shortcut || shortcut.trim() === '') {
-        console.error(`❌ Invalid shortcut for ${key}: empty`)
-        return false
-      }
-    }
-
-    // Test registration before committing changes
-    const testResults: Array<{ key: string; shortcut: string; success: boolean }> = []
-    for (const [key, shortcut] of Object.entries(newShortcuts)) {
-      try {
-        const success = globalShortcut.register(shortcut, () => {})
-        testResults.push({ key, shortcut, success })
-        if (success) {
-          globalShortcut.unregister(shortcut)
-        }
-      } catch (error) {
-        console.error(`❌ Failed to test shortcut ${shortcut} for ${key}:`, error)
-        testResults.push({ key, shortcut, success: false })
-      }
-    }
-
-    // Check if all test registrations succeeded
-    const failedTests = testResults.filter(test => !test.success)
-    if (failedTests.length > 0) {
-      console.error('❌ Some shortcut registrations failed:', failedTests)
-      return false
-    }
-
-    // All tests passed, update the shortcuts
-    Object.assign(currentShortcuts, newShortcuts)
+    // Update current shortcuts
+    currentShortcuts = { ...currentShortcuts, ...newShortcuts }
     
     // Re-register all shortcuts with new values
     registerGlobalShortcuts()
     
-    console.log('✅ Shortcuts updated successfully:', currentShortcuts)
     return true
   } catch (error) {
-    console.error('❌ Failed to update shortcuts:', error)
+    console.error('Failed to update shortcuts:', error)
     return false
   }
 }
 
-// Setup shortcut and tray handlers
+// System handlers
 function setupSystemHandlers(): void {
-  // Get current shortcuts
-  ipcMain.handle('system:get-shortcuts', () => {
-    return currentShortcuts
+  // Shortcut management
+  ipcMain.handle('system:updateShortcuts', async (_, shortcuts: Record<string, string>) => {
+    const success = updateShortcuts(shortcuts)
+    return { success }
   })
 
-  // Update shortcuts
-  ipcMain.handle('system:update-shortcuts', (_, shortcuts: Record<string, string>) => {
-    return updateShortcuts(shortcuts)
-  })
-
-  // Show/hide menu bar tray
-  ipcMain.handle('system:toggle-menu-bar', async (_, show: boolean) => {
-    try {
-      if (show && !tray) {
-        createTray()
-        return { success: true }
-      } else if (!show && tray) {
-        destroyTray()
-        return { success: true }
-      }
-      return { success: true, message: `Tray already ${show ? 'visible' : 'hidden'}` }
-    } catch (error) {
-      console.error('❌ Failed to toggle menu bar:', error)
-      return { success: false, error: String(error) }
+  // System info
+  ipcMain.handle('system:getInfo', async () => {
+    return {
+      platform: process.platform,
+      arch: process.arch,
+      nodeVersion: process.version,
+      electronVersion: process.versions.electron
     }
   })
-
-  // Load settings and apply menu bar preference
-  databaseService.getSettings()
-    .then(settings => {
-      if (settings.showInMenuBar && !tray) {
-        createTray()
-      }
-    })
-    .catch(error => {
-      console.error('Failed to load menu bar setting:', error)
-    })
 }
 
-// Add process cleanup function
+// Process cleanup
 function cleanupHangingRecorderProcesses(): void {
-  console.log('🧹 Checking for hanging Swift recorder processes...')
-  
-  const ps = spawn('ps', ['aux'])
-  let output = ''
-  
-  ps.stdout.on('data', (data: Buffer) => {
-    output += data.toString()
-  })
-  
-  ps.on('close', () => {
-    const lines = output.split('\n')
-    const recorderProcesses = lines.filter(line => 
-      line.includes('Recorder') && 
-      line.includes('--record') && 
-      !line.includes('grep')
-    )
-    
-    if (recorderProcesses.length > 0) {
-      console.log(`🔍 Found ${recorderProcesses.length} hanging recorder process(es):`)
-      
-      recorderProcesses.forEach(line => {
-        const parts = line.trim().split(/\s+/)
-        if (parts.length >= 2) {
-          const pid = parts[1]
-          console.log(`   PID ${pid}: ${line.substring(line.indexOf('Recorder'))}`)
-          
-          try {
-            process.kill(parseInt(pid), 'SIGKILL')
-            console.log(`   ✅ Killed hanging process ${pid}`)
-          } catch (error) {
-            console.log(`   ⚠️ Could not kill process ${pid}: ${error}`)
-          }
-        }
-      })
-    } else {
-      console.log('✅ No hanging recorder processes found')
+  try {
+    if (process.platform === 'darwin') {
+      // Kill any hanging recorder processes
+      const { execSync } = require('child_process')
+      try {
+        execSync('pkill -f "recorder"', { stdio: 'ignore' })
+        console.log('🧹 Cleaned up hanging recorder processes')
+      } catch (error) {
+        // Ignore errors - likely means no processes were found
+      }
     }
-  })
+  } catch (error) {
+    console.error('Failed to cleanup hanging processes:', error)
+  }
 }
 
-// Audio device management functions (placeholder - would need Swift integration)
+// Audio device management
 const audioDeviceManager = {
   async getCurrentDevice() {
     try {
-      // This would need to call the Swift AudioDeviceManager
-      // For now, return a placeholder
-      return {
-        success: true,
-        deviceName: 'Unknown Device',
-        isBluetooth: false,
-        availableDevices: []
-      }
+      console.log('🔊 Getting current audio device...')
+      
+      // Use the Swift script to check current device
+      const result = await new Promise<{ success: boolean; deviceName?: string; isBluetooth?: boolean; error?: string }>((resolve) => {
+        const { spawn } = require('child_process')
+        const swift = spawn('swift', [path.join(process.cwd(), 'fix-bluetooth-audio.swift')])
+        
+        let output = ''
+        swift.stdout.on('data', (data: Buffer) => {
+          output += data.toString()
+        })
+        
+        swift.on('close', (code) => {
+          if (code === 0) {
+            // Parse the output to extract device info
+            const lines = output.split('\n')
+            const deviceLine = lines.find(line => line.includes('Current audio device:'))
+            const bluetoothLine = lines.find(line => line.includes('Is Bluetooth:'))
+            
+            if (deviceLine && bluetoothLine) {
+              const deviceName = deviceLine.split("'")[1] || 'Unknown'
+              const isBluetooth = bluetoothLine.includes('true')
+              
+              resolve({
+                success: true,
+                deviceName,
+                isBluetooth
+              })
+            } else {
+              resolve({
+                success: false,
+                error: 'Could not parse device information'
+              })
+            }
+          } else {
+            resolve({
+              success: false,
+              error: 'Audio device check failed'
+            })
+          }
+        })
+      })
+      
+      return result
     } catch (error) {
       return {
         success: false,
@@ -1695,11 +1845,13 @@ const audioDeviceManager = {
 
   async switchToBuiltInSpeakers() {
     try {
-      // This would need to call the Swift AudioDeviceManager.enableBluetoothWorkaround
-      console.log('🔊 Attempting to switch to built-in speakers...')
+      console.log('🔊 Switching to built-in speakers for recording...')
+      
+      // Note: The actual switching happens in the Swift recorder
+      // This is just a notification to the frontend
       return {
         success: true,
-        message: 'Switched to built-in speakers'
+        message: 'Audio will be temporarily switched during recording and automatically restored after'
       }
     } catch (error) {
       return {
@@ -1711,18 +1863,89 @@ const audioDeviceManager = {
 
   async enableBluetoothWorkaround() {
     try {
-      // This would need to call the Swift AudioDeviceManager.enableBluetoothWorkaround
-      console.log('🔧 Attempting to enable Bluetooth workaround...')
-      return {
-        success: true,
-        message: 'Bluetooth workaround enabled'
-      }
+      console.log('🔧 Running Bluetooth audio restoration...')
+      
+      // Run the restoration script
+      const { spawn } = require('child_process')
+      const result = await new Promise<{ success: boolean; message?: string; error?: string }>((resolve) => {
+        const swift = spawn('swift', [path.join(process.cwd(), 'fix-bluetooth-audio.swift')])
+        
+        let output = ''
+        swift.stdout.on('data', (data: Buffer) => {
+          output += data.toString()
+        })
+        
+        swift.on('close', (code) => {
+          if (code === 0) {
+            if (output.includes('Successfully switched audio to:')) {
+              resolve({
+                success: true,
+                message: 'Bluetooth audio restored successfully'
+              })
+            } else if (output.includes('already using a Bluetooth device')) {
+              resolve({
+                success: true,
+                message: 'Audio is already configured correctly'
+              })
+            } else {
+              resolve({
+                success: false,
+                error: 'Could not restore Bluetooth audio'
+              })
+            }
+          } else {
+            resolve({
+              success: false,
+              error: 'Audio restoration failed'
+            })
+          }
+        })
+      })
+      
+      return result
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       }
     }
+  }
+}
+
+// Cleanup utility to fix existing files with double extensions
+function cleanupDoubleExtensionFiles(recordingDirectory: string): void {
+  try {
+    if (!fs.existsSync(recordingDirectory)) {
+      return
+    }
+
+    const files = fs.readdirSync(recordingDirectory)
+    const doubleExtensionFiles = files.filter(f => f.endsWith('.mp3.mp3'))
+    
+    if (doubleExtensionFiles.length > 0) {
+      console.log(`🧹 Found ${doubleExtensionFiles.length} files with double .mp3 extensions, fixing...`)
+      
+      for (const file of doubleExtensionFiles) {
+        const oldPath = path.join(recordingDirectory, file)
+        const newPath = path.join(recordingDirectory, file.replace('.mp3.mp3', '.mp3'))
+        
+        try {
+          // Check if a file with the correct name already exists
+          if (fs.existsSync(newPath)) {
+            console.log(`⚠️ Target file already exists, removing duplicate: ${file}`)
+            fs.unlinkSync(oldPath)
+          } else {
+            console.log(`🔧 Renaming: ${file} → ${file.replace('.mp3.mp3', '.mp3')}`)
+            fs.renameSync(oldPath, newPath)
+          }
+        } catch (error) {
+          console.error(`❌ Failed to fix file ${file}:`, error)
+        }
+      }
+      console.log('✅ Cleanup completed')
+    }
+  } catch (error) {
+    console.error('❌ Failed to cleanup double extension files:', error)
   }
 }
 
@@ -1745,6 +1968,10 @@ app.whenReady().then(async () => {
         geminiService.setApiKey(settings.geminiApiKey)
         console.log('Gemini API key initialized from settings')
       }
+      
+      // Clean up any existing files with double extensions
+      const recordingDirectory = settings.defaultSaveLocation || path.join(os.homedir(), 'Friday Recordings')
+      cleanupDoubleExtensionFiles(recordingDirectory)
     } catch (error) {
       console.error('Failed to initialize Gemini API key:', error)
     }

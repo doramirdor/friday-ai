@@ -11,7 +11,6 @@ import {
   SaveIcon,
   SparklesIcon,
   BookOpenIcon,
-  BotIcon,
   MailIcon,
   MessageSquareIcon,
   CopyIcon,
@@ -67,10 +66,11 @@ interface SidebarContentProps {
   onSaveMeeting: () => Promise<void>
   onGenerateSummary: () => Promise<void>
   onGenerateAllContent: () => Promise<void>
-  onGenerateAIMessage: (type: 'slack' | 'email', options?: any) => Promise<string | void>
+  onGenerateAIMessage: (type: 'slack' | 'email', options?: unknown) => Promise<string | void>
   onSetGeneratingMessage: (isGenerating: boolean) => void
   onAlertKeywordsChange: (keywords: AlertKeyword[]) => void
   transcript: Array<{ time: string; text: string }>
+  restrictToTabs?: SidebarTab[]
 }
 
 const SidebarContent: React.FC<SidebarContentProps> = ({
@@ -102,7 +102,8 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
   onGenerateAIMessage,
   onSetGeneratingMessage,
   onAlertKeywordsChange,
-  transcript
+  transcript,
+  restrictToTabs
 }) => {
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('details')
   const [newTag, setNewTag] = useState('')
@@ -154,6 +155,19 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
     retrospective:
       'Sprint retrospective to reflect on what went well, what could be improved, and action items for the next sprint. Team discussion on process improvements.'
   }
+
+  // Filter available tabs based on restrictToTabs prop
+  const availableTabs = restrictToTabs || [
+    'details', 'context', 'actions', 'notes', 'summary', 
+    'followup-questions', 'ask-question', 'ai-messages', 'alerts'
+  ]
+
+  // Ensure the active tab is available
+  React.useEffect(() => {
+    if (!availableTabs.includes(activeSidebarTab)) {
+      setActiveSidebarTab(availableTabs[0] || 'details')
+    }
+  }, [availableTabs, activeSidebarTab])
 
   const addTag = (): void => {
     if (newTag.trim() && !tags.includes(newTag.trim())) {
@@ -415,7 +429,7 @@ Best regards,
         summary
       }
 
-      const result = await (window.api as any).gemini.generateFollowupQuestions(options)
+      const result = await (window.api as unknown as { gemini: { generateFollowupQuestions: (options: unknown) => Promise<{ success: boolean; data?: { transcriptSummary?: string; predictedNextSentence?: string }; error?: string }> } }).gemini.generateFollowupQuestions(options)
       
       if (result.success && result.data) {
         setTranscriptSummary(result.data.transcriptSummary || 'No summary available')
@@ -451,13 +465,13 @@ Best regards,
         summary
       }
 
-      const result = await (window.api as any).gemini.askQuestion(options)
+      const result = await (window.api as unknown as { gemini: { askQuestion: (options: unknown) => Promise<{ success: boolean; answer?: string; error?: string }> } }).gemini.askQuestion(options)
       
       if (result.success && result.answer) {
         setQuestionAnswer(result.answer)
         setQuestionHistory(prev => [...prev, {
           question: userQuestion.trim(),
-          answer: result.answer,
+          answer: result.answer || '',
           timestamp: Date.now()
         }])
         setUserQuestion('')
@@ -1402,86 +1416,41 @@ Best regards,
     }
   }
 
+  // Tab configuration for the 5 requested tabs
+  const tabConfig = {
+    // details: { icon: InfoIcon, label: 'Details' },
+    context: { icon: FileTextIcon, label: 'Context' },
+    actions: { icon: ClipboardListIcon, label: 'Action Items' },
+    summary: { icon: BookOpenIcon, label: 'AI Summary' },
+    alerts: { icon: AlertTriangleIcon, label: 'Alerts' }
+  }
+
   return (
-    <div className="transcript-sidebar">
+    <div className="sidebar-content-wrapper">
       {/* Tab Navigation */}
-      <div className="tabs">
-        <button
-          className={`tab ${activeSidebarTab === 'details' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('details')}
-        >
-          <InfoIcon size={14} />
-          Details
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'context' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('context')}
-        >
-          <FileTextIcon size={14} />
-          Context
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'actions' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('actions')}
-        >
-          <ClipboardListIcon size={14} />
-          Actions
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'notes' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('notes')}
-        >
-          <BookOpenIcon size={14} />
-          Notes
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'summary' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('summary')}
-        >
-          <FileTextIcon size={14} />
-          Summary
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'followup-questions' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('followup-questions')}
-        >
-          <SparklesIcon size={14} />
-          Followup
-          {followupEnabled && (
-            <div style={{ 
-              width: '6px', 
-              height: '6px', 
-              background: 'var(--green-dark)', 
-              borderRadius: '50%',
-              marginLeft: '4px'
-            }} />
-          )}
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'ask-question' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('ask-question')}
-        >
-          <MessageSquareIcon size={14} />
-          Q&A
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'ai-messages' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('ai-messages')}
-        >
-          <BotIcon size={14} />
-          Messages
-        </button>
-        <button
-          className={`tab ${activeSidebarTab === 'alerts' ? 'active' : ''}`}
-          onClick={() => setActiveSidebarTab('alerts')}
-        >
-          <AlertTriangleIcon size={14} />
-          Alerts
-        </button>
+      <div className="sidebar-tabs">
+        {availableTabs.map((tab) => {
+          const config = tabConfig[tab as keyof typeof tabConfig]
+          if (!config) return null
+          
+          const Icon = config.icon
+          return (
+            <button
+              key={tab}
+              className={`sidebar-tab ${activeSidebarTab === tab ? 'active' : ''}`}
+              onClick={() => setActiveSidebarTab(tab)}
+            >
+              <Icon size={16} />
+              <span>{config.label}</span>
+            </button>
+          )
+        })}
       </div>
 
       {/* Tab Content */}
-      {renderSidebarContent()}
+      <div className="sidebar-tab-content">
+        {renderSidebarContent()}
+      </div>
 
       {/* Save Indicator */}
       <div className="save-indicator saved">

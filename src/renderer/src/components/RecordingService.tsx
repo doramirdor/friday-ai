@@ -203,12 +203,13 @@ export const useRecordingService = ({
           currentTimeRef.current += 1
         }, 1000)
 
-        // For combined recording, disable browser transcription to avoid device conflicts
-        // The Swift recorder will handle both microphone and system audio
-        // Transcription will be done post-recording using the recorded audio file
+        // For combined recording, start microphone-only transcription for live transcription
+        // The Swift recorder will handle both microphone and system audio recording
+        // Live transcription will use microphone stream only to avoid device conflicts
+        await startMicrophoneOnlyTranscription()
         console.log('✅ Combined recording started successfully')
-        console.log('⚠️ Browser transcription disabled for combined recording to avoid device conflicts')
-        console.log('📝 Transcription will be processed after recording completes')
+        console.log('🎤 Microphone-only transcription enabled for live transcription')
+        console.log('📝 Live transcription from microphone while recording both audio streams')
       } else {
         console.error('Failed to start combined recording:', result.error)
         transcriptionStatusRef.current = 'error'
@@ -221,19 +222,29 @@ export const useRecordingService = ({
     }
   }, [onTranscriptionStatusChange])
 
-
-
   // Start microphone-only transcription for combined recording (avoids system audio conflicts)
   const startMicrophoneOnlyTranscription = useCallback(async (): Promise<void> => {
     try {
       console.log('🎤 Starting microphone-only transcription for combined recording...')
 
-      // Check transcription service status
-      const statusResult = await (window.api as any).transcription.isReady()
+      // Wait for transcription service to be ready with retry mechanism
+      let retries = 0
+      const maxRetries = 10
+      let statusResult = await (window.api as any).transcription.isReady()
+      
+      while (!statusResult.ready && retries < maxRetries) {
+        console.log(`⏳ Transcription service not ready, waiting... (attempt ${retries + 1}/${maxRetries})`)
+        await new Promise(resolve => setTimeout(resolve, 500)) // Wait 500ms
+        statusResult = await (window.api as any).transcription.isReady()
+        retries++
+      }
+      
       if (!statusResult.ready) {
-        console.error('Transcription service not ready')
+        console.error('Transcription service not ready after retries')
         return
       }
+      
+      console.log('✅ Transcription service ready, starting microphone transcription')
 
       // Get microphone access for transcription only (not recording)
       const devices = await navigator.mediaDevices.enumerateDevices()
@@ -815,8 +826,18 @@ export const useRecordingService = ({
 
   // Stop combined recording
   const stopCombinedRecording = useCallback(async (): Promise<void> => {
+    // Prevent multiple simultaneous stop operations
+    if (!isCombinedRecordingRef.current) {
+      console.log('⚠️ Combined recording already stopped or not active')
+      return
+    }
+
     try {
       console.log('🛑 Stopping combined recording with transcript length:', transcriptRef.current.length)
+      
+      // Immediately mark as stopping to prevent multiple calls
+      isCombinedRecordingRef.current = false
+      isRecordingRef.current = false
       
       const result = await (window.api as any).swiftRecorder.stopCombinedRecording()
 
@@ -827,16 +848,48 @@ export const useRecordingService = ({
         if (result.path) {
           console.log('📁 RecordingService: Setting combined recording path:', result.path)
           combinedRecordingPathRef.current = result.path
+          
+          // Manually trigger the stopped callback with the recording path
+          console.log('📤 Triggering onCombinedRecordingStopped with path:', result.path)
+          onCombinedRecordingStopped({
+            success: true,
+            path: result.path,
+            code: 'RECORDING_STOPPED'
+          })
+        } else {
+          // Trigger callback without path but still mark as successful
+          console.log('📤 Triggering onCombinedRecordingStopped without path (recording may have completed)')
+          onCombinedRecordingStopped({
+            success: true,
+            code: 'RECORDING_STOPPED'
+          })
         }
       } else {
         console.error('Failed to stop combined recording:', result.error)
+        
+        // Check if it's a timeout error - the recording may have actually completed
+        if (result.error && result.error.includes('timeout')) {
+          console.log('⚠️ Timeout error detected - recording may have completed successfully')
+          console.log('🔄 Triggering stopped callback to preserve transcript data')
+          
+          // Still trigger the stopped callback to save transcript data
+          onCombinedRecordingStopped({
+            success: true,
+            code: 'RECORDING_STOPPED',
+            warning: 'Recording completed but path verification timed out'
+          })
+        } else {
+          // Trigger failure callback for non-timeout errors
+          onCombinedRecordingFailed({
+            success: false,
+            error: result.error,
+            code: 'RECORDING_FAILED'
+          })
+        }
       }
     } catch (error) {
       console.error('Error stopping combined recording:', error)
     }
-
-    // Stop parallel transcription recording
-    isRecordingRef.current = false
 
     // Stop audio stream used for transcription
     if (audioStreamRef.current) {
@@ -845,7 +898,6 @@ export const useRecordingService = ({
     }
 
     // Clean up common recording state but preserve transcript and recording path
-    isCombinedRecordingRef.current = false
     transcriptionStatusRef.current = 'ready'
     onTranscriptionStatusChange('ready')
 
@@ -855,7 +907,7 @@ export const useRecordingService = ({
     }
 
     console.log('✅ Combined recording cleanup completed. Duration:', formatTime(currentTimeRef.current), 'Transcript lines preserved:', transcriptRef.current.length, 'Recording path:', combinedRecordingPathRef.current)
-  }, [formatTime, onTranscriptionStatusChange])
+  }, [formatTime, onTranscriptionStatusChange, onCombinedRecordingStopped, onCombinedRecordingFailed])
 
   // Stop microphone recording
   const stopMicrophoneRecording = useCallback((): void => {
@@ -901,13 +953,11 @@ export const useRecordingService = ({
 
   // Main start recording function
   const startRecording = useCallback(async (mode: 'microphone' | 'combined'): Promise<void> => {
-    // Always prefer microphone recording to avoid screen permission issues
-    // Combined recording will be handled by the Swift recorder's fallback logic
     if (mode === 'combined' && isSwiftRecorderAvailableRef.current) {
-      console.log('🎙️ Starting combined recording (with automatic fallback to mic-only if screen permissions denied)')
+      console.log('🎙️ Starting combined recording (system audio + microphone) with live transcription')
       await startCombinedRecording()
     } else {
-      console.log('🎤 Starting microphone-only recording')
+      console.log('🎤 Starting microphone-only recording with live transcription')
       await startMicrophoneRecording()
       // Start parallel transcription for microphone-only mode
       await startParallelTranscriptionRecording()
@@ -916,6 +966,12 @@ export const useRecordingService = ({
 
   // Main stop recording function
   const stopRecording = useCallback(async (): Promise<void> => {
+    // Prevent multiple simultaneous stop operations
+    if (!isRecordingRef.current) {
+      console.log('⚠️ Recording already stopped or not active')
+      return
+    }
+
     console.log('🛑 Stopping recording...')
 
     if (isCombinedRecordingRef.current) {

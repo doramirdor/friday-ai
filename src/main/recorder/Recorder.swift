@@ -28,6 +28,12 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
     // Audio-only mode to avoid Bluetooth disconnection
     private var audioOnlyMode = false
 
+    // MARK: – Instance variables
+    var audioEngine = AVAudioEngine()
+    var audioFile: AVAudioFile?
+    var originalOutputDeviceID: AudioDeviceID? // Store original device for restoration
+    var hasBluetoothSwitching = false          // Track if we switched devices
+
     // MARK: – CLI entry
     override init() {
         super.init()
@@ -54,12 +60,22 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
                 print("⚠️ System audio capture will be limited with Bluetooth output, but Bluetooth stays connected")
                 // Don't switch output device in audio-only mode to preserve Bluetooth connection
             } else {
-                print("⚠️  Bluetooth output detected - this will prevent system audio capture")
-                print("🔄 Attempting to switch to built-in speakers for better system audio capture...")
+                print("🎧 Bluetooth output detected - this will temporarily affect system audio capture")
+                print("💡 To capture system audio, we need to temporarily switch to built-in speakers")
+                print("🔄 Your audio will be automatically restored to Bluetooth after recording stops")
+                
+                // Store the current (Bluetooth) device for restoration later
+                if let currentDevice = AudioDeviceManager.getCurrentDefaultOutputDevice() {
+                    originalOutputDeviceID = currentDevice
+                    let deviceName = AudioDeviceManager.getDeviceName(currentDevice) ?? "Unknown Device"
+                    print("📱 Storing original device: '\(deviceName)' for later restoration")
+                }
                 
                 if let builtInDevice = AudioDeviceManager.builtInOutputID() {
                     if AudioDeviceManager.setDefaultOutputDevice(builtInDevice) {
+                        hasBluetoothSwitching = true
                         print("✅ Switched to built-in speakers for recording")
+                        print("🎧 Don't worry - your Bluetooth audio will be restored when recording stops")
                     } else {
                         print("❌ Failed to switch to built-in speakers")
                         ResponseHandler.send([
@@ -529,6 +545,9 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
               (audioSource == "system" && !systemRecordingActive) ||
               (audioSource == "both" && !micRecordingActive && !systemRecordingActive) else { return }
 
+        // Restore original audio device if we switched it for Bluetooth workaround
+        restoreOriginalAudioDevice()
+
         if audioSource == "both" {
             combineSystemAndMic()
         } else if audioSource == "system" {
@@ -536,6 +555,29 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
         } else {
             convertWavToMp3(wav: urlInDir("_mic.wav"))
         }
+    }
+    
+    /// Restores the original audio output device after Bluetooth workaround
+    private func restoreOriginalAudioDevice() {
+        guard hasBluetoothSwitching, let originalDevice = originalOutputDeviceID else {
+            return // No restoration needed
+        }
+        
+        print("🔄 Restoring original audio output device...")
+        
+        if AudioDeviceManager.setDefaultOutputDevice(originalDevice) {
+            let deviceName = AudioDeviceManager.getDeviceName(originalDevice) ?? "Unknown Device"
+            print("✅ Audio restored to: '\(deviceName)'")
+            print("🎧 You should now hear audio through your Bluetooth device again")
+        } else {
+            let deviceName = AudioDeviceManager.getDeviceName(originalDevice) ?? "Unknown Device"
+            print("❌ Failed to restore audio to: '\(deviceName)'")
+            print("💡 You may need to manually switch back to your Bluetooth device in System Settings")
+        }
+        
+        // Reset flags
+        hasBluetoothSwitching = false
+        originalOutputDeviceID = nil
     }
 
     private func combineSystemAndMic() {
@@ -616,6 +658,15 @@ final class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput, AVAudioReco
             // If no system recording, just finish
             print("🔄 Processing final recording...")
             finishIfPossible()
+        }
+    }
+    
+    /// Emergency cleanup method for unexpected termination
+    deinit {
+        // Ensure we restore audio device even if the process terminates unexpectedly
+        if hasBluetoothSwitching, let originalDevice = originalOutputDeviceID {
+            print("🚨 Emergency audio device restoration...")
+            let _ = AudioDeviceManager.setDefaultOutputDevice(originalDevice)
         }
     }
 }

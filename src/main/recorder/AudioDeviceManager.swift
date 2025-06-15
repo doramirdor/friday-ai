@@ -96,7 +96,49 @@ final class AudioDeviceManager {
         print("  Output over Bluetooth: \(isCurrentOutputDeviceBluetooth())")
     }
 
-    // MARK: – Device switching for Bluetooth workaround
+    // MARK: – Device detection and switching for Bluetooth workaround
+    /// Gets the current default output device ID
+    static func getCurrentDefaultOutputDevice() -> AudioDeviceID? {
+        var defAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let result = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &defAddr, 0, nil, &size, &deviceID)
+        
+        return result == noErr ? deviceID : nil
+    }
+    
+    /// Gets the name of an audio device by ID
+    static func getDeviceName(_ deviceID: AudioDeviceID) -> String? {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var deviceNameSize = UInt32(256)
+        var deviceNameBuffer = [UInt8](repeating: 0, count: 256)
+        
+        let result = AudioObjectGetPropertyData(
+            deviceID,
+            &propertyAddress,
+            0,
+            nil,
+            &deviceNameSize,
+            &deviceNameBuffer
+        )
+        
+        if result == noErr {
+            return String(bytes: deviceNameBuffer.prefix(Int(deviceNameSize)), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        return nil
+    }
+    
     /// Returns the AudioDeviceID for the built-in speakers.
     static func builtInOutputID() -> AudioDeviceID? {
         var propAddr = AudioObjectPropertyAddress(

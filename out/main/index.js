@@ -845,7 +845,6 @@ Respond with a well-structured, informative answer that combines both sources ap
 }
 const geminiService = new GeminiService();
 let mainWindow = null;
-let tray = null;
 let transcriptionProcess = null;
 let transcriptionSocket = null;
 let isTranscriptionReady = false;
@@ -853,17 +852,14 @@ let isTranscriptionStarting = false;
 let actualTranscriptionPort = 9001;
 let swiftRecorderProcess = null;
 let isSwiftRecorderAvailable = false;
+let currentRecordingPath = null;
+let currentRecordingFilename = null;
+let isStoppingRecording = false;
 const currentShortcuts = {
   "toggle-recording": "CmdOrCtrl+Alt+R",
   "quick-note": "CmdOrCtrl+Alt+N",
   "show-hide": "CmdOrCtrl+Shift+H",
   "pause-resume": "CmdOrCtrl+Alt+P"
-};
-const fallbackShortcuts = {
-  "toggle-recording": ["CmdOrCtrl+L", "CmdOrCtrl+Shift+R", "F9"],
-  "quick-note": ["CmdOrCtrl+Shift+N", "CmdOrCtrl+Alt+Q", "F10"],
-  "show-hide": ["CmdOrCtrl+Alt+H", "CmdOrCtrl+Shift+H", "F11"],
-  "pause-resume": ["CmdOrCtrl+P", "CmdOrCtrl+Shift+P", "F8"]
 };
 const activeChunkedRecordings = /* @__PURE__ */ new Map();
 const CHUNK_DURATION_MS = 5 * 60 * 1e3;
@@ -930,45 +926,6 @@ function getAppIcon() {
   console.log("⚠️ Using bundled fallback icon:", icon);
   return icon;
 }
-function getTrayIcon() {
-  console.log("🔍 Resolving tray icon for platform:", process.platform);
-  if (process.platform === "darwin") {
-    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
-    console.log("🔍 Checking for macOS tray icon at:", trayIconPath);
-    if (fs__namespace.existsSync(trayIconPath)) {
-      console.log("✅ Using macOS tray icon:", trayIconPath);
-      return trayIconPath;
-    }
-    const fridayLogoPath = path__namespace.join(__dirname, "../../resources/FridayLogoOnly.png");
-    console.log("🔍 Checking for Friday logo at:", fridayLogoPath);
-    if (fs__namespace.existsSync(fridayLogoPath)) {
-      console.log("✅ Using Friday logo for tray:", fridayLogoPath);
-      return fridayLogoPath;
-    }
-    const smallIconPath = path__namespace.join(__dirname, "../../build/icon.png");
-    console.log("🔍 Checking for build icon at:", smallIconPath);
-    if (fs__namespace.existsSync(smallIconPath)) {
-      console.log("✅ Using build icon for tray:", smallIconPath);
-      return smallIconPath;
-    }
-  } else if (process.platform === "win32") {
-    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
-    if (fs__namespace.existsSync(trayIconPath)) {
-      return trayIconPath;
-    }
-    const buildIconPath = path__namespace.join(__dirname, "../../build/icon.png");
-    if (fs__namespace.existsSync(buildIconPath)) {
-      return buildIconPath;
-    }
-  } else {
-    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
-    if (fs__namespace.existsSync(trayIconPath)) {
-      return trayIconPath;
-    }
-  }
-  console.log("⚠️ Using bundled fallback icon for tray:", icon);
-  return icon;
-}
 async function checkSwiftRecorderAvailability() {
   return new Promise((resolve) => {
     const recorderPath = path__namespace.join(process.cwd(), "Recorder");
@@ -1013,11 +970,20 @@ async function startCombinedRecording(recordingPath, filename) {
       if (!fs__namespace.existsSync(resolvedPath)) {
         fs__namespace.mkdirSync(resolvedPath, { recursive: true });
       }
-      const recorderPath = path__namespace.join(process.cwd(), "Recorder");
+      const recorderPath = path__namespace.join(process.cwd(), "src", "main", "recorder", "recorder");
       const args = ["--record", resolvedPath, "--source", "both", "--audio-only"];
+      currentRecordingPath = resolvedPath;
       if (filename) {
         args.push("--filename", filename);
+        currentRecordingFilename = filename;
+      } else {
+        const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+        currentRecordingFilename = `combined-recording-${timestamp}.mp3`;
+        args.push("--filename", currentRecordingFilename);
       }
+      console.log("📁 Recording will be saved to:", path__namespace.join(currentRecordingPath, currentRecordingFilename));
+      console.log("🎯 Current recording path:", currentRecordingPath);
+      console.log("📄 Current recording filename:", currentRecordingFilename);
       console.log("🎙️ Starting combined recording with Swift recorder...");
       console.log("Command:", recorderPath, args.join(" "));
       swiftRecorderProcess = child_process.spawn(recorderPath, args, {
@@ -1031,6 +997,7 @@ async function startCombinedRecording(recordingPath, filename) {
       let lastOutputTime = Date.now();
       let bluetoothMicStarted = false;
       let systemAudioStarted = false;
+      let isAudioOnlyMode = false;
       const outputTimeoutId = setTimeout(() => {
         if (!outputReceived) {
           console.log("❌ TIMEOUT: No output received from Swift recorder after 10 seconds");
@@ -1124,6 +1091,10 @@ async function startCombinedRecording(recordingPath, filename) {
             }
           } catch {
             const logLine = line.toLowerCase();
+            if (logLine.includes("audio-only mode enabled") || logLine.includes("skipping system audio in audio-only mode")) {
+              isAudioOnlyMode = true;
+              console.log("🎵 Detected: Audio-only mode enabled (system audio will be skipped)");
+            }
             if (logLine.includes("bluetooth microphone recording started") || logLine.includes("microphone recording started")) {
               bluetoothMicStarted = true;
               console.log("🎧 Detected: Bluetooth microphone started");
@@ -1132,15 +1103,17 @@ async function startCombinedRecording(recordingPath, filename) {
               systemAudioStarted = true;
               console.log("🔊 Detected: System audio started");
             }
-            if (bluetoothMicStarted && systemAudioStarted && !hasStarted) {
-              console.log("✅ Both recording components started - marking as successful");
+            const shouldMarkAsStarted = isAudioOnlyMode ? bluetoothMicStarted : bluetoothMicStarted && systemAudioStarted;
+            if (shouldMarkAsStarted && !hasStarted) {
+              const message = isAudioOnlyMode ? "Bluetooth microphone started successfully (audio-only mode)" : "Both Bluetooth microphone and system audio started successfully";
+              console.log(`✅ Recording components started - marking as successful (${isAudioOnlyMode ? "audio-only" : "combined"} mode)`);
               hasStarted = true;
               clearInterval(hangDetectionInterval);
               resolve({ success: true });
               if (mainWindow) {
                 mainWindow.webContents.send("combined-recording-started", {
                   code: "RECORDING_STARTED",
-                  message: "Both Bluetooth microphone and system audio started successfully"
+                  message
                 });
               }
             }
@@ -1212,6 +1185,12 @@ async function stopCombinedRecording() {
       resolve({ success: false, error: "No active recording" });
       return;
     }
+    if (isStoppingRecording) {
+      console.log("⚠️ Stop operation already in progress");
+      resolve({ success: false, error: "Stop operation already in progress" });
+      return;
+    }
+    isStoppingRecording = true;
     console.log("🛑 Stopping combined recording...");
     let hasFinished = false;
     let recordingPath;
@@ -1238,11 +1217,43 @@ async function stopCombinedRecording() {
     const handleExit = (code, signal) => {
       console.log(`Swift recorder process exited during stop with code ${code}, signal: ${signal}`);
       if (!hasFinished) {
-        if (code === 0) {
+        if (!recordingPath && currentRecordingFilename && currentRecordingPath) {
+          const expectedPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
+          console.log("🔍 Looking for recording file at:", expectedPath);
+          console.log("📂 Current recording path:", currentRecordingPath);
+          console.log("📄 Current recording filename:", currentRecordingFilename);
+          if (fs__namespace.existsSync(expectedPath)) {
+            recordingPath = expectedPath;
+            console.log("📁 Found recording file at expected location:", recordingPath);
+          } else {
+            console.log("❌ Recording file not found at expected location");
+            try {
+              const files = fs__namespace.readdirSync(currentRecordingPath);
+              console.log("📋 Files in recording directory:", files);
+              const mp3Files = files.filter((f) => f.endsWith(".mp3") && !f.endsWith(".mp3.mp3"));
+              if (mp3Files.length > 0 && currentRecordingPath) {
+                const mostRecentMp3 = mp3Files.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
+                recordingPath = mostRecentMp3.path;
+                console.log("📁 Found most recent MP3 file:", recordingPath);
+              }
+            } catch (error) {
+              console.log("❌ Could not read recording directory:", error);
+            }
+          }
+        } else {
+          console.log("⚠️ Missing recording info for fallback:", {
+            hasRecordingPath: !!recordingPath,
+            hasCurrentFilename: !!currentRecordingFilename,
+            hasCurrentPath: !!currentRecordingPath
+          });
+        }
+        if (code === 0 || signal === "SIGINT") {
           console.log("✅ Recording process exited normally - assuming successful completion");
+          cleanup();
           resolve({ success: true, path: recordingPath });
         } else {
           console.log("❌ Recording process exited with error during stop");
+          cleanup();
           resolve({ success: false, error: `Process exited with code ${code}` });
         }
       }
@@ -1251,15 +1262,156 @@ async function stopCombinedRecording() {
     swiftRecorderProcess.once("exit", handleExit);
     console.log("📤 Sending SIGINT to Swift recorder for graceful shutdown...");
     swiftRecorderProcess.kill("SIGINT");
+    const cleanup = () => {
+      currentRecordingPath = null;
+      currentRecordingFilename = null;
+      swiftRecorderProcess = null;
+      isStoppingRecording = false;
+    };
     setTimeout(() => {
       if (!hasFinished) {
-        if (swiftRecorderProcess) {
-          swiftRecorderProcess.kill("SIGTERM");
-          swiftRecorderProcess = null;
+        console.log("⏰ Stop timeout reached - checking for recording file...");
+        console.log("🔍 Debug info:", {
+          hasRecordingPath: !!recordingPath,
+          hasCurrentFilename: !!currentRecordingFilename,
+          hasCurrentPath: !!currentRecordingPath,
+          currentFilename: currentRecordingFilename,
+          currentPath: currentRecordingPath
+        });
+        if (!recordingPath && currentRecordingFilename && currentRecordingPath) {
+          const expectedPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
+          console.log("⏰ Timeout: Looking for recording file at:", expectedPath);
+          if (fs__namespace.existsSync(expectedPath)) {
+            recordingPath = expectedPath;
+            console.log("📁 Timeout: Found recording file at expected location:", recordingPath);
+            hasFinished = true;
+            cleanup();
+            resolve({ success: true, path: recordingPath });
+            return;
+          } else {
+            console.log("❌ Timeout: Recording file not found at expected location");
+            try {
+              const files = fs__namespace.readdirSync(currentRecordingPath);
+              console.log("📋 Timeout: Files in recording directory:", files);
+              const audioFiles = files.filter(
+                (f) => f.endsWith(".mp3") && !f.endsWith(".mp3.mp3") || f.endsWith(".wav")
+              );
+              console.log("🎵 Timeout: Found audio files:", audioFiles);
+              if (audioFiles.length > 0 && currentRecordingPath) {
+                const filenameStem = currentRecordingFilename.replace(".mp3", "");
+                console.log("🔍 Timeout: Looking for files containing:", filenameStem);
+                const matchingFiles = audioFiles.filter((f) => f.includes(filenameStem));
+                console.log("🎯 Timeout: Matching files:", matchingFiles);
+                if (matchingFiles.length > 0) {
+                  const hasMicFile = matchingFiles.some((f) => f.includes("_mic.wav"));
+                  const hasSystemFile = matchingFiles.some((f) => f.includes("_system.wav"));
+                  if (hasMicFile && hasSystemFile) {
+                    console.log("🔧 Timeout: Found both component files in matching results, attempting manual combination...");
+                    const micFile = matchingFiles.find((f) => f.includes("_mic.wav"));
+                    const systemFile = matchingFiles.find((f) => f.includes("_system.wav"));
+                    console.log("🎤 Mic file:", micFile);
+                    console.log("🔊 System file:", systemFile);
+                    const micPath = path__namespace.join(currentRecordingPath, micFile);
+                    const systemPath = path__namespace.join(currentRecordingPath, systemFile);
+                    const outputPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
+                    try {
+                      const ffmpegProcess = child_process.spawn("ffmpeg", [
+                        "-i",
+                        systemPath,
+                        "-i",
+                        micPath,
+                        "-filter_complex",
+                        "[0:a][1:a]amix=inputs=2:weights=1.0 0.8",
+                        "-c:a",
+                        "libmp3lame",
+                        "-b:a",
+                        "192k",
+                        "-y",
+                        // Overwrite output file
+                        outputPath
+                      ], { stdio: "pipe" });
+                      let ffmpegCompleted = false;
+                      ffmpegProcess.on("close", (code) => {
+                        if (!ffmpegCompleted) {
+                          ffmpegCompleted = true;
+                          if (code === 0 && fs__namespace.existsSync(outputPath)) {
+                            console.log("✅ Timeout: Manual FFmpeg combination successful");
+                            recordingPath = outputPath;
+                            hasFinished = true;
+                            cleanup();
+                            resolve({ success: true, path: recordingPath });
+                          } else {
+                            console.log("❌ Timeout: Manual FFmpeg combination failed with code:", code);
+                            const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
+                            recordingPath = mostRecentAudio.path;
+                            console.log("📁 Timeout: Using most recent audio file as fallback:", recordingPath);
+                            hasFinished = true;
+                            cleanup();
+                            resolve({ success: true, path: recordingPath });
+                          }
+                        }
+                      });
+                      ffmpegProcess.on("error", (error) => {
+                        if (!ffmpegCompleted) {
+                          ffmpegCompleted = true;
+                          console.log("❌ Timeout: FFmpeg process error:", error.message);
+                          const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
+                          recordingPath = mostRecentAudio.path;
+                          console.log("📁 Timeout: Using most recent audio file after error:", recordingPath);
+                          hasFinished = true;
+                          cleanup();
+                          resolve({ success: true, path: recordingPath });
+                        }
+                      });
+                      setTimeout(() => {
+                        if (!ffmpegCompleted) {
+                          ffmpegCompleted = true;
+                          console.log("⏰ Timeout: Manual FFmpeg taking too long, killing process");
+                          ffmpegProcess.kill("SIGKILL");
+                          const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
+                          recordingPath = mostRecentAudio.path;
+                          console.log("📁 Timeout: Using most recent audio file after manual timeout:", recordingPath);
+                          hasFinished = true;
+                          cleanup();
+                          resolve({ success: true, path: recordingPath });
+                        }
+                      }, 1e4);
+                      return;
+                    } catch (error) {
+                      console.log("❌ Timeout: Failed to start manual FFmpeg:", error);
+                    }
+                  } else {
+                    const selectedFile = matchingFiles.find((f) => f.endsWith(".mp3")) || matchingFiles[0];
+                    recordingPath = path__namespace.join(currentRecordingPath, selectedFile);
+                    console.log("📁 Timeout: Using matching file:", recordingPath);
+                    hasFinished = true;
+                    cleanup();
+                    resolve({ success: true, path: recordingPath });
+                    return;
+                  }
+                } else {
+                  const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
+                  recordingPath = mostRecentAudio.path;
+                  console.log("📁 Timeout: Using most recent audio file:", recordingPath);
+                  hasFinished = true;
+                  cleanup();
+                  resolve({ success: true, path: recordingPath });
+                  return;
+                }
+              }
+            } catch (error) {
+              console.log("❌ Timeout: Could not read recording directory:", error);
+            }
+          }
         }
+        if (swiftRecorderProcess) {
+          console.log("🔪 Force terminating Swift recorder...");
+          swiftRecorderProcess.kill("SIGKILL");
+        }
+        cleanup();
         resolve({ success: false, error: "Stop timeout - recording may have completed but response was not received" });
       }
-    }, 3e4);
+    }, 15e3);
   });
 }
 function startTranscriptionService() {
@@ -1843,240 +1995,116 @@ function registerGlobalShortcuts() {
         return;
       }
     } catch (error) {
-      console.log(`❌ Primary shortcut ${primaryShortcut} failed for ${key}:`, error);
+      console.log(`Failed to register shortcut ${primaryShortcut}:`, error);
     }
-    const fallbacks = fallbackShortcuts[key] || [];
-    for (const fallbackShortcut of fallbacks) {
-      try {
-        if (electron.globalShortcut.register(fallbackShortcut, handler)) {
-          console.log(`✅ Using fallback shortcut ${fallbackShortcut} for ${key}`);
-          currentShortcuts[key] = fallbackShortcut;
-          registrationResults.push({ key, shortcut: fallbackShortcut, success: true });
-          return;
-        }
-      } catch (error) {
-        console.log(`❌ Fallback shortcut ${fallbackShortcut} failed for ${key}:`, error);
-      }
-    }
-    console.log(`❌ All shortcuts failed for ${key}, disabling shortcut`);
     registrationResults.push({ key, shortcut: primaryShortcut, success: false });
   };
-  tryRegisterShortcut("toggle-recording", () => {
-    console.log("🎙️ Global shortcut: Start/Stop Recording");
+  tryRegisterShortcut("toggleRecording", () => {
     if (mainWindow) {
-      mainWindow.webContents.send("shortcut:toggle-recording");
+      mainWindow.webContents.send("global-shortcut", "toggleRecording");
     }
   });
-  tryRegisterShortcut("quick-note", () => {
-    console.log("📝 Global shortcut: Quick Note");
+  tryRegisterShortcut("quickNote", () => {
     if (mainWindow) {
-      mainWindow.webContents.send("shortcut:quick-note");
+      mainWindow.webContents.send("global-shortcut", "quickNote");
     }
   });
-  tryRegisterShortcut("show-hide", () => {
-    console.log("👁️ Global shortcut: Show/Hide Window");
+  tryRegisterShortcut("pauseResume", () => {
     if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.hide();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
+      mainWindow.webContents.send("global-shortcut", "pauseResume");
     }
   });
-  tryRegisterShortcut("pause-resume", () => {
-    console.log("⏸️ Global shortcut: Pause/Resume Recording");
-    if (mainWindow) {
-      mainWindow.webContents.send("shortcut:pause-resume");
-    }
-  });
-  const successfulRegistrations = registrationResults.filter((r) => r.success);
-  const failedRegistrations = registrationResults.filter((r) => !r.success);
-  if (successfulRegistrations.length > 0) {
-    console.log("✅ Global shortcuts registered:", Object.fromEntries(
-      successfulRegistrations.map((r) => [r.key, r.shortcut])
-    ));
-  }
-  if (failedRegistrations.length > 0) {
-    console.log("❌ Some shortcut registrations failed:", failedRegistrations);
+  const successCount = registrationResults.filter((r) => r.success).length;
+  const totalCount = registrationResults.length;
+  console.log(`📌 Global shortcuts registered: ${successCount}/${totalCount}`);
+  if (successCount < totalCount) {
+    console.log("⚠️ Some shortcuts failed to register:");
+    registrationResults.filter((r) => !r.success).forEach((r) => {
+      console.log(`  - ${r.key}: ${r.shortcut}`);
+    });
   }
 }
 function unregisterGlobalShortcuts() {
   electron.globalShortcut.unregisterAll();
   console.log("🗑️ Global shortcuts unregistered");
 }
-function createTray() {
-  try {
-    const trayIconPath = getTrayIcon();
-    tray = new electron.Tray(trayIconPath);
-    if (process.platform === "darwin") {
-      tray.setIgnoreDoubleClickEvents(false);
-      console.log("🎨 Using regular tray icon for macOS (avoiding template mode)");
-    }
-    tray.setToolTip("Friday - Meeting Recorder");
-    const contextMenu = electron.Menu.buildFromTemplate([
-      {
-        label: "Show Friday",
-        click: () => {
-          if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
-          }
-        }
-      },
-      {
-        label: "Start Recording",
-        click: () => {
-          if (mainWindow) {
-            mainWindow.webContents.send("shortcut:toggle-recording");
-          }
-        }
-      },
-      { type: "separator" },
-      {
-        label: "Settings",
-        click: () => {
-          if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
-            mainWindow.webContents.send("navigate-to-settings");
-          }
-        }
-      },
-      { type: "separator" },
-      {
-        label: "Quit Friday",
-        click: () => {
-          electron.app.quit();
-        }
-      }
-    ]);
-    tray.setContextMenu(contextMenu);
-    tray.on("double-click", () => {
-      if (mainWindow) {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    });
-    console.log("✅ System tray created with icon:", trayIconPath);
-  } catch (error) {
-    console.error("❌ Failed to create system tray:", error);
-  }
-}
-function destroyTray() {
-  if (tray) {
-    tray.destroy();
-    tray = null;
-    console.log("🗑️ System tray destroyed");
-  }
-}
 function updateShortcuts(newShortcuts) {
   try {
-    for (const [key, shortcut] of Object.entries(newShortcuts)) {
-      if (!shortcut || shortcut.trim() === "") {
-        console.error(`❌ Invalid shortcut for ${key}: empty`);
-        return false;
-      }
-    }
-    const testResults = [];
-    for (const [key, shortcut] of Object.entries(newShortcuts)) {
-      try {
-        const success = electron.globalShortcut.register(shortcut, () => {
-        });
-        testResults.push({ key, shortcut, success });
-        if (success) {
-          electron.globalShortcut.unregister(shortcut);
-        }
-      } catch (error) {
-        console.error(`❌ Failed to test shortcut ${shortcut} for ${key}:`, error);
-        testResults.push({ key, shortcut, success: false });
-      }
-    }
-    const failedTests = testResults.filter((test) => !test.success);
-    if (failedTests.length > 0) {
-      console.error("❌ Some shortcut registrations failed:", failedTests);
-      return false;
-    }
-    Object.assign(currentShortcuts, newShortcuts);
+    currentShortcuts = { ...currentShortcuts, ...newShortcuts };
     registerGlobalShortcuts();
-    console.log("✅ Shortcuts updated successfully:", currentShortcuts);
     return true;
   } catch (error) {
-    console.error("❌ Failed to update shortcuts:", error);
+    console.error("Failed to update shortcuts:", error);
     return false;
   }
 }
 function setupSystemHandlers() {
-  electron.ipcMain.handle("system:get-shortcuts", () => {
-    return currentShortcuts;
+  electron.ipcMain.handle("system:updateShortcuts", async (_, shortcuts) => {
+    const success = updateShortcuts(shortcuts);
+    return { success };
   });
-  electron.ipcMain.handle("system:update-shortcuts", (_, shortcuts) => {
-    return updateShortcuts(shortcuts);
-  });
-  electron.ipcMain.handle("system:toggle-menu-bar", async (_, show) => {
-    try {
-      if (show && !tray) {
-        createTray();
-        return { success: true };
-      } else if (!show && tray) {
-        destroyTray();
-        return { success: true };
-      }
-      return { success: true, message: `Tray already ${show ? "visible" : "hidden"}` };
-    } catch (error) {
-      console.error("❌ Failed to toggle menu bar:", error);
-      return { success: false, error: String(error) };
-    }
-  });
-  databaseService.getSettings().then((settings) => {
-    if (settings.showInMenuBar && !tray) {
-      createTray();
-    }
-  }).catch((error) => {
-    console.error("Failed to load menu bar setting:", error);
+  electron.ipcMain.handle("system:getInfo", async () => {
+    return {
+      platform: process.platform,
+      arch: process.arch,
+      nodeVersion: process.version,
+      electronVersion: process.versions.electron
+    };
   });
 }
 function cleanupHangingRecorderProcesses() {
-  console.log("🧹 Checking for hanging Swift recorder processes...");
-  const ps = child_process.spawn("ps", ["aux"]);
-  let output = "";
-  ps.stdout.on("data", (data) => {
-    output += data.toString();
-  });
-  ps.on("close", () => {
-    const lines = output.split("\n");
-    const recorderProcesses = lines.filter(
-      (line) => line.includes("Recorder") && line.includes("--record") && !line.includes("grep")
-    );
-    if (recorderProcesses.length > 0) {
-      console.log(`🔍 Found ${recorderProcesses.length} hanging recorder process(es):`);
-      recorderProcesses.forEach((line) => {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length >= 2) {
-          const pid = parts[1];
-          console.log(`   PID ${pid}: ${line.substring(line.indexOf("Recorder"))}`);
-          try {
-            process.kill(parseInt(pid), "SIGKILL");
-            console.log(`   ✅ Killed hanging process ${pid}`);
-          } catch (error) {
-            console.log(`   ⚠️ Could not kill process ${pid}: ${error}`);
-          }
-        }
-      });
-    } else {
-      console.log("✅ No hanging recorder processes found");
+  try {
+    if (process.platform === "darwin") {
+      const { execSync } = require("child_process");
+      try {
+        execSync('pkill -f "recorder"', { stdio: "ignore" });
+        console.log("🧹 Cleaned up hanging recorder processes");
+      } catch (error) {
+      }
     }
-  });
+  } catch (error) {
+    console.error("Failed to cleanup hanging processes:", error);
+  }
 }
 const audioDeviceManager = {
   async getCurrentDevice() {
     try {
-      return {
-        success: true,
-        deviceName: "Unknown Device",
-        isBluetooth: false,
-        availableDevices: []
-      };
+      console.log("🔊 Getting current audio device...");
+      const result = await new Promise((resolve) => {
+        const { spawn: spawn2 } = require("child_process");
+        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
+        let output = "";
+        swift.stdout.on("data", (data) => {
+          output += data.toString();
+        });
+        swift.on("close", (code) => {
+          if (code === 0) {
+            const lines = output.split("\n");
+            const deviceLine = lines.find((line) => line.includes("Current audio device:"));
+            const bluetoothLine = lines.find((line) => line.includes("Is Bluetooth:"));
+            if (deviceLine && bluetoothLine) {
+              const deviceName = deviceLine.split("'")[1] || "Unknown";
+              const isBluetooth = bluetoothLine.includes("true");
+              resolve({
+                success: true,
+                deviceName,
+                isBluetooth
+              });
+            } else {
+              resolve({
+                success: false,
+                error: "Could not parse device information"
+              });
+            }
+          } else {
+            resolve({
+              success: false,
+              error: "Audio device check failed"
+            });
+          }
+        });
+      });
+      return result;
     } catch (error) {
       return {
         success: false,
@@ -2086,10 +2114,10 @@ const audioDeviceManager = {
   },
   async switchToBuiltInSpeakers() {
     try {
-      console.log("🔊 Attempting to switch to built-in speakers...");
+      console.log("🔊 Switching to built-in speakers for recording...");
       return {
         success: true,
-        message: "Switched to built-in speakers"
+        message: "Audio will be temporarily switched during recording and automatically restored after"
       };
     } catch (error) {
       return {
@@ -2100,11 +2128,41 @@ const audioDeviceManager = {
   },
   async enableBluetoothWorkaround() {
     try {
-      console.log("🔧 Attempting to enable Bluetooth workaround...");
-      return {
-        success: true,
-        message: "Bluetooth workaround enabled"
-      };
+      console.log("🔧 Running Bluetooth audio restoration...");
+      const { spawn: spawn2 } = require("child_process");
+      const result = await new Promise((resolve) => {
+        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
+        let output = "";
+        swift.stdout.on("data", (data) => {
+          output += data.toString();
+        });
+        swift.on("close", (code) => {
+          if (code === 0) {
+            if (output.includes("Successfully switched audio to:")) {
+              resolve({
+                success: true,
+                message: "Bluetooth audio restored successfully"
+              });
+            } else if (output.includes("already using a Bluetooth device")) {
+              resolve({
+                success: true,
+                message: "Audio is already configured correctly"
+              });
+            } else {
+              resolve({
+                success: false,
+                error: "Could not restore Bluetooth audio"
+              });
+            }
+          } else {
+            resolve({
+              success: false,
+              error: "Audio restoration failed"
+            });
+          }
+        });
+      });
+      return result;
     } catch (error) {
       return {
         success: false,
@@ -2113,6 +2171,36 @@ const audioDeviceManager = {
     }
   }
 };
+function cleanupDoubleExtensionFiles(recordingDirectory) {
+  try {
+    if (!fs__namespace.existsSync(recordingDirectory)) {
+      return;
+    }
+    const files = fs__namespace.readdirSync(recordingDirectory);
+    const doubleExtensionFiles = files.filter((f) => f.endsWith(".mp3.mp3"));
+    if (doubleExtensionFiles.length > 0) {
+      console.log(`🧹 Found ${doubleExtensionFiles.length} files with double .mp3 extensions, fixing...`);
+      for (const file of doubleExtensionFiles) {
+        const oldPath = path__namespace.join(recordingDirectory, file);
+        const newPath = path__namespace.join(recordingDirectory, file.replace(".mp3.mp3", ".mp3"));
+        try {
+          if (fs__namespace.existsSync(newPath)) {
+            console.log(`⚠️ Target file already exists, removing duplicate: ${file}`);
+            fs__namespace.unlinkSync(oldPath);
+          } else {
+            console.log(`🔧 Renaming: ${file} → ${file.replace(".mp3.mp3", ".mp3")}`);
+            fs__namespace.renameSync(oldPath, newPath);
+          }
+        } catch (error) {
+          console.error(`❌ Failed to fix file ${file}:`, error);
+        }
+      }
+      console.log("✅ Cleanup completed");
+    }
+  } catch (error) {
+    console.error("❌ Failed to cleanup double extension files:", error);
+  }
+}
 electron.app.whenReady().then(async () => {
   try {
     await databaseService.initialize();
@@ -2124,6 +2212,8 @@ electron.app.whenReady().then(async () => {
         geminiService.setApiKey(settings.geminiApiKey);
         console.log("Gemini API key initialized from settings");
       }
+      const recordingDirectory = settings.defaultSaveLocation || path__namespace.join(os__namespace.homedir(), "Friday Recordings");
+      cleanupDoubleExtensionFiles(recordingDirectory);
     } catch (error) {
       console.error("Failed to initialize Gemini API key:", error);
     }

@@ -1,11 +1,34 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Meeting } from '../types/database'
-import { AlertKeyword, AlertMatch } from '../types/electron'
-import RecordingInterface from './RecordingInterface'
-import LiveRecordingInterface from './LiveRecordingInterface'
-import PlaybackInterface from './PlaybackInterface'
+import { AlertKeyword } from '../types/electron'
 import SidebarContent from './SidebarContent'
+import BlockNoteEditor from './BlockNoteEditor'
+import { ContextTab } from './ContextTab'
+import { ActionItemsTab } from './ActionItemsTab'
+import { AISummaryTab } from './AISummaryTab'
+import { AlertsTab } from './AlertsTab'
 import { useRecordingService } from './RecordingService'
+import '../styles/friday-layout.css'
+import { 
+  MicIcon, 
+  StopCircleIcon, 
+  PlayIcon, 
+  PauseIcon,
+  SparklesIcon,
+  MessageSquareIcon,
+  CheckSquareIcon,
+  MailIcon,
+  XIcon,
+  SendIcon,
+  BotIcon,
+  HelpCircleIcon,
+  FileTextIcon,
+  ClipboardListIcon,
+  BookOpenIcon,
+  AlertTriangleIcon,
+  SaveIcon,
+  CheckIcon
+} from 'lucide-react'
 
 /// <reference path="../../preload/index.d.ts" />
 
@@ -55,26 +78,103 @@ interface EnhancedAIOptions {
   summary?: string
   transcript?: TranscriptLine[]
   actionItems?: Array<{ id: number; text: string; completed: boolean }>
-  questionHistory?: Array<any>
-  followupQuestions?: Array<any>
-  followupRisks?: Array<any>
-  followupComments?: Array<any>
+  questionHistory?: Array<unknown>
+  followupQuestions?: Array<unknown>
+  followupRisks?: Array<unknown>
+  followupComments?: Array<unknown>
 }
 
+interface GeminiMessage {
+  success: boolean
+  message?: string
+  error?: string
+}
+
+interface GeminiContentResponse {
+  success: boolean
+  data?: {
+    summary: string
+    description: string
+    actionItems: Array<{ id: number; text: string; completed: boolean }>
+    tags: string[]
+  }
+  error?: string
+}
+
+interface GeminiChatResponse {
+  success: boolean
+  response?: string
+  error?: string
+}
+
+interface DatabaseAPI {
+  updateMeeting: (id: number, data: Partial<Meeting>) => Promise<void>
+  getSettings: () => Promise<{ globalContext?: string }>
+}
+
+interface TranscriptionAPI {
+  loadRecording: (path: string) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }>
+  saveRecording: (buffer: ArrayBuffer, id: number) => Promise<{ success: boolean; filePath?: string; error?: string }>
+}
+
+interface WindowAPI {
+  db: DatabaseAPI
+  gemini: GeminiAPI
+  transcription: TranscriptionAPI
+}
+
+declare global {
+  interface Window {
+    api: {
+      db: {
+        updateMeeting: (id: number, data: Partial<Meeting>) => Promise<void>
+        getSettings: () => Promise<{ globalContext?: string }>
+      }
+      gemini: {
+        generateMessage: (options: {
+          type: 'slack' | 'email'
+          data: unknown
+          model: string
+        }) => Promise<{ success: boolean; message?: string; error?: string }>
+        generateChatResponse: (options: {
+          data: unknown
+          model: string
+        }) => Promise<{ success: boolean; response?: string; error?: string }>
+      }
+      transcription: {
+        loadRecording: (path: string) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }>
+        saveRecording: (buffer: ArrayBuffer, id: number) => Promise<{ success: boolean; filePath?: string; error?: string }>
+      }
+    }
+  }
+}
+
+interface GeminiAPI {
+  generateMessage: (options: {
+    type: 'slack' | 'email'
+    data: unknown
+    model: string
+  }) => Promise<GeminiMessage>
+  generateChatResponse: (options: {
+    data: unknown
+    model: string
+  }) => Promise<GeminiChatResponse>
+}
+
+// Override the existing window.api type
+const api = window.api as WindowAPI
+
 const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
+  // Core state
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [totalTime, setTotalTime] = useState(0)
-  const [activeLineIndex, setActiveLineIndex] = useState(0)
   const [tags, setTags] = useState<string[]>([])
   const [contextText, setContextText] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState<string[]>([])
   const [notes, setNotes] = useState('')
   const [summary, setSummary] = useState('')
-  const [isSummaryAIGenerated, setIsSummaryAIGenerated] = useState(false)
-  const [actionItems, setActionItems] = useState<
-    Array<{ id: number; text: string; completed: boolean }>
-  >([])
+  const [actionItems, setActionItems] = useState<Array<{ id: number; text: string; completed: boolean }>>([])
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [transcript, setTranscript] = useState<TranscriptLine[]>([])
@@ -83,36 +183,96 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
   const [needsAutoSave, setNeedsAutoSave] = useState(false)
   const [alertKeywords, setAlertKeywords] = useState<AlertKeyword[]>([])
-  const [showAlertIndicator, setShowAlertIndicator] = useState(false)
-  const [currentAlert, setCurrentAlert] = useState<AlertMatch | null>(null)
 
-  // AI generation loading states
-  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
-  const [isGeneratingAllContent, setIsGeneratingAllContent] = useState(false)
-  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
-  const [aiLoadingMessage, setAiLoadingMessage] = useState('')
-
-  // Combined loading state for full-screen overlay
-  const isAIGenerating = isGeneratingSummary || isGeneratingAllContent || isGeneratingMessage
-
-  // Recording service state
-  const [transcriptionStatus, setTranscriptionStatus] = useState<string>('idle')
-  const [isSwiftRecorderAvailable, setIsSwiftRecorderAvailable] = useState(false)
-  const [recordingMode, setRecordingMode] = useState<'microphone' | 'combined'>('microphone')
-  const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
+  // Recording state
+  const [recordingMode] = useState<'microphone' | 'combined'>('combined')
   const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
   const [isRecording, setIsRecording] = useState(false)
   const [liveText, setLiveText] = useState('')
 
+  // UI state
+  const [showAskFriday, setShowAskFriday] = useState(false)
+  const [showTranscriptDrawer, setShowTranscriptDrawer] = useState(false)
+  const [noteContent, setNoteContent] = useState('')
+  const [activeTab, setActiveTab] = useState<'notes' | 'details' | 'context' | 'actions' | 'summary' | 'alerts'>('notes')
+  const [chatMessages, setChatMessages] = useState<Array<{
+    id: string
+    type: 'user' | 'assistant' | 'action'
+    content: string
+    timestamp: Date
+    action?: string
+  }>>([])
+  const [isAskFridayGenerating, setIsAskFridayGenerating] = useState(false)
+  const [chatInput, setChatInput] = useState('')
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
+  const [isGeneratingAllContent, setIsGeneratingAllContent] = useState(false)
+  const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
+  const [aiLoadingMessage, setAiLoadingMessage] = useState('')
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+
+  // Refs
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
+  const wasRecording = useRef<boolean>(false)
+
+  // Recording service state
+  const [transcriptionStatus, setTranscriptionStatus] = useState<string>('idle')
+  const [isSwiftRecorderAvailable, setIsSwiftRecorderAvailable] = useState(false)
+  const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
+
+  // Combined loading state for full-screen overlay
+  const isAIGenerating = isGeneratingSummary || isGeneratingAllContent || isGeneratingMessage
+
+  // Tab configuration
+  const tabConfig = {
+    notes: { icon: BookOpenIcon, label: 'Notes' },
+    // details: { icon: InfoIcon, label: 'Details' },
+    context: { icon: FileTextIcon, label: 'Context' },
+    actions: { icon: ClipboardListIcon, label: 'Action Items' },
+    summary: { icon: BookOpenIcon, label: 'AI Summary' },
+    alerts: { icon: AlertTriangleIcon, label: 'Alerts' }
+  } as const
+
+  // Ask Friday actions
+  const askFridayActions = [
+    {
+      id: 'email-followup',
+      label: 'Email Follow-up',
+      icon: MailIcon,
+      description: 'Draft a follow-up email'
+    },
+    {
+      id: 'slack-summary',
+      label: 'Slack Summary', 
+      icon: MessageSquareIcon,
+      description: 'Create a Slack update'
+    },
+    {
+      id: 'what-missed',
+      label: 'What Did I Miss?',
+      icon: HelpCircleIcon,
+      description: 'Catch up on key points'
+    },
+    {
+      id: 'action-items',
+      label: 'Generate Action Items',
+      icon: CheckSquareIcon,
+      description: 'Extract next steps'
+    },
+    {
+      id: 'summary',
+      label: 'Generate Summary',
+      icon: BotIcon,
+      description: 'Summarize the meeting'
+    }
+  ] as const
 
   // Function to load existing recording file
   const loadExistingRecording = useCallback(async (filePath: string): Promise<void> => {
     try {
       console.log('🔄 Loading recording file via IPC...')
 
-      const result = await (window.api as any).transcription?.loadRecording(filePath)
+      const result = await (window.api as unknown as { transcription: { loadRecording: (path: string) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }> } }).transcription?.loadRecording(filePath)
 
       if (result?.success && result.buffer) {
         const isMP3 = filePath.toLowerCase().endsWith('.mp3')
@@ -151,7 +311,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     if (enabledKeywords.length === 0) return
 
     try {
-      const result = await (window.api as any).alerts?.checkKeywords({
+      const result = await (window.api as unknown as { alerts: { checkKeywords: (params: { transcript: string; keywords: unknown[] }) => Promise<{ success: boolean; matches?: { keyword: string; similarity: number; text: string }[] }> } }).alerts?.checkKeywords({
         transcript: transcriptText,
         keywords: enabledKeywords
       })
@@ -159,23 +319,17 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       if (result?.success && result.matches && result.matches.length > 0) {
         // Show visual alert for the first match
         if (result.matches.length > 0) {
-          setCurrentAlert(result.matches[0])
-          setShowAlertIndicator(true)
-          
-          // Auto-hide after 5 seconds
-          setTimeout(() => {
-            setShowAlertIndicator(false)
-            setCurrentAlert(null)
-          }, 5000)
-        }
+          // Alert functionality removed in new interface
+          console.log('Alert detected but visual indicator removed')
         
-        // Log alerts
-        result.matches.forEach((match: any) => {
-          console.log(`🚨 ALERT: Keyword "${match.keyword}" detected (${(match.similarity * 100).toFixed(1)}% match)`)
-          console.log(`   Text: "${match.text}"`)
-        })
+          // Log alerts
+          result.matches.forEach((match) => {
+            console.log(`🚨 ALERT: Keyword "${match.keyword}" detected (${(match.similarity * 100).toFixed(1)}% match)`)
+            console.log(`   Text: "${match.text}"`)
+          })
         }
-      } catch (error) {
+      }
+    } catch (error) {
       console.error('Failed to check for alerts:', error)
     }
   }, [alertKeywords])
@@ -246,17 +400,23 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                 const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
                 console.log('⏱️ Set total time to:', timeStr)
               }
+              
+              // Trigger auto-save AFTER recording path is set and loaded
+              console.log('🔄 Triggering auto-save with recording path:', result.path)
+              setNeedsAutoSave(true)
             }
           } catch (error) {
             console.error('❌ Failed to load recording for playback:', error)
+            // Still trigger auto-save even if loading fails
+            console.log('🔄 Triggering auto-save despite loading failure')
+            setNeedsAutoSave(true)
           }
         }, 1000) // Wait 1 second to ensure file is fully written
-        
-        // Force auto-save trigger since we have a new recording path
-        console.log('🔄 Forcing auto-save due to new recording path')
-        setTimeout(() => setNeedsAutoSave(true), 1500) // Wait a bit longer for file operations
       } else {
         console.warn('⚠️ No recording path in combined recording result:', result)
+        // Still trigger auto-save to save transcript and other data
+        console.log('🔄 Triggering auto-save without recording path')
+        setTimeout(() => setNeedsAutoSave(true), 500)
       }
   }, [loadRecording, currentTime, totalTime])
 
@@ -301,7 +461,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       setUploadedFiles(meeting.context_files || [])
       setNotes(meeting.notes || '')
       setSummary(meeting.summary || '')
-      setIsSummaryAIGenerated(!!meeting.summary)
 
       // Parse duration to seconds
       if (meeting.duration && meeting.duration !== '00:00') {
@@ -466,15 +625,17 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     })
   }, [transcript, meeting?.id, savingMeeting])
 
+  // Track changes for manual save indication
+  useEffect(() => {
+    if (meeting?.id && !savingMeeting) {
+      setHasUnsavedChanges(true)
+    }
+  }, [title, description, tags, contextText, actionItems, notes, summary, meeting?.id, savingMeeting])
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const timeToSeconds = (timeString: string): number => {
-    const [mins, secs] = timeString.split(':').map(Number)
-    return mins * 60 + secs
   }
 
   const startRecording = async (): Promise<void> => {
@@ -528,11 +689,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
             const newTime = Math.floor(audioPlayerRef.current.currentTime)
             setCurrentTime(newTime)
 
-            if (transcript && transcript.length > 0) {
-              const timeInMinutes = newTime / 60
-              const lineIndex = Math.floor(timeInMinutes * 4)
-              setActiveLineIndex(Math.min(lineIndex, transcript.length - 1))
-            }
+            // Transcript navigation removed for simplicity
 
             if (newTime >= totalTime) {
               setIsPlaying(false)
@@ -553,34 +710,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         playbackInterval.current = null
       }
     }
-  }
-
-  const handleSeek = (event: React.MouseEvent<HTMLDivElement>): void => {
-    if (totalTime === 0 || !audioPlayerRef.current) return
-
-    const rect = event.currentTarget.getBoundingClientRect()
-    const clickX = event.clientX - rect.left
-    const percentage = clickX / rect.width
-    const newTime = Math.floor(percentage * totalTime)
-
-    setCurrentTime(newTime)
-    audioPlayerRef.current.currentTime = newTime
-
-    if (transcript && transcript.length > 0) {
-      const timeInMinutes = newTime / 60
-      const lineIndex = Math.floor(timeInMinutes * 4)
-      setActiveLineIndex(Math.min(lineIndex, transcript.length - 1))
-    }
-  }
-
-  const handleTranscriptLineClick = (line: TranscriptLine, index: number): void => {
-    const newTime = timeToSeconds(line.time)
-    setCurrentTime(newTime)
-    setActiveLineIndex(index)
-  }
-
-  const handleAudioPlayerRef = (ref: HTMLAudioElement | null): void => {
-    audioPlayerRef.current = ref
   }
 
   const handleSaveMeeting = async (): Promise<void> => {
@@ -617,7 +746,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         console.log('💾 Saving new audio recording...')
         try {
           const arrayBuffer = await recordedAudioBlob.arrayBuffer()
-          const result = await (window.api as any).transcription?.saveRecording(
+          const result = await (window.api as unknown as { transcription: { saveRecording: (buffer: ArrayBuffer, id: number) => Promise<{ success: boolean; filePath?: string; error?: string }> } }).transcription?.saveRecording(
             arrayBuffer,
             meeting.id
           )
@@ -659,6 +788,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       await window.api.db.updateMeeting(meeting.id, updatedMeetingData)
       console.log('✅ Meeting data saved successfully')
       
+      // Update save status
+      setHasUnsavedChanges(false)
+      
       // Verify the save by logging the key data
       console.log('✅ Saved meeting with:', {
         transcriptLines: transcript.length,
@@ -698,11 +830,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
-      const result = await (window.api as any).gemini.generateSummary(options)
+      const result = await (window.api as unknown as { gemini: { generateSummary: (options: unknown) => Promise<{ success: boolean; summary?: string; error?: string }> } }).gemini.generateSummary(options)
       
       if (result.success && result.summary) {
         setSummary(result.summary)
-        setIsSummaryAIGenerated(true)
         console.log('✅ Summary generated successfully')
       } else {
         console.error('Failed to generate summary:', result.error)
@@ -742,15 +873,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
-      const result = await (window.api as any).gemini.generateContent(options)
+      const result = await (window.api as unknown as { gemini: { generateContent: (options: unknown) => Promise<{ success: boolean; data?: { summary: string; description: string; actionItems: unknown[]; tags: string[] }; error?: string }> } }).gemini.generateContent(options)
       
       if (result.success && result.data) {
         const { summary: newSummary, description: newDescription, actionItems: newActionItems, tags: newTags } = result.data
         
         setSummary(newSummary)
-        setIsSummaryAIGenerated(true)
         setDescription(newDescription)
-        setActionItems(newActionItems)
+        setActionItems(newActionItems as Array<{ id: number; text: string; completed: boolean }>)
         setTags(newTags)
         
         console.log('✅ All content generated successfully')
@@ -767,7 +897,137 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
   }
 
-  const generateAIMessage = async (type: 'slack' | 'email', enhancedOptions?: EnhancedAIOptions): Promise<string | void> => {
+  const handleAskFridayAction = async (actionId: string): Promise<void> => {
+    const action = askFridayActions.find(a => a.id === actionId)
+    if (!action) return
+
+    // Add user action message
+    const userMessage = {
+      id: Date.now().toString(),
+      type: 'user' as const,
+      content: action.label,
+      timestamp: new Date(),
+      action: actionId
+    }
+    
+    setChatMessages(prev => [...prev, userMessage])
+    setIsAskFridayGenerating(true)
+
+    try {
+      let result = ''
+      
+      switch (actionId) {
+        case 'email-followup':
+          result = await generateAIMessage('email') || 'Generated email follow-up'
+          break
+        case 'slack-summary':
+          result = await generateAIMessage('slack') || 'Generated Slack summary'
+          break
+        case 'action-items':
+          await generateAllContent()
+          result = 'Generated action items - check the Action Items tab'
+          setActiveTab('actions')
+          break
+        case 'summary':
+          await generateSummary()
+          result = 'Generated meeting summary - check the AI Summary tab'
+          setActiveTab('summary')
+          break
+        case 'what-missed':
+          result = 'Based on the transcript, here are the key points you might have missed...'
+          break
+        default:
+          result = 'Action completed successfully'
+      }
+
+      // Add assistant response
+      const assistantMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'assistant' as const,
+        content: result,
+        timestamp: new Date()
+      }
+      
+      setChatMessages(prev => [...prev, assistantMessage])
+    } catch (error) {
+      console.error('Ask Friday action failed:', error)
+      const errorMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'assistant' as const,
+        content: 'Sorry, something went wrong. Please try again.',
+        timestamp: new Date()
+      }
+      setChatMessages(prev => [...prev, errorMessage])
+    } finally {
+      setIsAskFridayGenerating(false)
+    }
+  }
+
+  const handleChatSubmit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault()
+    if (!chatInput.trim() || isAskFridayGenerating) return
+
+    const userMessage = {
+      id: Date.now().toString(),
+      type: 'user' as const,
+      content: chatInput.trim(),
+      timestamp: new Date()
+    }
+
+    setChatMessages(prev => [...prev, userMessage])
+    setChatInput('')
+    setIsAskFridayGenerating(true)
+
+    try {
+      const settings = await window.api.db.getSettings()
+      
+      const contextData = {
+        globalContext: settings.globalContext || '',
+        meetingTitle: title,
+        meetingDescription: description,
+        meetingContext: contextText,
+        meetingNotes: noteContent || notes,
+        meetingSummary: summary,
+        transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n'),
+        actionItems: actionItems,
+        userQuestion: chatInput.trim(),
+        chatHistory: chatMessages.slice(-10)
+      }
+
+      console.log('🤖 Sending chat message to Gemini with context...')
+      
+      const result = await window.api.gemini.generateChatResponse({
+        data: contextData,
+        model: 'gemini-2.0-flash-exp'
+      })
+
+      if (result?.success && result.response) {
+        const assistantMessage = {
+          id: (Date.now() + 1).toString(),
+          type: 'assistant' as const,
+          content: result.response,
+          timestamp: new Date()
+        }
+        setChatMessages(prev => [...prev, assistantMessage])
+        console.log('✅ Chat response received from Gemini')
+      } else {
+        throw new Error(result?.error || 'No response from Gemini')
+      }
+    } catch (error) {
+      console.error('Chat error:', error)
+      const errorMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'assistant' as const,
+        content: 'Sorry, I encountered an error. Please check your Gemini API key in settings and try again.',
+        timestamp: new Date()
+      }
+      setChatMessages(prev => [...prev, errorMessage])
+    } finally {
+      setIsAskFridayGenerating(false)
+    }
+  }
+
+  const generateAIMessage = async (type: 'slack' | 'email'): Promise<string | void> => {
     if (!meeting?.id) {
       alert('No meeting data available for AI generation')
       return
@@ -779,37 +1039,17 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       
       const settings = await window.api.db.getSettings()
       
-      // Use enhanced options if provided, otherwise fall back to legacy data
-      let selectedData
-      if (enhancedOptions) {
-        selectedData = {
-          globalContext: settings.globalContext || '',
-          meetingContext: enhancedOptions.contextText || '',
-          title: enhancedOptions.title || '',
-          description: enhancedOptions.description || '',
-          notes: enhancedOptions.notes || '',
-          summary: enhancedOptions.summary || '',
-          transcript: enhancedOptions.transcript?.map((line: TranscriptLine) => `[${line.time}] ${line.text}`).join('\n') || '',
-          actionItems: enhancedOptions.actionItems || [],
-          questionHistory: enhancedOptions.questionHistory || [],
-          followupQuestions: enhancedOptions.followupQuestions || [],
-          followupRisks: enhancedOptions.followupRisks || [],
-          followupComments: enhancedOptions.followupComments || []
-        }
-      } else {
-        // Legacy fallback
-        selectedData = {
-          globalContext: settings.globalContext || '',
-          meetingContext: contextText,
-          title,
-          description,
-          notes,
-          summary,
-          transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
-        }
+      const selectedData = {
+        globalContext: settings.globalContext || '',
+        meetingContext: contextText,
+        title,
+        description,
+        notes,
+        summary,
+        transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
       }
 
-      const result = await (window.api as any).gemini?.generateMessage({
+      const result = await window.api.gemini.generateMessage({
         type,
         data: selectedData,
         model: 'gemini-2.5-pro-preview-06-05'
@@ -819,8 +1059,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         console.log(`✅ ${type} message generated successfully`)
         return result.message
       } else {
-        console.error(`Failed to generate ${type} message:`, result?.error || 'No Gemini API available')
-        alert(`Failed to generate ${type} message: ${result?.error || 'No Gemini API available'}`)
+        throw new Error(result?.error || 'No response from Gemini')
       }
     } catch (error) {
       console.error(`Error generating ${type} message:`, error)
@@ -835,144 +1074,493 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
   }
 
-  useEffect(() => {
-    return () => {
-      if (playbackInterval.current) {
-        clearInterval(playbackInterval.current)
-      }
+  const renderTabContent = (): React.ReactNode => {
+    switch (activeTab) {
+      case 'notes':
+        return (
+          <div className="notes-content">
+            <div className="content-section">
+  
+              
+              {/* Live content area for new notes */}
+              <div className="notes-editor">
+                <BlockNoteEditor
+                  value={noteContent || notes}
+                  onChange={setNoteContent}
+                  placeholder="Add more updates or notes..."
+                  height={200}
+                />
+              </div>
+              
+              {/* Live Transcription */}
+              {isRecording && liveText && (
+                <div className="live-transcription">
+                  <div className="live-indicator">
+                    <div className="recording-pulse"></div>
+                    <span>Live transcription</span>
+                  </div>
+                  <p className="live-text">{liveText}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      
+      case 'context':
+        return <ContextTab />
+      
+      case 'actions':
+        return <ActionItemsTab />
+      
+      case 'summary':
+        return <AISummaryTab />
+      
+      case 'alerts':
+        return <AlertsTab />
+      
+      case 'details':
+        return (
+          <div className="tab-content-wrapper">
+            <SidebarContent 
+              meeting={meeting}
+              title={title}
+              description={description}
+              tags={tags}
+              contextText={contextText}
+              uploadedFiles={uploadedFiles}
+              actionItems={actionItems}
+              notes={notes}
+              summary={summary}
+              isSummaryAIGenerated={false}
+              savingMeeting={savingMeeting}
+              isGeneratingSummary={isGeneratingSummary}
+              isGeneratingAllContent={isGeneratingAllContent}
+              isGeneratingMessage={isGeneratingMessage}
+              alertKeywords={alertKeywords}
+              onTitleChange={setTitle}
+              onDescriptionChange={setDescription}
+              onTagsChange={setTags}
+              onContextTextChange={setContextText}
+              onUploadedFilesChange={setUploadedFiles}
+              onActionItemsChange={setActionItems}
+              onNotesChange={setNotes}
+              onSummaryChange={setSummary}
+              onSaveMeeting={handleSaveMeeting}
+              onGenerateSummary={generateSummary}
+              onGenerateAllContent={generateAllContent}
+              onGenerateAIMessage={generateAIMessage}
+              onSetGeneratingMessage={handleSetGeneratingMessage}
+              onAlertKeywordsChange={setAlertKeywords}
+              transcript={transcript}
+              restrictToTabs={['details']}
+            />
+          </div>
+        )
+      
+      default:
+        return null
     }
-  }, [])
+  }
 
-  // Show recording interface if no recording is available
-  const hasRecording = totalTime > 0 && recordedAudioUrl
+  // Stop recording when user clicks stop
+  useEffect(() => {
+    if (!isRecording && wasRecording.current) {
+      console.log('🔄 Recording stopped, triggering auto-save with:', {
+        transcriptLength: transcript.length,
+        hasNewTranscript: transcript.length > 0,
+        hasNewRecordingPath: !!combinedRecordingPath,
+        hasRecordedAudio: !!recordedAudioBlob,
+        currentTime
+      })
+      wasRecording.current = false
+      // Remove immediate auto-save trigger here - let the recording stopped handler manage it
+      // setNeedsAutoSave(true) // REMOVED - this causes race condition
+    }
+
+    if (isRecording && !wasRecording.current) {
+      wasRecording.current = true
+    }
+  }, [isRecording, transcript.length, combinedRecordingPath, recordedAudioBlob, currentTime])
 
   return (
-    <div className="transcript-layout">
-      {/* Visual Alert Indicator */}
-      {showAlertIndicator && currentAlert && (
-        <div 
-          className={`alert-indicator ${showAlertIndicator ? '' : 'alert-dismissing'}`}
-          onClick={() => {
-            setShowAlertIndicator(false)
-            setCurrentAlert(null)
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ 
-              width: '8px', 
-              height: '8px', 
-              background: 'white', 
-                    borderRadius: '50%',
-              animation: 'pulse 1s infinite'
-            }} />
-            <div>
-              <div style={{ fontWeight: '600', fontSize: '14px' }}>
-                Alert: {currentAlert.keyword}
-              </div>
-              <div style={{ fontSize: '12px', opacity: 0.9 }}>
-                {(currentAlert.similarity * 100).toFixed(1)}% match
+    <div className="friday-layout">
+      {/* Main Container */}
+      <div className="friday-container">
+        {/* Header */}
+        <div className="friday-header">
+          <div className="header-content">
+            {/* <div className="header-left">
+              <button className="back-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+              </button>
+              <h1 className="app-title">Friday</h1>
+            </div> */}
+          
+            
+            <div className="header-right">
+              {/* Buttons moved to tabs section */}
             </div>
+          </div>
+        </div>
+
+        {/* Content Area */}
+        <div className="friday-content">
+          {/* Main Content */}
+          <div className="main-content">
+            {/* Tabs Navigation */}
+            <div className="content-tabs">
+              <div className="tabs-left">
+                {Object.entries(tabConfig).map(([tabKey, config]) => {
+                  const Icon = config.icon
+                  return (
+                    <button
+                      key={tabKey}
+                      className={`content-tab ${activeTab === tabKey ? 'active' : ''}`}
+                      onClick={() => setActiveTab(tabKey as typeof activeTab)}
+                    >
+                      <Icon size={16} />
+                      <span>{config.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              
+              <div className="tabs-right">
+                <button 
+                  className={`save-btn ${savingMeeting ? 'saving' : ''} ${!hasUnsavedChanges ? 'saved' : ''}`}
+                  onClick={handleSaveMeeting}
+                  disabled={savingMeeting || !meeting?.id}
+                  title={savingMeeting ? 'Saving...' : hasUnsavedChanges ? 'Save meeting' : 'All changes saved'}
+                >
+                  {savingMeeting ? (
+                    <div className="save-spinner"></div>
+                  ) : hasUnsavedChanges ? (
+                    <SaveIcon size={16} />
+                  ) : (
+                    <CheckIcon size={16} />
+                  )}
+                  <span className="save-text">
+                    {savingMeeting ? 'Saving...' : hasUnsavedChanges ? 'Save' : 'Saved'}
+                  </span>
+                </button>
+                
+                <button 
+                  className="copilot-btn" 
+                  onClick={() => setShowAskFriday(!showAskFriday)}
+                  title="Ask Friday Co-pilot"
+                >
+                  <SparklesIcon size={16} />
+                  <span>Co-pilot</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Main Content Area */}
+            <div className="main-content-wrapper">
+              {/* Meeting Header */}
+              <div className="meeting-header">
+                <input
+                  type="text"
+                  className="meeting-title"
+                  placeholder="Meeting title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+                <div className="meeting-meta">
+                  <span className="meeting-date">
+                    {meeting?.createdAt ? new Date(meeting.createdAt).toLocaleDateString('en-US', { 
+                      month: 'numeric', 
+                      day: 'numeric', 
+                      year: 'numeric' 
+                    }) : new Date().toLocaleDateString('en-US', { 
+                      month: 'numeric', 
+                      day: 'numeric', 
+                      year: 'numeric' 
+                    })} {new Date().toLocaleTimeString('en-US', { 
+                      hour12: false, 
+                      hour: '2-digit', 
+                      minute: '2-digit' 
+                    })}
+                  </span>
+                </div>
+                
+                <div className="meeting-badges">
+
                 </div>
               </div>
+
+              {/* Tab Content */}
+              <div className="tab-content-area">
+                {renderTabContent()}
+              </div>
+            </div>
+
+            {/* Recording Controls */}
+            <div className="recording-controls">
+              <button 
+                className={`record-btn ${isRecording ? 'recording' : ''}`}
+                onClick={isRecording ? stopRecording : startRecording}
+                title={isRecording ? 'Stop recording' : 'Start recording'}
+              >
+                {isRecording ? (
+                  <StopCircleIcon size={20} />
+                ) : (
+                  <MicIcon size={20} />
+                )}
+              </button>
+              
+              {recordedAudioUrl && (
+                <button 
+                  className="play-btn"
+                  onClick={togglePlayback}
+                  title={isPlaying ? 'Pause' : 'Play recording'}
+                >
+                  {isPlaying ? <PauseIcon size={20} /> : <PlayIcon size={20} />}
+                </button>
+              )}
+              
+              <button 
+                className="transcript-btn"
+                onClick={() => setShowTranscriptDrawer(true)}
+                title="View transcript"
+              >
+                <MessageSquareIcon size={20} />
+              </button>
+            </div>
+
+            {/* Recording Status */}
+            {isRecording && (
+              <div className="recording-status">
+                <div className="recording-indicator">
+                  <div className="recording-dot"></div>
+                  <span>Recording • {formatTime(currentTime)}</span>
+                </div>
+                {liveText && (
+                  <div className="live-transcript">
+                    <p>{liveText}</p>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
 
-      {/* Main Content (Left 50%) */}
-      <div className="transcript-main">
-        {!hasRecording && !isRecording ? (
-          <RecordingInterface
-            transcriptionStatus={transcriptionStatus}
-            isSwiftRecorderAvailable={isSwiftRecorderAvailable}
-            recordingMode={recordingMode}
-            onRecordingModeChange={setRecordingMode}
-            onStartRecording={startRecording}
-          />
-        ) : isRecording ? (
-          <LiveRecordingInterface
-            currentTime={currentTime}
-            transcriptionStatus={transcriptionStatus}
-            recordingWarning={recordingWarning}
-            transcript={transcript}
-            liveText={liveText}
-            onStopRecording={stopRecording}
-          />
-        ) : (
-          <PlaybackInterface
-            isPlaying={isPlaying}
-            currentTime={currentTime}
-            totalTime={totalTime}
-            recordedAudioUrl={recordedAudioUrl}
-            transcript={transcript}
-            activeLineIndex={activeLineIndex}
-            onTogglePlayback={togglePlayback}
-            onSeek={handleSeek}
-            onTranscriptLineClick={handleTranscriptLineClick}
-            onAudioPlayerRef={handleAudioPlayerRef}
-          />
-        )}
+          {/* Ask Friday Sidebar */}
+          {showAskFriday && <div className="ask-friday-sidebar">
+            <div className="friday-sidebar-header">
+              <div className="sidebar-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
+                Ask Friday
+              </div>
+              <button 
+                className="close-sidebar-btn"
+                onClick={() => setShowAskFriday(false)}
+                title="Close"
+              >
+                <XIcon size={16} />
+              </button>
+            </div>
+
+            {/* Action Cards */}
+            <div className="action-cards">
+              <div 
+                className="action-card email"
+                onClick={() => handleAskFridayAction('email-followup')}
+              >
+                <div className="action-icon">
+                  <MailIcon size={16} />
+                </div>
+                <div className="action-content">
+                  <h4>Email Follow-up</h4>
+                  <p>Draft a follow-up email</p>
+                </div>
               </div>
 
-      {/* Sidebar (Right 50%) */}
-      <SidebarContent
-        meeting={meeting}
-        title={title}
-        description={description}
-        tags={tags}
-        contextText={contextText}
-        uploadedFiles={uploadedFiles}
-        actionItems={actionItems}
-        notes={notes}
-        summary={summary}
-        isSummaryAIGenerated={isSummaryAIGenerated}
-        savingMeeting={savingMeeting}
-        isGeneratingSummary={isGeneratingSummary}
-        isGeneratingAllContent={isGeneratingAllContent}
-        alertKeywords={alertKeywords}
-        onTitleChange={setTitle}
-        onDescriptionChange={setDescription}
-        onTagsChange={setTags}
-        onContextTextChange={setContextText}
-        onUploadedFilesChange={setUploadedFiles}
-        onActionItemsChange={setActionItems}
-        onNotesChange={setNotes}
-        onSummaryChange={setSummary}
-        onSaveMeeting={handleSaveMeeting}
-        onGenerateSummary={generateSummary}
-        onGenerateAllContent={generateAllContent}
-        onGenerateAIMessage={generateAIMessage}
-        transcript={transcript}
-        isGeneratingMessage={isGeneratingMessage}
-        onSetGeneratingMessage={handleSetGeneratingMessage}
-        onAlertKeywordsChange={setAlertKeywords}
-      />
+              <div 
+                className="action-card slack"
+                onClick={() => handleAskFridayAction('slack-summary')}
+              >
+                <div className="action-icon">
+                  <MessageSquareIcon size={16} />
+                </div>
+                <div className="action-content">
+                  <h4>Slack Summary</h4>
+                  <p>Create a Slack update</p>
+                </div>
+              </div>
 
-      {/* Full-Screen AI Loading Overlay */}
+              <div 
+                className="action-card missed"
+                onClick={() => handleAskFridayAction('what-missed')}
+              >
+                <div className="action-icon">
+                  <HelpCircleIcon size={16} />
+                </div>
+                <div className="action-content">
+                  <h4>What Did I Miss?</h4>
+                  <p>Catch up on key points</p>
+                </div>
+              </div>
+
+              <div 
+                className="action-card actions"
+                onClick={() => handleAskFridayAction('action-items')}
+              >
+                <div className="action-icon">
+                  <CheckSquareIcon size={16} />
+                </div>
+                <div className="action-content">
+                  <h4>Generate Action Items</h4>
+                  <p>Extract next steps</p>
+                </div>
+              </div>
+
+              <div 
+                className="action-card summary"
+                onClick={() => handleAskFridayAction('summary')}
+              >
+                <div className="action-icon">
+                  <BotIcon size={16} />
+                </div>
+                <div className="action-content">
+                  <h4>Generate Summary</h4>
+                  <p>Summarize the meeting</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Chat Input */}
+            <div className="chat-input-section">
+              <form onSubmit={handleChatSubmit} className="chat-form">
+                <div className="chat-input-wrapper">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Ask Friday anything about your meeting..."
+                    className="friday-chat-input"
+                    disabled={isAskFridayGenerating}
+                  />
+                  <button
+                    type="submit"
+                    className="send-btn"
+                    disabled={!chatInput.trim() || isAskFridayGenerating}
+                  >
+                    <SendIcon size={16} />
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Chat Messages */}
+            {chatMessages.length > 0 && (
+              <div className="chat-messages">
+                {chatMessages.map((message) => (
+                  <div key={message.id} className={`chat-message ${message.type}`}>
+                    <div className="message-content">
+                      {message.content}
+                    </div>
+                    <div className="message-time">
+                      {message.timestamp.toLocaleTimeString()}
+                    </div>
+                  </div>
+                ))}
+                
+                {isAskFridayGenerating && (
+                  <div className="chat-message assistant loading">
+                    <div className="message-content">
+                      <div className="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>}
+         </div>
+       </div>
+
+      {/* Transcript Drawer */}
+      {showTranscriptDrawer && (
+        <div className="transcript-drawer-overlay" onClick={() => setShowTranscriptDrawer(false)}>
+          <div className="transcript-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="transcript-header">
+              <h3>Transcript</h3>
+              <div className="transcript-controls">
+                <select className="language-selector">
+                  <option>English</option>
+                  <option>Spanish</option>
+                  <option>French</option>
+                </select>
+                <button 
+                  className="btn btn-ghost btn-icon"
+                  onClick={() => setShowTranscriptDrawer(false)}
+                >
+                  <XIcon size={18} />
+                </button>
+              </div>
+            </div>
+            
+            <div className="transcript-content">
+              {transcript.map((line, index) => (
+                <div key={index} className="transcript-bubble">
+                  <span className="transcript-time">{line.time}</span>
+                  <p className="transcript-text">{line.text}</p>
+                </div>
+              ))}
+              
+              {transcript.length === 0 && (
+                <div className="transcript-empty">
+                  <MessageSquareIcon size={48} />
+                  <p>No transcript yet. Start recording to see live transcription.</p>
+                </div>
+              )}
+            </div>
+            
+            {/* Playback Controls */}
+            {recordedAudioUrl && (
+              <div className="playback-controls">
+                <button 
+                  className="btn btn-primary"
+                  onClick={togglePlayback}
+                >
+                  {isPlaying ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+                  {isPlaying ? 'Pause' : 'Play'}
+                </button>
+                <span className="playback-time">
+                  {formatTime(currentTime)} / {formatTime(totalTime)}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* AI Loading Overlay */}
       {isAIGenerating && (
         <div className="ai-loading-overlay">
           <div className="ai-loading-content">
-            <div className="ai-loading-icon">
-              <svg
-                width="48"
-                height="48"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ animation: 'pulse 2s infinite' }}
-              >
-                <path d="M12 2L15.09 8.26L22 9L17 14L18.18 21L12 17.77L5.82 21L7 14L2 9L8.91 8.26L12 2Z" />
-              </svg>
-                      </div>
-            <h2 className="ai-loading-title">AI is thinking...</h2>
-            <p className="ai-loading-message">{aiLoadingMessage}</p>
-            <div className="ai-loading-progress">
-              <div className="ai-loading-progress-bar"></div>
-                    </div>
-                  </div>
-              </div>
+            <div className="ai-loading-spinner">
+              <SparklesIcon size={24} />
+            </div>
+            <h3>AI is working...</h3>
+            <p>{aiLoadingMessage || 'Processing your request'}</p>
+          </div>
+        </div>
       )}
+
+      {/* Hidden audio element for playback */}
+      <audio
+        ref={audioPlayerRef}
+        src={recordedAudioUrl || undefined}
+        style={{ display: 'none' }}
+      />
     </div>
   )
 }

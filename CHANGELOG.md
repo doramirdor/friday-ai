@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Audio-Only Permissions System**: Implemented clean microphone recording without screen recording permissions
+  - **New AudioPermissions API**: Clean wrapper using `AVCaptureDevice.requestAccess(for: .audio)` following Apple's recommended approach
+  - **Backward Compatibility**: Maintained existing `PermissionsRequester` API while upgrading underlying implementation
+  - **Proper Permission Flow**: ➊ Check current TCC status ➋ Request access if not determined ➌ Deliver result on main queue
+  - **Bluetooth Optimization**: Enhanced microphone recording for Bluetooth devices without permission conflicts
+  - **Clean Architecture**: Removed dependency on `CGRequestScreenCaptureAccess` for microphone-only recording
+  - **Better UX**: No more confusing screen recording permission prompts when only recording microphone
+  - **Error Prevention**: Eliminates Bluetooth device disconnection issues caused by screen recording permission requests
+
+### Fixed
+- **CMSampleBuffer Conversion**: Fixed system audio recording compatibility with latest macOS APIs
+  - Proper Core Media framework usage for `CMSampleBuffer` to `AVAudioPCMBuffer` conversion
+  - Enhanced audio buffer handling with `CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer`
+  - Fixed Swift compilation errors in audio stream processing
+  - Improved audio format detection and memory management
+  
+- **UI Component Dependencies**: Resolved missing UI component imports
+  - Added comprehensive UI component library (button, input, card, textarea, dialog, drawer)
+  - Fixed TypeScript path mapping for `@/` imports in renderer process
+  - Installed missing dependencies: `sonner`, `clsx`, `tailwind-merge`
+  - Created utility functions for class name merging with Tailwind CSS
+
+### Enhanced
+- **Permission System Architecture**: Following Apple's best practices for audio access
+  - Uses `AVCaptureDevice.authorizationStatus(for: .audio)` for status checking
+  - Implements proper permission state handling (authorized, denied, restricted, notDetermined)
+  - Provides detailed permission status reporting for debugging
+  - Maintains clean separation between audio and screen recording permissions
+
+### Technical Details
+- **Swift Implementation**: Updated `PermissionsRequester.swift` with modern AVFoundation APIs
+- **Main Process Integration**: Enhanced permission checking in `main.swift` with detailed status reporting
+- **UI Layer**: Added missing React components and utilities for consistent design system
+- **Build System**: Fixed compilation issues and maintained backward compatibility
+
 ### Fixed
 - **System Audio Capture Issues**
   - Identified and documented Bluetooth audio device interference with ScreenCaptureKit

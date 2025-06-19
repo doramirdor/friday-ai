@@ -3,6 +3,7 @@ import { Meeting } from '../types/database'
 import { AlertKeyword } from '../types/electron'
 import SidebarContent from './SidebarContent'
 import BlockNoteEditor from './BlockNoteEditor'
+import SaveIndicator from './SaveIndicator'
 import { ContextTab } from './ContextTab'
 import { ActionItemsTab } from './ActionItemsTab'
 import { AISummaryTab } from './AISummaryTab'
@@ -533,6 +534,53 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     }
   }, [title, description, tags, contextText, actionItems, notes, summary, chatMessages, meeting?.id, savingMeeting])
 
+  // Auto-save when switching tabs or navigating away
+  const previousTabRef = useRef<typeof activeTab | null>(null)
+  
+  useEffect(() => {
+    // If we're switching tabs and have unsaved changes, trigger auto-save
+    if (previousTabRef.current && previousTabRef.current !== activeTab && hasUnsavedChanges && meeting?.id && !savingMeeting) {
+      console.log(`🔄 Auto-saving before tab switch from ${previousTabRef.current} to ${activeTab}`)
+      handleSaveMeeting()
+    }
+    previousTabRef.current = activeTab
+  }, [activeTab, hasUnsavedChanges, meeting?.id, savingMeeting])
+
+  // Auto-save when component unmounts (navigation away)
+  useEffect(() => {
+    return () => {
+      if (hasUnsavedChanges && meeting?.id && !savingMeeting) {
+        console.log('🔄 Auto-saving on component unmount')
+        // Note: This might not complete if navigation is immediate
+        handleSaveMeeting()
+      }
+    }
+  }, [hasUnsavedChanges, meeting?.id, savingMeeting])
+
+  // Global keyboard shortcut handler for Cmd+S
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent): void => {
+      // Check for Cmd+S (Mac) or Ctrl+S (Windows/Linux)
+      if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+        // Only prevent default if we're in this component and have a meeting to save
+        if (meeting?.id && !savingMeeting) {
+          event.preventDefault()
+          event.stopPropagation()
+          console.log('⌨️ Global Cmd+S triggered - saving meeting')
+          handleSaveMeeting()
+        }
+      }
+    }
+
+    // Add global event listener
+    document.addEventListener('keydown', handleGlobalKeyDown)
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown)
+    }
+  }, [meeting?.id, savingMeeting])
+
   // Load existing chat messages when meeting changes
   useEffect(() => {
     if (meeting?.chatMessages && Array.isArray(meeting.chatMessages)) {
@@ -1046,15 +1094,26 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         return (
           <div className="notes-content">
             <div className="content-section">
-  
+              
+              {/* Save indicator */}
+              <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'flex-end' }}>
+                <SaveIndicator
+                  isSaving={savingMeeting}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  showKeyboardHint={true}
+                />
+              </div>
               
               {/* Live content area for new notes */}
               <div className="notes-editor">
                 <BlockNoteEditor
                   value={noteContent || notes}
                   onChange={setNoteContent}
-                  placeholder="Add more updates or notes..."
+                  placeholder="Add more updates or notes... (Press Cmd+S to save)"
                   height={200}
+                  onSave={handleSaveMeeting}
+                  autoSave={true}
+                  autoSaveDelay={3000}
                 />
               </div>
               

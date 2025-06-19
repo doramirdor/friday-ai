@@ -10,6 +10,9 @@ interface BlockNoteEditorProps {
   placeholder?: string
   height?: number
   readOnly?: boolean
+  onSave?: () => void
+  autoSave?: boolean
+  autoSaveDelay?: number
 }
 
 const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
@@ -17,13 +20,19 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
   onChange,
   placeholder = 'Start writing...',
   height = 200,
-  readOnly = false
+  readOnly = false,
+  onSave,
+  autoSave = true,
+  autoSaveDelay = 2000
 }) => {
   // Create the BlockNote editor instance
   const editor = useCreateBlockNote()
   
   // Track if we're updating from external value to prevent loops
   const isUpdatingFromValue = React.useRef(false)
+  const autoSaveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+  const lastSavedContentRef = React.useRef<string>('')
+  const editorRef = React.useRef<HTMLDivElement>(null)
 
   // Handle content changes
   const handleChange = React.useCallback(async (): Promise<void> => {
@@ -47,15 +56,99 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
       })
       
       onChange(htmlContent)
+
+      // Auto-save functionality
+      if (autoSave && onSave && htmlContent !== lastSavedContentRef.current) {
+        // Clear existing timeout
+        if (autoSaveTimeoutRef.current) {
+          clearTimeout(autoSaveTimeoutRef.current)
+        }
+        
+        // Set new timeout for auto-save
+        autoSaveTimeoutRef.current = setTimeout(() => {
+          onSave()
+          lastSavedContentRef.current = htmlContent
+        }, autoSaveDelay)
+      }
     } catch (error) {
       console.error('Failed to convert blocks to HTML:', error)
     }
-  }, [editor, onChange])
+  }, [editor, onChange, onSave, autoSave, autoSaveDelay])
+
+  // Handle keyboard shortcuts
+  const handleKeyDown = React.useCallback((event: Event): void => {
+    const keyboardEvent = event as KeyboardEvent
+    // Check for Cmd+S (Mac) or Ctrl+S (Windows/Linux)
+    if ((keyboardEvent.metaKey || keyboardEvent.ctrlKey) && keyboardEvent.key === 's') {
+      keyboardEvent.preventDefault()
+      keyboardEvent.stopPropagation()
+      
+      if (onSave) {
+        // Clear auto-save timeout since we're manually saving
+        if (autoSaveTimeoutRef.current) {
+          clearTimeout(autoSaveTimeoutRef.current)
+          autoSaveTimeoutRef.current = null
+        }
+        
+        onSave()
+        
+        // Update last saved content
+        const saveCurrentContent = async (): Promise<void> => {
+          try {
+            const htmlContent = await editor.blocksToHTMLLossy(editor.document)
+            lastSavedContentRef.current = htmlContent
+          } catch (error) {
+            console.error('Failed to update saved content reference:', error)
+          }
+        }
+        saveCurrentContent()
+      }
+    }
+  }, [editor, onSave])
+
+  // Handle blur events for auto-save
+  const handleBlur = React.useCallback((): void => {
+    if (autoSave && onSave) {
+      // Clear existing timeout
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current)
+        autoSaveTimeoutRef.current = null
+      }
+      
+      // Save immediately on blur
+      onSave()
+      
+      // Update last saved content
+      const saveCurrentContent = async (): Promise<void> => {
+        try {
+          const htmlContent = await editor.blocksToHTMLLossy(editor.document)
+          lastSavedContentRef.current = htmlContent
+        } catch (error) {
+          console.error('Failed to update saved content reference:', error)
+        }
+      }
+      saveCurrentContent()
+    }
+  }, [editor, onSave, autoSave])
 
   // Set up change listener
   React.useEffect(() => {
     return editor.onEditorContentChange(handleChange)
   }, [editor, handleChange])
+
+  // Set up keyboard event listeners
+  React.useEffect(() => {
+    const editorElement = editorRef.current?.querySelector('.ProseMirror')
+    if (editorElement) {
+      editorElement.addEventListener('keydown', handleKeyDown)
+      editorElement.addEventListener('blur', handleBlur)
+      
+      return () => {
+        editorElement.removeEventListener('keydown', handleKeyDown)
+        editorElement.removeEventListener('blur', handleBlur)
+      }
+    }
+  }, [handleKeyDown, handleBlur])
 
   // Update editor content when value prop changes
   React.useEffect(() => {
@@ -81,6 +174,7 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
         }
         
         isUpdatingFromValue.current = false
+        lastSavedContentRef.current = value
       } catch (error) {
         console.warn('Failed to update editor content:', error)
         isUpdatingFromValue.current = false
@@ -95,8 +189,18 @@ const BlockNoteEditor: React.FC<BlockNoteEditorProps> = ({
     editor.isEditable = !readOnly
   }, [editor, readOnly])
 
+  // Cleanup auto-save timeout on unmount
+  React.useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current)
+      }
+    }
+  }, [])
+
   return (
     <div
+      ref={editorRef}
       style={{
         borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border-primary)',

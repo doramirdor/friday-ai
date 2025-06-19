@@ -708,6 +708,9 @@ Best regards,
                     onChange={(val) => onNotesChange(val || '')}
                     placeholder="Write your notes here..."
                     height={250}
+                    onSave={onSaveMeeting}
+                    autoSave={true}
+                    autoSaveDelay={2500}
                   />
                 </div>
               </div>

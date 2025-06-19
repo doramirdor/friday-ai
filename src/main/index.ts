@@ -15,6 +15,7 @@ import * as child_process from 'child_process'
 // Import services
 import { geminiService } from './gemini'
 import { ollamaService } from './ollama'
+import { firstRunSetupService } from './firstRunSetup'
 
 let mainWindow: BrowserWindow | null = null
 // let tray: Tray | null = null
@@ -177,7 +178,21 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
+  mainWindow.on('ready-to-show', async () => {
+    // Check if this is first run and handle setup
+    const isFirstRun = await firstRunSetupService.isFirstRun()
+    
+    if (isFirstRun) {
+      console.log('🚀 First run detected, showing setup dialog')
+      const setupSuccess = await firstRunSetupService.showSetupDialog()
+      
+      if (!setupSuccess) {
+        console.log('❌ Setup cancelled, exiting')
+        app.quit()
+        return
+      }
+    }
+    
     mainWindow?.show()
   })
 

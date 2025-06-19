@@ -93,7 +93,10 @@ class DatabaseService {
           global_context TEXT,
           enable_global_context BOOLEAN DEFAULT 1,
           include_context_in_transcriptions BOOLEAN DEFAULT 1,
-          include_context_in_action_items BOOLEAN DEFAULT 1
+          include_context_in_action_items BOOLEAN DEFAULT 1,
+          ai_provider TEXT DEFAULT 'gemini',
+          ollama_model TEXT DEFAULT 'mistral:7b',
+          ollama_api_url TEXT DEFAULT 'http://localhost:11434'
         )
       `;
       this.db.serialize(() => {
@@ -171,11 +174,59 @@ class DatabaseService {
             });
           }));
         }
-        if (migrations.length === 0) {
-          resolve();
-        } else {
-          Promise.all(migrations).then(() => resolve()).catch(reject);
-        }
+        this.db.all("PRAGMA table_info(settings)", (settingsErr, settingsRows) => {
+          if (settingsErr) {
+            reject(settingsErr);
+            return;
+          }
+          const hasAiProvider = settingsRows.some((row) => row.name === "ai_provider");
+          const hasOllamaModel = settingsRows.some((row) => row.name === "ollama_model");
+          const hasOllamaApiUrl = settingsRows.some((row) => row.name === "ollama_api_url");
+          if (!hasAiProvider) {
+            console.log("Adding ai_provider column to settings table...");
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db.run("ALTER TABLE settings ADD COLUMN ai_provider TEXT DEFAULT 'gemini'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr);
+                  return;
+                }
+                console.log("Successfully added ai_provider column");
+                resolveInner();
+              });
+            }));
+          }
+          if (!hasOllamaModel) {
+            console.log("Adding ollama_model column to settings table...");
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db.run("ALTER TABLE settings ADD COLUMN ollama_model TEXT DEFAULT 'mistral:7b'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr);
+                  return;
+                }
+                console.log("Successfully added ollama_model column");
+                resolveInner();
+              });
+            }));
+          }
+          if (!hasOllamaApiUrl) {
+            console.log("Adding ollama_api_url column to settings table...");
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db.run("ALTER TABLE settings ADD COLUMN ollama_api_url TEXT DEFAULT 'http://localhost:11434'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr);
+                  return;
+                }
+                console.log("Successfully added ollama_api_url column");
+                resolveInner();
+              });
+            }));
+          }
+          if (migrations.length === 0) {
+            resolve();
+          } else {
+            Promise.all(migrations).then(() => resolve()).catch(reject);
+          }
+        });
       });
     });
   }
@@ -206,7 +257,10 @@ class DatabaseService {
             global_context: "I am a product manager at a tech startup. We're building a mobile app for productivity. Our team includes developers, designers, and data analysts. We use agile methodology with weekly sprints.",
             enable_global_context: 1,
             include_context_in_transcriptions: 1,
-            include_context_in_action_items: 1
+            include_context_in_action_items: 1,
+            ai_provider: "gemini",
+            ollama_model: "mistral:7b",
+            ollama_api_url: "http://localhost:11434"
           };
           const sql = `
             INSERT INTO settings (
@@ -214,8 +268,8 @@ class DatabaseService {
               auto_save_recordings, realtime_transcription, transcription_language,
               gemini_api_key, auto_generate_action_items, auto_suggest_tags,
               global_context, enable_global_context, include_context_in_transcriptions,
-              include_context_in_action_items
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              include_context_in_action_items, ai_provider, ollama_model, ollama_api_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `;
           this.db.run(sql, Object.values(defaultSettings), (err2) => {
             if (err2) {
@@ -488,7 +542,10 @@ class DatabaseService {
       globalContext: row.global_context,
       enableGlobalContext: Boolean(row.enable_global_context),
       includeContextInTranscriptions: Boolean(row.include_context_in_transcriptions),
-      includeContextInActionItems: Boolean(row.include_context_in_action_items)
+      includeContextInActionItems: Boolean(row.include_context_in_action_items),
+      aiProvider: row.ai_provider,
+      ollamaModel: row.ollama_model,
+      ollamaApiUrl: row.ollama_api_url
     };
   }
   async close() {
@@ -921,6 +978,641 @@ Respond with a well-structured, informative answer that combines both sources ap
   }
 }
 const geminiService = new GeminiService();
+class OllamaService {
+  apiUrl = "http://localhost:11434";
+  model = "mistral:7b";
+  ollamaProcess = null;
+  isOllamaRunning = false;
+  setApiUrl(url) {
+    this.apiUrl = url;
+  }
+  setModel(model) {
+    this.model = model;
+  }
+  async ensureOllamaRunning() {
+    if (this.isOllamaRunning) {
+      return true;
+    }
+    try {
+      const response = await fetch(`${this.apiUrl}/api/tags`, {
+        method: "GET",
+        signal: AbortSignal.timeout(5e3)
+      });
+      if (response.ok) {
+        this.isOllamaRunning = true;
+        return true;
+      }
+    } catch (error) {
+      console.log("Ollama not running, attempting to start...");
+    }
+    return this.startOllama();
+  }
+  async startOllama() {
+    return new Promise((resolve) => {
+      try {
+        this.ollamaProcess = child_process.spawn("ollama", ["serve"], {
+          stdio: "pipe",
+          detached: false
+        });
+        this.ollamaProcess.on("spawn", () => {
+          console.log("🦙 Ollama process started");
+          setTimeout(async () => {
+            try {
+              const response = await fetch(`${this.apiUrl}/api/tags`, {
+                method: "GET",
+                signal: AbortSignal.timeout(1e4)
+              });
+              if (response.ok) {
+                this.isOllamaRunning = true;
+                console.log("✅ Ollama is running and responding");
+                resolve(true);
+              } else {
+                console.log("❌ Ollama started but not responding properly");
+                resolve(false);
+              }
+            } catch (error) {
+              console.log("❌ Failed to connect to Ollama after starting:", error);
+              resolve(false);
+            }
+          }, 3e3);
+        });
+        this.ollamaProcess.on("error", (error) => {
+          console.error("❌ Failed to start Ollama:", error);
+          resolve(false);
+        });
+        this.ollamaProcess.on("exit", (code) => {
+          console.log(`🦙 Ollama process exited with code ${code}`);
+          this.isOllamaRunning = false;
+          this.ollamaProcess = null;
+        });
+      } catch (error) {
+        console.error("❌ Error spawning Ollama process:", error);
+        resolve(false);
+      }
+    });
+  }
+  async ensureModelAvailable() {
+    try {
+      const response = await fetch(`${this.apiUrl}/api/show`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name: this.model }),
+        signal: AbortSignal.timeout(1e4)
+      });
+      if (response.ok) {
+        return true;
+      }
+      console.log(`📥 Model ${this.model} not found, attempting to pull...`);
+      const pullResponse = await fetch(`${this.apiUrl}/api/pull`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name: this.model }),
+        signal: AbortSignal.timeout(3e5)
+        // 5 minutes timeout for model download
+      });
+      return pullResponse.ok;
+    } catch (error) {
+      console.error(`❌ Failed to ensure model ${this.model} is available:`, error);
+      return false;
+    }
+  }
+  async makeOllamaRequest(prompt) {
+    console.log(`🦙 Making Ollama request with model: ${this.model}`);
+    const isRunning = await this.ensureOllamaRunning();
+    if (!isRunning) {
+      return { success: false, error: "Failed to start Ollama service" };
+    }
+    const modelAvailable = await this.ensureModelAvailable();
+    if (!modelAvailable) {
+      return { success: false, error: `Model ${this.model} is not available and could not be downloaded` };
+    }
+    try {
+      const response = await fetch(`${this.apiUrl}/api/generate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: this.model,
+          prompt,
+          stream: false,
+          options: {
+            temperature: 0.3,
+            top_k: 40,
+            top_p: 0.95,
+            num_predict: 2048
+          }
+        }),
+        signal: AbortSignal.timeout(12e4)
+        // 2 minutes timeout
+      });
+      if (!response.ok) {
+        const errorData = await response.text();
+        return { success: false, error: `Ollama API error: ${response.status} - ${errorData}` };
+      }
+      const data = await response.json();
+      if (data.response) {
+        return { success: true, content: data.response };
+      }
+      return { success: false, error: "No response generated by Ollama" };
+    } catch (error) {
+      return { success: false, error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async generateMeetingContent(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `You are an AI assistant helping to analyze a meeting recording. Please generate a comprehensive analysis based on the following information:
+
+MEETING CONTEXT:
+Title: ${options.existingTitle}
+Global Context: ${options.globalContext}
+Meeting-Specific Context: ${options.meetingContext}
+
+TRANSCRIPT:
+${transcriptText}
+
+NOTES:
+${options.notes}
+
+Please provide your response in the following JSON format (ensure it's valid JSON with escaped quotes):
+{
+  "summary": "A comprehensive summary of the meeting (3-4 sentences)",
+  "description": "A detailed description covering key topics, decisions, and outcomes",
+  "actionItems": [
+    {
+      "id": 1,
+      "text": "Action item description",
+      "completed": false
+    }
+  ],
+  "tags": ["tag1", "tag2", "tag3"]
+}
+
+Response:`;
+      const result = await this.makeOllamaRequest(prompt);
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+      try {
+        const content = result.content || "";
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error("No JSON found in response");
+        }
+        const parsedData = JSON.parse(jsonMatch[0]);
+        return {
+          success: true,
+          data: {
+            summary: parsedData.summary || "",
+            actionItems: parsedData.actionItems || [],
+            description: parsedData.description || "",
+            tags: parsedData.tags || []
+          }
+        };
+      } catch (parseError) {
+        console.error("Failed to parse Ollama response:", parseError);
+        return { success: false, error: "Failed to parse AI response as JSON" };
+      }
+    } catch (error) {
+      return { success: false, error: `Error generating content: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async generateSummaryOnly(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `Please provide a concise summary of this meeting transcript:
+
+CONTEXT: ${options.globalContext}
+MEETING CONTEXT: ${options.meetingContext}
+
+TRANSCRIPT:
+${transcriptText}
+
+NOTES:
+${options.notes}
+
+Please provide a 2-3 sentence summary focusing on key decisions, outcomes, and next steps:`;
+      const result = await this.makeOllamaRequest(prompt);
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+      return {
+        success: true,
+        summary: result.content || ""
+      };
+    } catch (error) {
+      return { success: false, error: `Error generating summary: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async generateMessage(options) {
+    try {
+      const messageType = options.type === "slack" ? "Slack message" : "professional email";
+      const prompt = `Generate a ${messageType} based on the following meeting information:
+
+Global Context: ${options.data.globalContext}
+Meeting Context: ${options.data.meetingContext}
+Title: ${options.data.title || "Meeting"}
+Description: ${options.data.description || ""}
+Summary: ${options.data.summary || ""}
+Notes: ${options.data.notes || ""}
+
+${options.data.actionItems && options.data.actionItems.length > 0 ? `Action Items:
+${options.data.actionItems.map((item) => `- ${item.text}`).join("\n")}` : ""}
+
+Please write a ${messageType} that summarizes the key points and next steps. 
+${options.type === "slack" ? "Keep it conversational and concise." : "Use professional email format with proper greeting and signature."}
+
+Message:`;
+      const result = await this.makeOllamaRequest(prompt);
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+      return {
+        success: true,
+        message: result.content || ""
+      };
+    } catch (error) {
+      return { success: false, error: `Error generating message: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async generateFollowupQuestions(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `Based on this meeting transcript, provide a summary and predict what might be discussed next:
+
+Title: ${options.title || "Meeting"}
+Description: ${options.description || ""}
+Context: ${options.context || ""}
+Notes: ${options.notes || ""}
+
+TRANSCRIPT:
+${transcriptText}
+
+Please provide:
+1. A brief summary of what was discussed
+2. A prediction of what might be discussed next
+
+Format as JSON:
+{
+  "transcriptSummary": "Brief summary here",
+  "predictedNextSentence": "Prediction of next discussion topic"
+}
+
+Response:`;
+      const result = await this.makeOllamaRequest(prompt);
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+      try {
+        const content = result.content || "";
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error("No JSON found in response");
+        }
+        const parsedData = JSON.parse(jsonMatch[0]);
+        return {
+          success: true,
+          data: {
+            transcriptSummary: parsedData.transcriptSummary || "",
+            predictedNextSentence: parsedData.predictedNextSentence || ""
+          }
+        };
+      } catch (parseError) {
+        return { success: false, error: "Failed to parse AI response as JSON" };
+      }
+    } catch (error) {
+      return { success: false, error: `Error generating followup questions: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async askQuestion(options) {
+    try {
+      const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
+      const prompt = `You are an AI assistant with access to a meeting transcript. Please answer the user's question based on the information provided.
+
+MEETING INFORMATION:
+Title: ${options.title || "Meeting"}
+Description: ${options.description || ""}
+Context: ${options.context || ""}
+Notes: ${options.notes || ""}
+Summary: ${options.summary || ""}
+
+TRANSCRIPT:
+${transcriptText}
+
+USER QUESTION: ${options.question}
+
+Please provide a helpful and accurate answer based on the meeting information. If the information isn't available in the transcript, please say so.
+
+Answer:`;
+      const result = await this.makeOllamaRequest(prompt);
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+      return {
+        success: true,
+        answer: result.content || ""
+      };
+    } catch (error) {
+      return { success: false, error: `Error answering question: ${error instanceof Error ? error.message : "Unknown error"}` };
+    }
+  }
+  async cleanup() {
+    if (this.ollamaProcess && !this.ollamaProcess.killed) {
+      console.log("🦙 Stopping Ollama process...");
+      this.ollamaProcess.kill("SIGTERM");
+      this.ollamaProcess = null;
+      this.isOllamaRunning = false;
+    }
+  }
+}
+const ollamaService = new OllamaService();
+class FirstRunSetupService {
+  setupWindow = null;
+  setupProcess = null;
+  progressCallback = null;
+  constructor() {
+    this.checkFirstRun();
+  }
+  checkFirstRun() {
+    const userDataPath = electron.app.getPath("userData");
+    const setupCompleteFlag = path__namespace.join(userDataPath, ".friday-setup-complete");
+    if (!fs__namespace.existsSync(setupCompleteFlag)) {
+      console.log("🚀 First run detected, setup required");
+    } else {
+      console.log("✅ Setup already completed");
+    }
+  }
+  async isFirstRun() {
+    const userDataPath = electron.app.getPath("userData");
+    const setupCompleteFlag = path__namespace.join(userDataPath, ".friday-setup-complete");
+    return !fs__namespace.existsSync(setupCompleteFlag);
+  }
+  markSetupComplete() {
+    const userDataPath = electron.app.getPath("userData");
+    const setupCompleteFlag = path__namespace.join(userDataPath, ".friday-setup-complete");
+    try {
+      fs__namespace.writeFileSync(setupCompleteFlag, JSON.stringify({
+        setupDate: (/* @__PURE__ */ new Date()).toISOString(),
+        version: electron.app.getVersion()
+      }));
+      console.log("✅ Setup marked as complete");
+    } catch (error) {
+      console.error("Failed to mark setup as complete:", error);
+    }
+  }
+  getBundledExecutablePath() {
+    const isDev = process.env.NODE_ENV === "development";
+    const resourcesPath = isDev ? path__namespace.join(process.cwd(), "resources") : path__namespace.join(process.resourcesPath, "resources");
+    return path__namespace.join(resourcesPath, "friday_ollama");
+  }
+  updateProgress(step, progress, message) {
+    const progressData = { step, progress, message };
+    console.log(`📦 Setup Progress: ${step} (${progress}%) - ${message}`);
+    if (this.progressCallback) {
+      this.progressCallback(progressData);
+    }
+    if (this.setupWindow && !this.setupWindow.isDestroyed()) {
+      this.setupWindow.webContents.send("setup-progress", progressData);
+    }
+  }
+  async checkDependencies() {
+    const bundledExecutablePath = this.getBundledExecutablePath();
+    return {
+      python: await this.checkPythonInstallation(),
+      ollama: await this.checkOllamaInstallation(),
+      bundledExecutable: fs__namespace.existsSync(bundledExecutablePath)
+    };
+  }
+  async checkPythonInstallation() {
+    return new Promise((resolve) => {
+      const pythonCheck = child_process.spawn("python3", ["--version"]);
+      pythonCheck.on("close", (code) => {
+        resolve(code === 0);
+      });
+      pythonCheck.on("error", () => {
+        resolve(false);
+      });
+    });
+  }
+  async checkOllamaInstallation() {
+    return new Promise((resolve) => {
+      const ollamaCheck = child_process.spawn("which", ["ollama"]);
+      ollamaCheck.on("close", (code) => {
+        resolve(code === 0);
+      });
+      ollamaCheck.on("error", () => {
+        resolve(false);
+      });
+    });
+  }
+  async runSetup(progressCallback) {
+    this.progressCallback = progressCallback || null;
+    try {
+      this.updateProgress("starting", 0, "Initializing setup...");
+      const deps = await this.checkDependencies();
+      this.updateProgress("checking", 10, "Checking dependencies...");
+      const result = {
+        success: false,
+        installed: {
+          python: deps.python || deps.bundledExecutable,
+          ollama: false,
+          models: []
+        }
+      };
+      if (!deps.python && !deps.bundledExecutable) {
+        this.updateProgress("python", 20, "Python not found. Please install Python 3.8+ or use bundled version.");
+        const response = await electron.dialog.showMessageBox({
+          type: "warning",
+          title: "Python Required",
+          message: "Friday requires Python for local AI features.",
+          detail: "You can install Python from python.org or continue without local AI features.",
+          buttons: ["Install Python", "Continue without local AI", "Cancel"],
+          defaultId: 0,
+          cancelId: 2
+        });
+        if (response.response === 2) {
+          throw new Error("Setup cancelled by user");
+        } else if (response.response === 1) {
+          this.updateProgress("python", 30, "Continuing without local AI features...");
+          result.installed.python = false;
+        } else {
+          electron.shell.openExternal("https://www.python.org/downloads/");
+          throw new Error("Please install Python and restart Friday");
+        }
+      } else {
+        this.updateProgress("python", 30, "Python available ✅");
+        result.installed.python = true;
+      }
+      if (result.installed.python) {
+        this.updateProgress("ollama", 40, "Checking Ollama installation...");
+        const bundledExecutablePath = this.getBundledExecutablePath();
+        if (fs__namespace.existsSync(bundledExecutablePath)) {
+          this.updateProgress("ollama", 50, "Setting up Ollama...");
+          const setupSuccess = await this.runBundledSetup(bundledExecutablePath);
+          if (setupSuccess) {
+            this.updateProgress("ollama", 80, "Ollama setup complete ✅");
+            result.installed.ollama = true;
+            result.installed.models = ["mistral:7b", "qwen2.5:1.5b"];
+          } else {
+            this.updateProgress("ollama", 60, "Ollama setup failed - will use cloud AI only");
+            result.installed.ollama = false;
+          }
+        } else {
+          this.updateProgress("ollama", 60, "Bundled executable not found - will use cloud AI only");
+          result.installed.ollama = false;
+        }
+      }
+      this.updateProgress("verifying", 90, "Verifying installation...");
+      const finalCheck = await this.checkDependencies();
+      if (finalCheck.ollama || finalCheck.bundledExecutable) {
+        this.updateProgress("complete", 100, "Setup complete! Friday is ready to use.");
+        this.markSetupComplete();
+        result.success = true;
+      } else {
+        this.updateProgress("complete", 100, "Setup complete! Using cloud AI only.");
+        this.markSetupComplete();
+        result.success = true;
+      }
+      return result;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      this.updateProgress("error", 0, `Setup failed: ${errorMessage}`);
+      return {
+        success: false,
+        error: errorMessage,
+        installed: {
+          python: false,
+          ollama: false,
+          models: []
+        }
+      };
+    }
+  }
+  async runBundledSetup(executablePath) {
+    return new Promise((resolve) => {
+      this.updateProgress("ollama", 55, "Running Ollama setup...");
+      const setupProcess = child_process.spawn(executablePath, ["--setup"], {
+        stdio: "pipe"
+      });
+      let output = "";
+      setupProcess.stdout?.on("data", (data) => {
+        const text = data.toString();
+        output += text;
+        if (text.includes("Installing")) {
+          this.updateProgress("ollama", 60, "Installing Ollama...");
+        } else if (text.includes("Downloading")) {
+          this.updateProgress("ollama", 70, "Downloading AI models...");
+        } else if (text.includes("ready")) {
+          this.updateProgress("ollama", 75, "Models ready");
+        }
+      });
+      setupProcess.stderr?.on("data", (data) => {
+        console.error("Setup stderr:", data.toString());
+      });
+      setupProcess.on("close", (code) => {
+        if (code === 0) {
+          this.updateProgress("ollama", 80, "Ollama setup completed successfully");
+          resolve(true);
+        } else {
+          console.error("Setup failed with code:", code);
+          console.error("Setup output:", output);
+          resolve(false);
+        }
+      });
+      setupProcess.on("error", (error) => {
+        console.error("Setup process error:", error);
+        resolve(false);
+      });
+      setTimeout(() => {
+        if (!setupProcess.killed) {
+          setupProcess.kill();
+          resolve(false);
+        }
+      }, 10 * 60 * 1e3);
+    });
+  }
+  async showSetupDialog() {
+    const response = await electron.dialog.showMessageBox({
+      type: "info",
+      title: "Welcome to Friday!",
+      message: "First-time setup required",
+      detail: "Friday can set up local AI features for enhanced privacy. This will download and install Ollama and AI models (~2GB). You can also skip this and use cloud AI only.",
+      buttons: ["Setup Local AI (Recommended)", "Use Cloud AI Only", "Cancel"],
+      defaultId: 0,
+      cancelId: 2
+    });
+    if (response.response === 2) {
+      return false;
+    } else if (response.response === 1) {
+      this.markSetupComplete();
+      return true;
+    } else {
+      const setupResult = await this.runSetup();
+      return setupResult.success;
+    }
+  }
+  createSetupWindow() {
+    this.setupWindow = new electron.BrowserWindow({
+      width: 600,
+      height: 400,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path__namespace.join(__dirname, "../preload/index.js")
+      }
+    });
+    const setupHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Friday Setup</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; text-align: center; }
+        .progress { width: 100%; height: 20px; background: #f0f0f0; border-radius: 10px; margin: 20px 0; }
+        .progress-bar { height: 100%; background: #007AFF; border-radius: 10px; transition: width 0.3s; }
+        .step { margin: 20px 0; font-size: 18px; }
+        .message { color: #666; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🎉 Welcome to Friday!</h1>
+    <div class="step" id="step">Initializing...</div>
+    <div class="progress">
+        <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+    </div>
+    <div class="message" id="message">Setting up Friday for you...</div>
+    
+    <script>
+        window.api?.on?.('setup-progress', (progress) => {
+            document.getElementById('step').textContent = progress.step
+            document.getElementById('progress-bar').style.width = progress.progress + '%'
+            document.getElementById('message').textContent = progress.message
+        })
+    <\/script>
+</body>
+</html>`;
+    this.setupWindow.loadURL("data:text/html;charset=UTF-8," + encodeURIComponent(setupHtml));
+    return this.setupWindow;
+  }
+  cleanup() {
+    if (this.setupProcess && !this.setupProcess.killed) {
+      this.setupProcess.kill();
+    }
+    if (this.setupWindow && !this.setupWindow.isDestroyed()) {
+      this.setupWindow.close();
+    }
+  }
+}
+const firstRunSetupService = new FirstRunSetupService();
 let mainWindow = null;
 let transcriptionProcess = null;
 let transcriptionSocket = null;
@@ -1032,7 +1724,17 @@ function createWindow() {
       // Allow blob URLs for audio playback
     }
   });
-  mainWindow.on("ready-to-show", () => {
+  mainWindow.on("ready-to-show", async () => {
+    const isFirstRun = await firstRunSetupService.isFirstRun();
+    if (isFirstRun) {
+      console.log("🚀 First run detected, showing setup dialog");
+      const setupSuccess = await firstRunSetupService.showSetupDialog();
+      if (!setupSuccess) {
+        console.log("❌ Setup cancelled, exiting");
+        electron.app.quit();
+        return;
+      }
+    }
     mainWindow?.show();
   });
   mainWindow.webContents.on("before-input-event", (event, input) => {
@@ -2403,6 +3105,71 @@ function setupGeminiHandlers() {
     }
   });
 }
+function setupOllamaHandlers() {
+  electron.ipcMain.handle("ollama:generate-content", async (_, options) => {
+    try {
+      const result = await ollamaService.generateMeetingContent(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate content with Ollama:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("ollama:generate-summary", async (_, options) => {
+    try {
+      const result = await ollamaService.generateSummaryOnly(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate summary with Ollama:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("ollama:generate-message", async (_, options) => {
+    try {
+      const result = await ollamaService.generateMessage(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate message with Ollama:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("ollama:generate-followup-questions", async (_, options) => {
+    try {
+      const result = await ollamaService.generateFollowupQuestions(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to generate followup questions with Ollama:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("ollama:ask-question", async (_, options) => {
+    try {
+      const result = await ollamaService.askQuestion(options);
+      return result;
+    } catch (error) {
+      console.error("Failed to ask question with Ollama:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("ollama:set-model", async (_, model) => {
+    try {
+      ollamaService.setModel(model);
+      return { success: true };
+    } catch (error) {
+      console.error("Failed to set Ollama model:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("ollama:set-api-url", async (_, url) => {
+    try {
+      ollamaService.setApiUrl(url);
+      return { success: true };
+    } catch (error) {
+      console.error("Failed to set Ollama API URL:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+}
 electron.ipcMain.handle("dialog:showOpenDialog", async (_, options) => {
   return electron.dialog.showOpenDialog(options);
 });
@@ -2527,6 +3294,7 @@ electron.app.whenReady().then(async () => {
   setupDatabaseHandlers();
   setupTranscriptionHandlers();
   setupGeminiHandlers();
+  setupOllamaHandlers();
   setupSystemHandlers();
   registerGlobalShortcuts();
   electron.app.on("browser-window-created", (_, window) => {

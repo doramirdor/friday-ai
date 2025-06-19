@@ -9,6 +9,15 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!build/**'
+  - '!scripts/**'
+  - '!venv/**'
+  - '!*.py'
+  - '!install_ollama.sh'
+extraResources:
+  - from: "resources/"
+    to: "resources/"
+    filter: ["**/*"]
 asarUnpack:
   - resources/**
 win:

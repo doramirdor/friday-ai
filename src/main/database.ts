@@ -283,11 +283,12 @@ class DatabaseService {
             }))
           }
 
-        if (migrations.length === 0) {
-          resolve()
-        } else {
-          Promise.all(migrations).then(() => resolve()).catch(reject)
-        }
+          if (migrations.length === 0) {
+            resolve()
+          } else {
+            Promise.all(migrations).then(() => resolve()).catch(reject)
+          }
+        })
       })
     })
   }

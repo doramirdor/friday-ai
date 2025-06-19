@@ -49,7 +49,11 @@ interface RecordingServiceState {
   isCombinedRecording: boolean
   currentTime: number
   transcript: TranscriptLine[]
+  microphoneTranscript: TranscriptLine[]
+  systemAudioTranscript: TranscriptLine[]
   liveText: string
+  liveTextMicrophone: string
+  liveTextSystemAudio: string
   recordingWarning: string | null
   combinedRecordingPath: string | null
   recordedAudioBlob: Blob | null
@@ -77,7 +81,11 @@ export const useRecordingService = ({
   const isCombinedRecordingRef = useRef<boolean>(false)
   const currentTimeRef = useRef<number>(0)
   const transcriptRef = useRef<TranscriptLine[]>([])
+  const microphoneTranscriptRef = useRef<TranscriptLine[]>([])
+  const systemAudioTranscriptRef = useRef<TranscriptLine[]>([])
   const liveTextRef = useRef<string>('')
+  const liveTextMicrophoneRef = useRef<string>('')
+  const liveTextSystemAudioRef = useRef<string>('')
   const recordingWarningRef = useRef<string | null>(null)
   const combinedRecordingPathRef = useRef<string | null>(null)
   const recordedAudioBlobRef = useRef<Blob | null>(null)
@@ -102,15 +110,18 @@ export const useRecordingService = ({
       transcriptionStatusRef.current = 'initializing'
       onTranscriptionStatusChange('initializing')
       
-      const result = await (window.api as any).transcription.startService()
-      if (result.success) {
+      // @ts-ignore - API methods may return different types than defined
+      const result = await window.api.transcription.startService()
+      // @ts-ignore - Result type checking
+      if (result && typeof result === 'object' && result.success) {
         transcriptionStatusRef.current = 'ready'
         onTranscriptionStatusChange('ready')
         console.log('✅ Transcription service initialized')
       } else {
         transcriptionStatusRef.current = 'error'
         onTranscriptionStatusChange('error')
-        console.error('Failed to initialize transcription:', result.error)
+        // @ts-ignore - Result type checking
+        console.error('Failed to initialize transcription:', result?.error || 'Unknown error')
       }
     } catch (error) {
       transcriptionStatusRef.current = 'error'
@@ -122,10 +133,12 @@ export const useRecordingService = ({
   // Check Swift recorder availability
   const checkSwiftRecorderAvailability = useCallback(async (): Promise<void> => {
     try {
-      const result = await (window.api as any).swiftRecorder.checkAvailability()
-      isSwiftRecorderAvailableRef.current = result.available
-      onSwiftRecorderAvailabilityChange(result.available)
-      console.log('🎙️ Swift recorder availability:', result.available)
+      const result = await window.api.swiftRecorder.checkAvailability()
+      // @ts-ignore - Handle boolean or object result
+      const available = typeof result === 'boolean' ? result : result.available
+      isSwiftRecorderAvailableRef.current = available
+      onSwiftRecorderAvailabilityChange(available)
+      console.log('🎙️ Swift recorder availability:', available)
     } catch (error) {
       console.error('Failed to check Swift recorder availability:', error)
       isSwiftRecorderAvailableRef.current = false
@@ -134,8 +147,14 @@ export const useRecordingService = ({
   }, [onSwiftRecorderAvailabilityChange])
 
   // Handle transcription results
-  const handleTranscriptionResult = useCallback((result: TranscriptionResult): void => {
-    console.log('📝 Received transcription:', result)
+  const handleTranscriptionResult = useCallback((result: TranscriptionResult & { stream_type?: string }): void => {
+    console.log('📝 Received transcription:', {
+      type: result.type,
+      text: result.text?.substring(0, 50) + (result.text && result.text.length > 50 ? '...' : ''),
+      stream_type: result.stream_type,
+      language: result.language,
+      language_probability: result.language_probability
+    })
 
     if (result.type === 'transcript' && result.text && result.text.trim() !== '' && result.text !== 'undefined') {
       // Calculate proper timestamp based on recording start time
@@ -143,19 +162,37 @@ export const useRecordingService = ({
       const recordingSeconds = Math.floor(recordingElapsed / 1000)
       const currentTimestamp = formatTime(recordingSeconds)
 
-      // Add to live text for immediate feedback
-      liveTextRef.current = liveTextRef.current + ' ' + result.text
-
-      // Add to transcript lines immediately during recording
+      // Create transcript line
       const newLine: TranscriptLine = {
         time: currentTimestamp,
         text: result.text.trim()
       }
 
+      // Handle stream-specific transcripts
+      const streamType = result.stream_type || 'microphone'
+      
+      console.log(`📝 Processing transcript with stream_type: ${streamType}, original: ${result.stream_type}`)
+      
+      if (streamType === 'system') {
+        // Add to system audio live text and transcript
+        liveTextSystemAudioRef.current = liveTextSystemAudioRef.current + ' ' + result.text
+        const updatedSystemTranscript = [...systemAudioTranscriptRef.current, newLine]
+        systemAudioTranscriptRef.current = updatedSystemTranscript
+        console.log('🎵 Added system audio transcript line:', newLine, 'Total system lines:', updatedSystemTranscript.length)
+      } else {
+        // Add to microphone live text and transcript
+        liveTextMicrophoneRef.current = liveTextMicrophoneRef.current + ' ' + result.text
+        const updatedMicTranscript = [...microphoneTranscriptRef.current, newLine]
+        microphoneTranscriptRef.current = updatedMicTranscript
+        console.log('🎤 Added microphone transcript line:', newLine, 'Total mic lines:', updatedMicTranscript.length)
+      }
+
+      // Also add to general live text and transcript for backward compatibility
+      liveTextRef.current = liveTextRef.current + ' ' + result.text
       const updatedTranscript = [...transcriptRef.current, newLine]
       transcriptRef.current = updatedTranscript
       
-      console.log('📝 Added transcript line:', newLine, 'Total lines:', updatedTranscript.length)
+      console.log(`📝 Added ${streamType} transcript line:`, newLine, 'Total combined lines:', updatedTranscript.length)
       
       onTranscriptionResult(result)
     } else if (result.type === 'error') {
@@ -163,22 +200,25 @@ export const useRecordingService = ({
       transcriptionStatusRef.current = 'error'
       onTranscriptionStatusChange('error')
     } else if (result.type === 'transcript' && (!result.text || result.text.trim() === '')) {
-      console.log('📝 Received empty transcription result - likely silence or no audio content')
+      console.log(`📝 Received empty transcription result for ${result.stream_type || 'unknown'} stream - likely silence or no audio content`)
     }
   }, [formatTime, onTranscriptionResult, onTranscriptionStatusChange])
+
+  // Note: System audio transcription is handled by the Swift recorder with --live-transcription flag
+  // The Swift recorder sends TRANSCRIPTION_CHUNK messages that are processed by the main process
 
   // Start combined recording
   const startCombinedRecording = useCallback(async (): Promise<void> => {
     try {
       console.log('🎙️ Starting combined audio recording (system + microphone)...')
 
-      // Generate recording path
+      // Generate recording path - use Documents folder instead of ~ to avoid path expansion issues
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const recordingPath = '~/Friday Recordings'
-      const filename = `combined-recording-${timestamp}.mp3`
+      const recordingPath = '/Users/amirdor/Documents/Friday Recordings'
+      const filename = `combined-recording-${timestamp}.wav`
 
       // Start combined recording via Swift recorder
-      const result = await (window.api as any).swiftRecorder.startCombinedRecording(
+      const result = await window.api.swiftRecorder.startCombinedRecording(
         recordingPath,
         filename
       )
@@ -188,6 +228,8 @@ export const useRecordingService = ({
         isCombinedRecordingRef.current = true
         currentTimeRef.current = 0
         liveTextRef.current = ''
+        liveTextMicrophoneRef.current = ''
+        liveTextSystemAudioRef.current = ''
         transcriptionStatusRef.current = 'recording'
         onTranscriptionStatusChange('recording')
 
@@ -203,13 +245,13 @@ export const useRecordingService = ({
           currentTimeRef.current += 1
         }, 1000)
 
-        // For combined recording, start microphone-only transcription for live transcription
-        // The Swift recorder will handle both microphone and system audio recording
-        // Live transcription will use microphone stream only to avoid device conflicts
+        // Start microphone transcription and rely on Swift recorder for system audio transcription
         await startMicrophoneOnlyTranscription()
+        
         console.log('✅ Combined recording started successfully')
-        console.log('🎤 Microphone-only transcription enabled for live transcription')
-        console.log('📝 Live transcription from microphone while recording both audio streams')
+        console.log('🎤 Microphone live transcription enabled')
+        console.log('🎵 System audio live transcription enabled via Swift recorder')
+        console.log('📝 Live transcription from both microphone and system audio streams')
       } else {
         console.error('Failed to start combined recording:', result.error)
         transcriptionStatusRef.current = 'error'
@@ -230,16 +272,18 @@ export const useRecordingService = ({
       // Wait for transcription service to be ready with retry mechanism
       let retries = 0
       const maxRetries = 10
-      let statusResult = await (window.api as any).transcription.isReady()
+      let statusResult = await window.api.transcription.isReady()
       
-      while (!statusResult.ready && retries < maxRetries) {
+      // @ts-ignore - Handle boolean or object result
+      while (!(typeof statusResult === 'boolean' ? statusResult : statusResult.ready) && retries < maxRetries) {
         console.log(`⏳ Transcription service not ready, waiting... (attempt ${retries + 1}/${maxRetries})`)
         await new Promise(resolve => setTimeout(resolve, 500)) // Wait 500ms
-        statusResult = await (window.api as any).transcription.isReady()
+        statusResult = await window.api.transcription.isReady()
         retries++
       }
       
-      if (!statusResult.ready) {
+      // @ts-ignore - Handle boolean or object result
+      if (!(typeof statusResult === 'boolean' ? statusResult : statusResult.ready)) {
         console.error('Transcription service not ready after retries')
         return
       }
@@ -266,7 +310,6 @@ export const useRecordingService = ({
         echoCancellation: false, // Bluetooth handles this
         noiseSuppression: false, // Disable to preserve speech clarity
         autoGainControl: true,
-        volume: 1.0 // Maximum volume
       } : {
         deviceId: 'default',
         channelCount: 1,
@@ -274,7 +317,6 @@ export const useRecordingService = ({
         echoCancellation: true,
         noiseSuppression: false,
         autoGainControl: true,
-        volume: 1.0
       }
       
       // Log which microphone is being used and device details
@@ -321,9 +363,10 @@ export const useRecordingService = ({
           const dataArray = new Uint8Array(analyser.frequencyBinCount)
           let hasAudio = false
 
-          const checkAudioLevel = () => {
+          const checkAudioLevel = (): void => {
             analyser.getByteFrequencyData(dataArray)
             const average = dataArray.reduce((a, b) => a + b) / dataArray.length
+            console.log('🎤 Audio level:', average)
             if (average > 10) { // Threshold for detecting audio
               hasAudio = true
             }
@@ -343,13 +386,13 @@ export const useRecordingService = ({
             
             try {
               if (chunks.length > 0) {
+                console.log('🎤 Chunks:', chunks.length)
                 const completeBlob = new Blob(chunks, { type: mimeType })
                 console.log(`🎤 Audio chunk: ${completeBlob.size} bytes, hasAudio: ${hasAudio}`)
-                
                 // Only process if we have sufficient audio data and detected audio activity
-                if (completeBlob.size > 2000 && hasAudio) {
+                if (completeBlob.size > 2000) {
                   const arrayBuffer = await completeBlob.arrayBuffer()
-                  const result = await (window.api as any).transcription.processChunk(arrayBuffer)
+                  const result = await window.api.transcription.processChunk(arrayBuffer)
                   if (result.success) {
                     console.log('✅ Microphone transcription chunk processed with audio activity')
                   }
@@ -473,9 +516,11 @@ export const useRecordingService = ({
         
         isProcessingQueue = true
         while (transcriptionQueue.length > 0) {
-          const statusResult = await (window.api as any).transcription.isReady()
+          const statusResult = await window.api.transcription.isReady()
           
+          // @ts-ignore - Handle boolean or object result
           if (!statusResult.ready) {
+            // @ts-ignore - Handle boolean or object result
             const details = statusResult.details || {}
             console.log('⏳ Waiting for transcription service to be ready...', {
               serviceReady: details.serviceReady,
@@ -493,7 +538,7 @@ export const useRecordingService = ({
           const chunk = transcriptionQueue.shift()
           if (chunk) {
             try {
-              const result = await (window.api as any).transcription.processChunk(chunk)
+              const result = await window.api.transcription.processChunk(chunk)
               if (result.success) {
                 console.log('✅ Queued transcription chunk processed successfully')
               } else {
@@ -543,8 +588,10 @@ export const useRecordingService = ({
                   const arrayBuffer = await completeBlob.arrayBuffer()
                   
                   // Check if service is ready, if not, queue the chunk
-                  const statusResult = await (window.api as any).transcription.isReady()
+                  const statusResult = await window.api.transcription.isReady()
+                  // @ts-ignore - Handle boolean or object result
                   if (!statusResult.ready) {
+                    // @ts-ignore - Handle boolean or object result
                     const details = statusResult.details || {}
                     console.log('⏳ Transcription service busy, queuing chunk for later processing', {
                       serviceReady: details.serviceReady,
@@ -558,7 +605,7 @@ export const useRecordingService = ({
                   } else {
                     // Try to process immediately
                     try {
-                      const result = await (window.api as any).transcription.processChunk(arrayBuffer)
+                      const result = await window.api.transcription.processChunk(arrayBuffer)
                       if (!result.success) {
                         console.log('⏳ Processing failed, queuing chunk for retry. Error:', result.error)
                         transcriptionQueue.push(arrayBuffer)
@@ -634,7 +681,8 @@ export const useRecordingService = ({
       console.log('🎤 Starting microphone-only recording...')
 
       // Check transcription service status
-      const statusResult = await (window.api as any).transcription.isReady()
+      const statusResult = await window.api.transcription.isReady()
+      // @ts-ignore - Handle boolean or object result
       if (!statusResult.ready) {
         console.error('Transcription service not ready')
         return
@@ -760,7 +808,7 @@ export const useRecordingService = ({
                   console.log(`🎵 Processing complete segment: ${completeBlob.size} bytes`)
 
                   const arrayBuffer = await completeBlob.arrayBuffer()
-                  const result = await (window.api as any).transcription.processChunk(arrayBuffer)
+                  const result = await window.api.transcription.processChunk(arrayBuffer)
 
                   if (!result.success) {
                     console.error('Failed to process audio segment:', result.error)
@@ -839,7 +887,7 @@ export const useRecordingService = ({
       isCombinedRecordingRef.current = false
       isRecordingRef.current = false
       
-      const result = await (window.api as any).swiftRecorder.stopCombinedRecording()
+      const result = await window.api.swiftRecorder.stopCombinedRecording()
 
       if (result.success) {
         console.log('✅ Combined recording stopped successfully')
@@ -891,11 +939,13 @@ export const useRecordingService = ({
       console.error('Error stopping combined recording:', error)
     }
 
-    // Stop audio stream used for transcription
+    // Stop audio streams used for transcription
     if (audioStreamRef.current) {
       audioStreamRef.current.getTracks().forEach((track) => track.stop())
       audioStreamRef.current = null
     }
+    
+    // Note: System audio transcription cleanup is handled by Swift recorder
 
     // Clean up common recording state but preserve transcript and recording path
     transcriptionStatusRef.current = 'ready'
@@ -989,7 +1039,11 @@ export const useRecordingService = ({
     isCombinedRecording: isCombinedRecordingRef.current,
     currentTime: currentTimeRef.current,
     transcript: transcriptRef.current,
+    microphoneTranscript: microphoneTranscriptRef.current,
+    systemAudioTranscript: systemAudioTranscriptRef.current,
     liveText: liveTextRef.current,
+    liveTextMicrophone: liveTextMicrophoneRef.current,
+    liveTextSystemAudio: liveTextSystemAudioRef.current,
     recordingWarning: recordingWarningRef.current,
     combinedRecordingPath: combinedRecordingPathRef.current,
     recordedAudioBlob: recordedAudioBlobRef.current
@@ -1004,24 +1058,27 @@ export const useRecordingService = ({
   // Setup event listeners
   useEffect(() => {
     // Setup transcription result listener
-    if ((window.api as any).transcription) {
-      (window.api as any).transcription.onResult(handleTranscriptionResult)
+    if (window.api.transcription) {
+      console.log('🎤 Setting up transcription result listener')
+      window.api.transcription.onResult(handleTranscriptionResult)
     }
 
     // Setup Swift recorder event listeners
-    if (isSwiftRecorderAvailableRef.current && (window.api as any).swiftRecorder) {
-      (window.api as any).swiftRecorder.onRecordingStarted(onCombinedRecordingStarted)
-      ;(window.api as any).swiftRecorder.onRecordingStopped(onCombinedRecordingStopped)
-      ;(window.api as any).swiftRecorder.onRecordingFailed(onCombinedRecordingFailed)
+    if (window.api.swiftRecorder) {
+      console.log('🎙️ Setting up Swift recorder event listeners')
+      window.api.swiftRecorder.onRecordingStarted(onCombinedRecordingStarted)
+      window.api.swiftRecorder.onRecordingStopped(onCombinedRecordingStopped)
+      window.api.swiftRecorder.onRecordingFailed(onCombinedRecordingFailed)
     }
 
     return () => {
-      // Cleanup event listeners
-      if ((window.api as any).transcription) {
-        (window.api as any).transcription.removeAllListeners()
+      // Only cleanup when component unmounts, not on every effect run
+      console.log('🎤 Cleaning up event listeners on component unmount')
+      if (window.api.transcription) {
+        window.api.transcription.removeAllListeners()
       }
-      if ((window.api as any).swiftRecorder) {
-        (window.api as any).swiftRecorder.removeAllListeners()
+      if (window.api.swiftRecorder) {
+        window.api.swiftRecorder.removeAllListeners()
       }
     }
   }, [handleTranscriptionResult, onCombinedRecordingStarted, onCombinedRecordingStopped, onCombinedRecordingFailed])

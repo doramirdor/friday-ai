@@ -15,6 +15,7 @@ export interface Meeting {
   context_files: string[]
   notes: string
   summary: string
+  chatMessages: ChatMessage[]
   createdAt: string
   updatedAt: string
   duration: string
@@ -29,6 +30,14 @@ export interface ActionItem {
   id: number
   text: string
   completed: boolean
+}
+
+export interface ChatMessage {
+  id: string
+  type: 'user' | 'assistant' | 'action'
+  content: string
+  timestamp: string
+  action?: string
 }
 
 export interface Settings {
@@ -100,6 +109,7 @@ class DatabaseService {
           context_files TEXT,
           notes TEXT,
           summary TEXT,
+          chat_messages TEXT DEFAULT '[]',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           duration TEXT NOT NULL
@@ -167,6 +177,7 @@ class DatabaseService {
 
         const hasContextFiles = rows.some(row => row.name === 'context_files')
         const hasNotes = rows.some(row => row.name === 'notes')
+        const hasChatMessages = rows.some(row => row.name === 'chat_messages')
         
         const migrations: Promise<void>[] = []
         
@@ -193,6 +204,20 @@ class DatabaseService {
                 return
               }
               console.log('Successfully added notes column')
+              resolveInner()
+            })
+          }))
+        }
+        
+        if (!hasChatMessages) {
+          console.log('Adding chat_messages column to meetings table...')
+          migrations.push(new Promise((resolveInner, rejectInner) => {
+            this.db!.run("ALTER TABLE meetings ADD COLUMN chat_messages TEXT DEFAULT '[]'", (alterErr) => {
+              if (alterErr) {
+                rejectInner(alterErr)
+                return
+              }
+              console.log('Successfully added chat_messages column')
               resolveInner()
             })
           }))
@@ -277,8 +302,8 @@ class DatabaseService {
       const sql = `
         INSERT INTO meetings (
           recording_path, transcript, title, description, tags,
-          action_items, context, context_files, notes, summary, created_at, updated_at, duration
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          action_items, context, context_files, notes, summary, chat_messages, created_at, updated_at, duration
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
 
       // Handle recordingPath serialization
@@ -297,6 +322,7 @@ class DatabaseService {
         JSON.stringify(meeting.context_files),
         meeting.notes,
         meeting.summary,
+        JSON.stringify(meeting.chatMessages || []),
         meeting.createdAt,
         meeting.updatedAt,
         meeting.duration
@@ -406,6 +432,10 @@ class DatabaseService {
       if (meeting.summary !== undefined) {
         fields.push('summary = ?')
         values.push(meeting.summary)
+      }
+      if (meeting.chatMessages !== undefined) {
+        fields.push('chat_messages = ?')
+        values.push(JSON.stringify(meeting.chatMessages))
       }
       if (meeting.updatedAt !== undefined) {
         fields.push('updated_at = ?')
@@ -537,6 +567,7 @@ class DatabaseService {
       context_files: row.context_files ? JSON.parse(row.context_files as string) : [],
       notes: row.notes as string,
       summary: row.summary as string,
+      chatMessages: row.chat_messages ? JSON.parse(row.chat_messages as string) : [],
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
       duration: row.duration as string

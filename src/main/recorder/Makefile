@@ -1,27 +1,37 @@
-SWIFT_FILES = Recorder.swift AudioDeviceManager.swift main.swift Extensions.swift PermissionsRequester.swift ResponseHandler.swift
-EXECUTABLE = Recorder
-BUILD_DIR = build
-SWIFT_FLAGS = -framework AVFoundation -framework ScreenCaptureKit -framework CoreAudio -framework Foundation
+# Makefile for Friday Swift Recorder
+SWIFT_FILES = main.swift
+TARGET = Recorder
+BUILD_DIR = .
 
-.PHONY: all clean install
+# Compiler flags for ScreenCaptureKit
+SWIFT_FLAGS = -framework AVFoundation -framework ScreenCaptureKit -framework CoreGraphics
 
-all: $(BUILD_DIR)/$(EXECUTABLE)
+# Default target
+all: $(TARGET)
 
-$(BUILD_DIR)/$(EXECUTABLE): $(SWIFT_FILES)
-	@mkdir -p $(BUILD_DIR)
-	swiftc $(SWIFT_FLAGS) -o $(BUILD_DIR)/$(EXECUTABLE) $(SWIFT_FILES)
+# Build the recorder
+$(TARGET): $(SWIFT_FILES)
+	@echo "🔨 Building Swift recorder with ScreenCaptureKit..."
+	swiftc $(SWIFT_FLAGS) -o $(BUILD_DIR)/$(TARGET) $(SWIFT_FILES)
+	@echo "✅ Build complete: $(BUILD_DIR)/$(TARGET)"
 
-install: $(BUILD_DIR)/$(EXECUTABLE)
-	cp $(BUILD_DIR)/$(EXECUTABLE) ../../../$(EXECUTABLE)
-
+# Clean build artifacts
 clean:
-	rm -rf $(BUILD_DIR)
-	rm -f ../../../$(EXECUTABLE)
+	@echo "🧹 Cleaning build artifacts..."
+	rm -f $(BUILD_DIR)/$(TARGET)
+	rm -f *.o
+	@echo "✅ Clean complete"
 
-test: $(BUILD_DIR)/$(EXECUTABLE)
-	$(BUILD_DIR)/$(EXECUTABLE) --check-permissions
+# Test the recorder
+test: $(TARGET)
+	@echo "🧪 Testing recorder..."
+	../../../$(TARGET) --test
+	@echo "✅ Test complete"
 
-test-combined: $(BUILD_DIR)/$(EXECUTABLE)
-	$(BUILD_DIR)/$(EXECUTABLE) --record "$(HOME)/Friday Recordings" --source both --filename test-combined
+# Install dependencies (if needed)
+install: $(TARGET)
+	@echo "📦 Installing recorder to project root..."
+	cp $(BUILD_DIR)/$(TARGET) ../../../$(TARGET)
+	@echo "✅ Installation complete"
 
-.PHONY: all clean install test test-combined 
+.PHONY: all clean test install 

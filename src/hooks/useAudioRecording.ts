@@ -88,17 +88,24 @@ export const useAudioRecording = (): UseAudioRecordingReturn => {
     if (!isElectronAvailable()) return;
 
     try {
-      // This would need to be implemented in the Electron main process
-      // For now, we'll assume permissions are granted if the recorder is available
+      const result = await (window as any).api.swiftRecorder.checkPermissions();
       setState(prev => ({
         ...prev,
         permissions: {
-          microphone: prev.isAvailable,
-          screenRecording: prev.isAvailable
+          microphone: result.microphone === 'GRANTED',
+          screenRecording: result.screen_recording === 'GRANTED' || false // Optional for audio-only mode
         }
       }));
     } catch (error) {
       console.error('Failed to check permissions:', error);
+      // Fallback: assume permissions are granted if recorder is available
+      setState(prev => ({
+        ...prev,
+        permissions: {
+          microphone: prev.isAvailable,
+          screenRecording: false // Default to audio-only mode
+        }
+      }));
     }
   }, [isElectronAvailable]);
 

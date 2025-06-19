@@ -215,15 +215,15 @@
   animation: pulse 2s infinite;
 }
 
-/* Ask Friday Right Sidebar - Fixed to 10% width */
+/* Ask Friday Right Sidebar - Fixed to 30% width */
 .ask-friday-sidebar {
   position: fixed;
   top: 0;
   right: 0;
   bottom: 0;
-  width: 10vw;
-  min-width: 200px;
-  max-width: 250px;
+  width: 30vw;
+  min-width: 400px;
+  max-width: 500px;
   background: var(--bg-color);
   border-left: 1px solid var(--border-color);
   display: flex;
@@ -254,7 +254,7 @@
 }
 
 .notion-layout:has(.ask-friday-sidebar.expanded) .main-content-area {
-  margin-right: 10vw;
+  margin-right: 30vw;
 }
 
 .ask-friday-header {
@@ -383,34 +383,36 @@
   animation: slideIn 0.3s ease-out;
 }
 
-.chat-message.user {
+.chat-message.assistant {
   align-self: flex-end;
 }
 
-.chat-message.assistant {
+.chat-message.user {
   align-self: flex-start;
 }
 
 .message-content {
   padding: 8px 12px;
-  border-radius: 12px;
+  border: none;
   line-height: 1.4;
   margin-bottom: 3px;
   word-wrap: break-word;
   font-size: 12px;
 }
 
+
 .chat-message.user .message-content {
-  background: var(--primary-color);
-  color: white;
-  border-bottom-right-radius: 3px;
+  background: transparent;
+  color: var(--text-color);
+  border: none;
 }
 
 .chat-message.assistant .message-content {
-  background: var(--bg-secondary);
+  background: transparent;
   color: var(--text-color);
-  border-bottom-left-radius: 3px;
+  border: none;
 }
+
 
 .message-time {
   display: flex;
@@ -699,7 +701,7 @@
 
 .transcript-empty svg {
   color: var(--text-tertiary);
-  margin-bottom: 16px;
+  margin-bottom: 6px;
 }
 
 .playback-controls {

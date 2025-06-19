@@ -1625,13 +1625,14 @@
 }
 
 .chat-message.user .message-content {
-  background: var(--green-primary);
-  color: white;
+  background: transparent;
+  color: var(--text-primary);
+  border: none;
   border-bottom-right-radius: var(--radius-sm);
 }
 
 .chat-message.assistant .message-content {
-  background: var(--surface-secondary);
+  background: transparent;
   color: var(--text-primary);
   border-bottom-left-radius: var(--radius-sm);
 }

@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,7 @@ interface MeetingContextDialogProps {
   noteId: string | null;
 }
 
-export const MeetingContextDialog = ({ noteId }: MeetingContextDialogProps) => {
+export const MeetingContextDialog = ({ }: MeetingContextDialogProps) => {
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
   const [attendees, setAttendees] = useState("");

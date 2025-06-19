@@ -131,12 +131,7 @@ const LibraryScreen: React.FC<LibraryScreenProps> = ({ onOpenTranscript, onNewMe
         >
           Recordings ({recordings.length})
         </h2>
-        {onNewMeeting && (
-          <button className="btn btn-secondary" onClick={onNewMeeting}>
-            <PlusIcon size={16} />
-            New Meeting
-          </button>
-        )}
+        
       </div>
 
       <div className="table-container">

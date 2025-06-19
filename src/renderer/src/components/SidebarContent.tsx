@@ -6,7 +6,6 @@ import {
   CheckIcon,
   FileTextIcon,
   ClipboardListIcon,
-  InfoIcon,
   UploadIcon,
   SaveIcon,
   SparklesIcon,

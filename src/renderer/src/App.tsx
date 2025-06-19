@@ -99,6 +99,7 @@ function App(): React.JSX.Element {
         context: '',
         context_files: [],
         notes: '',
+        chatMessages: [],
         recordingPath: '',
         duration: '00:00',
         createdAt: timestamp,

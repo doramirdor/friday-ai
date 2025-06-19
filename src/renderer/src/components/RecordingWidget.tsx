@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer";
@@ -8,10 +7,9 @@ import { Mic, MicOff, FileText, Bot } from "lucide-react";
 interface RecordingWidgetProps {
   isRecording: boolean;
   onRecordingChange: (recording: boolean) => void;
-  onShowTranscript: () => void;
 }
 
-export const RecordingWidget = ({ isRecording, onRecordingChange, onShowTranscript }: RecordingWidgetProps) => {
+export const RecordingWidget = ({ isRecording, onRecordingChange }: RecordingWidgetProps) => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [showTranscriptDrawer, setShowTranscriptDrawer] = useState(false);
 
@@ -45,7 +43,7 @@ export const RecordingWidget = ({ isRecording, onRecordingChange, onShowTranscri
         <div className="flex items-center gap-3">
           {/* Transcript Button with Drawer */}
           <Drawer open={showTranscriptDrawer} onOpenChange={setShowTranscriptDrawer}>
-            <DrawerTrigger asChild>
+            <DrawerTrigger>
               <Button
                 variant="ghost"
                 size="sm"
@@ -56,7 +54,7 @@ export const RecordingWidget = ({ isRecording, onRecordingChange, onShowTranscri
               </Button>
             </DrawerTrigger>
             <DrawerContent className="max-h-[85vh] rounded-t-2xl">
-              <TranscriptPanel onClose={() => setShowTranscriptDrawer(false)} />
+              <TranscriptPanel />
             </DrawerContent>
           </Drawer>
 

@@ -26,3 +26,6 @@ __pycache__/
 audio_chunk_*.wav
 audio_chunk_*.webm
 *.tmp
+
+# Swift Recorder executable
+Recorder

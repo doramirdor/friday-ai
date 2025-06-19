@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +9,7 @@ interface AIAssistantProps {
   selectedNoteId: string | null;
 }
 
-export const AIAssistant = ({ currentView, selectedNoteId }: AIAssistantProps) => {
+export const AIAssistant = ({ currentView }: AIAssistantProps) => {
   const [askQuestion, setAskQuestion] = useState("");
   const [isCollapsed, setIsCollapsed] = useState(false);
 

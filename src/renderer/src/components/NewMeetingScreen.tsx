@@ -63,6 +63,7 @@ const NewMeetingScreen: React.FC<NewMeetingScreenProps> = ({ onBack, onSave }) =
         context_files: [], // Initialize with empty array
         notes: '', // Initialize with empty notes
         summary: '',
+        chatMessages: [], // Initialize with empty chat messages
         createdAt: now,
         updatedAt: now,
         duration: '00:00' // Default empty duration

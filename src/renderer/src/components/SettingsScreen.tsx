@@ -842,80 +842,89 @@ const SettingsScreen: React.FC = () => {
   }
 
   return (
-    <div className="library-container" style={{ display: 'flex', justifyContent: 'center' }}>
-      <div style={{ maxWidth: '800px', width: '100%' }}>
-        {/* Header */}
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'space-between', 
-          marginBottom: 'var(--spacing-lg)' 
-        }}>
-          <h2 style={{ 
-            margin: 0,
-            fontSize: 'var(--font-size-xl)',
-            fontWeight: 'var(--font-weight-semibold)'
-          }}>
-            Settings
-          </h2>
-          <button
-            className="btn btn-primary"
-            onClick={handleSaveSettings}
-            disabled={saving}
-          >
-            {saving ? (
-              'Saving...'
-            ) : saveSuccess ? (
-              <>
-                <CheckIcon size={16} />
-                Saved
-              </>
-            ) : (
-              <>
-                <SaveIcon size={16} />
-                Save Settings
-              </>
-            )}
-          </button>
-        </div>
+    <div className="friday-container">
+      <div className="friday-content">
+        <div className="main-content">
+          <div className="main-content-wrapper">
+            {/* Header */}
+            <div className="meeting-header">
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'space-between'
+              }}>
+                <h2 style={{ 
+                  margin: 0,
+                  fontSize: 'var(--font-size-xl)',
+                  fontWeight: 'var(--font-weight-semibold)'
+                }}>
+                  Settings
+                </h2>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleSaveSettings}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    'Saving...'
+                  ) : saveSuccess ? (
+                    <>
+                      <CheckIcon size={16} />
+                      Saved
+                    </>
+                  ) : (
+                    <>
+                      <SaveIcon size={16} />
+                      Save Settings
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
 
-        {/* Tab Navigation */}
-        <div className="tabs" style={{ marginBottom: 'var(--spacing-lg)' }}>
-          <button
-            className={`tab ${activeTab === 'general' ? 'active' : ''}`}
-            onClick={() => setActiveTab('general')}
-          >
-            General
-          </button>
-          <button
-            className={`tab ${activeTab === 'shortcuts' ? 'active' : ''}`}
-            onClick={() => setActiveTab('shortcuts')}
-          >
-            Shortcuts
-          </button>
-          <button
-            className={`tab ${activeTab === 'transcription' ? 'active' : ''}`}
-            onClick={() => setActiveTab('transcription')}
-          >
-            Transcription
-          </button>
-          <button
-            className={`tab ${activeTab === 'context' ? 'active' : ''}`}
-            onClick={() => setActiveTab('context')}
-          >
-            Context
-          </button>
-          <button
-            className={`tab ${activeTab === 'about' ? 'active' : ''}`}
-            onClick={() => setActiveTab('about')}
-          >
-            About
-          </button>
-        </div>
+            {/* Tab Navigation */}
+            <div className="content-tabs">
+              <div className="tabs">
+                <button
+                  className={`tab ${activeTab === 'general' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('general')}
+                >
+                  General
+                </button>
+                <button
+                  className={`tab ${activeTab === 'shortcuts' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('shortcuts')}
+                >
+                  Shortcuts
+                </button>
+                <button
+                  className={`tab ${activeTab === 'transcription' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('transcription')}
+                >
+                  Transcription
+                </button>
+                <button
+                  className={`tab ${activeTab === 'context' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('context')}
+                >
+                  Context
+                </button>
+                <button
+                  className={`tab ${activeTab === 'about' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('about')}
+                >
+                  About
+                </button>
+              </div>
+            </div>
 
-        {/* Tab Content */}
-        <div>
-          {renderTabContent()}
+            {/* Tab Content */}
+            <div className="tab-content-area">
+              <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+                {renderTabContent()}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

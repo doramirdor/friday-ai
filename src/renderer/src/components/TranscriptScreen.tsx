@@ -69,101 +69,6 @@ interface RecordingResult {
   screen_permission?: boolean
 }
 
-interface EnhancedAIOptions {
-  type: 'slack' | 'email'
-  title?: string
-  description?: string
-  contextText?: string
-  notes?: string
-  summary?: string
-  transcript?: TranscriptLine[]
-  actionItems?: Array<{ id: number; text: string; completed: boolean }>
-  questionHistory?: Array<unknown>
-  followupQuestions?: Array<unknown>
-  followupRisks?: Array<unknown>
-  followupComments?: Array<unknown>
-}
-
-interface GeminiMessage {
-  success: boolean
-  message?: string
-  error?: string
-}
-
-interface GeminiContentResponse {
-  success: boolean
-  data?: {
-    summary: string
-    description: string
-    actionItems: Array<{ id: number; text: string; completed: boolean }>
-    tags: string[]
-  }
-  error?: string
-}
-
-interface GeminiChatResponse {
-  success: boolean
-  response?: string
-  error?: string
-}
-
-interface DatabaseAPI {
-  updateMeeting: (id: number, data: Partial<Meeting>) => Promise<void>
-  getSettings: () => Promise<{ globalContext?: string }>
-}
-
-interface TranscriptionAPI {
-  loadRecording: (path: string) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }>
-  saveRecording: (buffer: ArrayBuffer, id: number) => Promise<{ success: boolean; filePath?: string; error?: string }>
-}
-
-interface WindowAPI {
-  db: DatabaseAPI
-  gemini: GeminiAPI
-  transcription: TranscriptionAPI
-}
-
-declare global {
-  interface Window {
-    api: {
-      db: {
-        updateMeeting: (id: number, data: Partial<Meeting>) => Promise<void>
-        getSettings: () => Promise<{ globalContext?: string }>
-      }
-      gemini: {
-        generateMessage: (options: {
-          type: 'slack' | 'email'
-          data: unknown
-          model: string
-        }) => Promise<{ success: boolean; message?: string; error?: string }>
-        generateChatResponse: (options: {
-          data: unknown
-          model: string
-        }) => Promise<{ success: boolean; response?: string; error?: string }>
-      }
-      transcription: {
-        loadRecording: (path: string) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }>
-        saveRecording: (buffer: ArrayBuffer, id: number) => Promise<{ success: boolean; filePath?: string; error?: string }>
-      }
-    }
-  }
-}
-
-interface GeminiAPI {
-  generateMessage: (options: {
-    type: 'slack' | 'email'
-    data: unknown
-    model: string
-  }) => Promise<GeminiMessage>
-  generateChatResponse: (options: {
-    data: unknown
-    model: string
-  }) => Promise<GeminiChatResponse>
-}
-
-// Override the existing window.api type
-const api = window.api as WindowAPI
-
 const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   // Core state
   const [isPlaying, setIsPlaying] = useState(false)
@@ -209,16 +114,16 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [isGeneratingMessage, setIsGeneratingMessage] = useState(false)
   const [aiLoadingMessage, setAiLoadingMessage] = useState('')
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [hasStartedConversation, setHasStartedConversation] = useState(false)
 
   // Refs
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
   const wasRecording = useRef<boolean>(false)
 
-  // Recording service state
-  const [transcriptionStatus, setTranscriptionStatus] = useState<string>('idle')
-  const [isSwiftRecorderAvailable, setIsSwiftRecorderAvailable] = useState(false)
-  const [recordingWarning, setRecordingWarning] = useState<string | null>(null)
+  // Recording service state (needed for compatibility)
+  const [, setTranscriptionStatus] = useState<string>('idle')
+  const [, setIsSwiftRecorderAvailable] = useState(false)
 
   // Combined loading state for full-screen overlay
   const isAIGenerating = isGeneratingSummary || isGeneratingAllContent || isGeneratingMessage
@@ -336,6 +241,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
   // Recording service callbacks
   const handleTranscriptionResult = useCallback((result: TranscriptionResult): void => {
+    console.log('🎤 Transcription result:', result)
       if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
         setLiveText((prev) => prev + ' ' + result.text)
 
@@ -357,27 +263,22 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       // No more warning states for Bluetooth - these should be complete failures
       if (result.code === 'RECORDING_FAILED' || result.code === 'SYSTEM_AUDIO_FAILED') {
         console.error('❌ Recording failed:', result.error)
-        setRecordingWarning(`❌ Recording failed: ${result.error}`)
         setTranscriptionStatus('error')
         setIsRecording(false)
       } else if (result.code === 'RECORDING_STARTED') {
-        setRecordingWarning(null)
         setTranscriptionStatus('recording')
         
         if (result.warning) {
           console.warn('⚠️ Recording quality warning:', result.warning)
-          setRecordingWarning(`ℹ️ ${result.warning}`)
         }
       } else {
         console.warn('⚠️ Unknown recording result code:', result.code)
-        setRecordingWarning(null)
       }
   }, [])
 
   const handleCombinedRecordingStopped = useCallback((result: RecordingResult): void => {
       console.log('🎙️ Combined recording stopped:', result)
     setIsRecording(false)
-    setRecordingWarning(null)
 
       if (result.path) {
         console.log('📁 Setting combined recording path from result:', result.path)
@@ -425,7 +326,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       
       setIsRecording(false)
       setTranscriptionStatus('error')
-      setRecordingWarning(`❌ Recording failed: ${result.error}`)
   }, [])
 
   // Memoize recording service props to prevent re-creation
@@ -440,7 +340,9 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     handleTranscriptionResult,
     handleCombinedRecordingStarted,
     handleCombinedRecordingStopped,
-    handleCombinedRecordingFailed
+    handleCombinedRecordingFailed,
+    setTranscriptionStatus,
+    setIsSwiftRecorderAvailable
   ])
 
   // Initialize recording service with memoized props
@@ -559,7 +461,6 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       
       // Sync other state
       setLiveText(state.liveText)
-      setRecordingWarning(state.recordingWarning)
       
       // Update combined recording path
       if (state.combinedRecordingPath && state.combinedRecordingPath !== combinedRecordingPath) {
@@ -630,7 +531,30 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     if (meeting?.id && !savingMeeting) {
       setHasUnsavedChanges(true)
     }
-  }, [title, description, tags, contextText, actionItems, notes, summary, meeting?.id, savingMeeting])
+  }, [title, description, tags, contextText, actionItems, notes, summary, chatMessages, meeting?.id, savingMeeting])
+
+  // Load existing chat messages when meeting changes
+  useEffect(() => {
+    if (meeting?.chatMessages && Array.isArray(meeting.chatMessages)) {
+      const loadedMessages = meeting.chatMessages.map(msg => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp)
+      }))
+      setChatMessages(loadedMessages)
+      setHasStartedConversation(loadedMessages.length > 0)
+      console.log(`📱 Loaded ${loadedMessages.length} existing chat messages`)
+    } else {
+      setChatMessages([])
+      setHasStartedConversation(false)
+    }
+  }, [meeting?.id])
+
+  // Set default tab to summary when there's existing summary data
+  useEffect(() => {
+    if (meeting && summary && summary.trim().length > 0) {
+      setActiveTab('summary')
+    }
+  }, [meeting?.id, summary])
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -775,6 +699,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         recordingPath, // Ensure recording path is included
         notes,
         summary,
+        chatMessages: chatMessages.map(msg => ({
+          ...msg,
+          timestamp: msg.timestamp.toISOString()
+        })),
         updatedAt: new Date().toISOString()
       }
 
@@ -830,6 +758,13 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
+      console.log('🔍 Context Debug - generateSummary:', {
+        globalContextLength: (settings.globalContext || '').length,
+        meetingContextLength: contextText.length,
+        meetingContext: contextText,
+        transcriptLength: transcript.length
+      })
+
       const result = await (window.api as unknown as { gemini: { generateSummary: (options: unknown) => Promise<{ success: boolean; summary?: string; error?: string }> } }).gemini.generateSummary(options)
       
       if (result.success && result.summary) {
@@ -873,20 +808,31 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         existingTitle: title
       }
 
+      console.log('🔍 Context Debug - generateAllContent:', {
+        globalContextLength: (settings.globalContext || '').length,
+        meetingContextLength: contextText.length,
+        meetingContext: contextText,
+        transcriptLength: transcript.length
+      })
+
       const result = await (window.api as unknown as { gemini: { generateContent: (options: unknown) => Promise<{ success: boolean; data?: { summary: string; description: string; actionItems: unknown[]; tags: string[] }; error?: string }> } }).gemini.generateContent(options)
       
-      if (result.success && result.data) {
+      if (result?.success && result.data) {
         const { summary: newSummary, description: newDescription, actionItems: newActionItems, tags: newTags } = result.data
         
-        setSummary(newSummary)
-        setDescription(newDescription)
-        setActionItems(newActionItems as Array<{ id: number; text: string; completed: boolean }>)
-        setTags(newTags)
+        // Validate the data before setting state
+        if (newSummary) setSummary(newSummary)
+        if (newDescription) setDescription(newDescription)
+        if (Array.isArray(newActionItems)) {
+          setActionItems(newActionItems as Array<{ id: number; text: string; completed: boolean }>)
+        }
+        if (Array.isArray(newTags)) setTags(newTags)
         
         console.log('✅ All content generated successfully')
       } else {
-        console.error('Failed to generate content:', result.error)
-        alert(`Failed to generate content: ${result.error}`)
+        const errorMsg = result?.error || 'Unknown error occurred'
+        console.error('Failed to generate content:', errorMsg)
+        alert(`Failed to generate content: ${errorMsg}`)
       }
     } catch (error) {
       console.error('Error generating content:', error)
@@ -912,6 +858,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     
     setChatMessages(prev => [...prev, userMessage])
     setIsAskFridayGenerating(true)
+    setHasStartedConversation(true)
 
     try {
       let result = ''
@@ -933,9 +880,20 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
           result = 'Generated meeting summary - check the AI Summary tab'
           setActiveTab('summary')
           break
-        case 'what-missed':
-          result = 'Based on the transcript, here are the key points you might have missed...'
+        case 'what-missed': {
+          const settings = await window.api.db.getSettings()
+          const geminiResult = await window.api.gemini.askQuestion({
+            question: 'Please highlight the key points and important information from this meeting that I should be aware of.',
+            transcript,
+            title,
+            description,
+            context: settings.globalContext || '',
+            notes: noteContent || notes,
+            summary
+          })
+          result = geminiResult?.success && (geminiResult as any).answer ? (geminiResult as any).answer : 'Based on the transcript, here are the key points you might have missed...'
           break
+        }
         default:
           result = 'Action completed successfully'
       }
@@ -977,35 +935,26 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     setChatMessages(prev => [...prev, userMessage])
     setChatInput('')
     setIsAskFridayGenerating(true)
+    setHasStartedConversation(true)
 
     try {
       const settings = await window.api.db.getSettings()
       
-      const contextData = {
-        globalContext: settings.globalContext || '',
-        meetingTitle: title,
-        meetingDescription: description,
-        meetingContext: contextText,
-        meetingNotes: noteContent || notes,
-        meetingSummary: summary,
-        transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n'),
-        actionItems: actionItems,
-        userQuestion: chatInput.trim(),
-        chatHistory: chatMessages.slice(-10)
-      }
-
-      console.log('🤖 Sending chat message to Gemini with context...')
-      
-      const result = await window.api.gemini.generateChatResponse({
-        data: contextData,
-        model: 'gemini-2.0-flash-exp'
+      const result = await window.api.gemini.askQuestion({
+        question: chatInput.trim(),
+        transcript,
+        title,
+        description,
+        context: settings.globalContext || '',
+        notes: noteContent || notes,
+        summary
       })
 
-      if (result?.success && result.response) {
+      if (result?.success && (result as any).answer) {
         const assistantMessage = {
           id: (Date.now() + 1).toString(),
           type: 'assistant' as const,
-          content: result.response,
+          content: (result as any).answer,
           timestamp: new Date()
         }
         setChatMessages(prev => [...prev, assistantMessage])
@@ -1038,6 +987,12 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.log(`🤖 Generating ${type} message with Gemini...`)
       
       const settings = await window.api.db.getSettings()
+      console.log('📋 Settings loaded:', { hasApiKey: !!settings.geminiApiKey, apiKeyLength: settings.geminiApiKey?.length || 0 })
+      
+      if (!settings.geminiApiKey) {
+        alert('Gemini API key is not configured. Please add it in Settings.')
+        return
+      }
       
       const selectedData = {
         globalContext: settings.globalContext || '',
@@ -1049,21 +1004,32 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         transcript: transcript.map(line => `[${line.time}] ${line.text}`).join('\n')
       }
 
+      console.log('📤 Sending request to Gemini with data:', { 
+        type, 
+        hasTranscript: selectedData.transcript.length > 0,
+        hasContext: selectedData.globalContext.length > 0,
+        hasNotes: selectedData.notes.length > 0
+      })
+
       const result = await window.api.gemini.generateMessage({
         type,
         data: selectedData,
-        model: 'gemini-2.5-pro-preview-06-05'
+        model: 'gemini-2.0-flash-exp'
       })
+      
+      console.log('📨 Gemini response:', { success: result?.success, hasMessage: !!result?.message, error: result?.error })
       
       if (result?.success && result.message) {
         console.log(`✅ ${type} message generated successfully`)
         return result.message
       } else {
-        throw new Error(result?.error || 'No response from Gemini')
+        const errorMsg = result?.error || 'No response from Gemini'
+        console.error(`❌ Gemini error: ${errorMsg}`)
+        throw new Error(errorMsg)
       }
     } catch (error) {
       console.error(`Error generating ${type} message:`, error)
-      alert(`Failed to generate ${type} message. Please check your Gemini API key in settings.`)
+      alert(`Failed to generate ${type} message: ${error instanceof Error ? error.message : 'Unknown error'}. Please check your Gemini API key in settings.`)
     }
   }
 
@@ -1107,13 +1073,27 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         )
       
       case 'context':
-        return <ContextTab />
+        return (
+          <ContextTab 
+            contextText={contextText}
+            onContextTextChange={setContextText}
+            uploadedFiles={uploadedFiles}
+            onFilesChange={setUploadedFiles}
+          />
+        )
       
       case 'actions':
         return <ActionItemsTab />
       
       case 'summary':
-        return <AISummaryTab />
+        return (
+          <AISummaryTab 
+            summary={summary}
+            isGenerating={isGeneratingSummary}
+            onGenerate={generateSummary}
+            onSummaryChange={setSummary}
+          />
+        )
       
       case 'alerts':
         return <AlertsTab />
@@ -1186,29 +1166,42 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     <div className="friday-layout">
       {/* Main Container */}
       <div className="friday-container">
-        {/* Header */}
-        <div className="friday-header">
-          <div className="header-content">
-            {/* <div className="header-left">
-              <button className="back-btn">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M19 12H5M12 19l-7-7 7-7"/>
-                </svg>
-              </button>
-              <h1 className="app-title">Friday</h1>
-            </div> */}
-          
-            
-            <div className="header-right">
-              {/* Buttons moved to tabs section */}
-            </div>
-          </div>
-        </div>
-
         {/* Content Area */}
         <div className="friday-content">
           {/* Main Content */}
           <div className="main-content">
+            {/* Meeting Header - Moved above tabs */}
+            <div className="meeting-header">
+              <input
+                type="text"
+                className="meeting-title"
+                placeholder="Meeting title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+              <div className="meeting-meta">
+                <span className="meeting-date">
+                  {meeting?.createdAt ? new Date(meeting.createdAt).toLocaleDateString('en-US', { 
+                    month: 'numeric', 
+                    day: 'numeric', 
+                    year: 'numeric' 
+                  }) : new Date().toLocaleDateString('en-US', { 
+                    month: 'numeric', 
+                    day: 'numeric', 
+                    year: 'numeric' 
+                  })} {new Date().toLocaleTimeString('en-US', { 
+                    hour12: false, 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                  })}
+                </span>
+              </div>
+              
+              <div className="meeting-badges">
+
+              </div>
+            </div>
+
             {/* Tabs Navigation */}
             <div className="content-tabs">
               <div className="tabs-left">
@@ -1246,51 +1239,21 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                   </span>
                 </button>
                 
-                <button 
-                  className="copilot-btn" 
-                  onClick={() => setShowAskFriday(!showAskFriday)}
-                  title="Ask Friday Co-pilot"
-                >
-                  <SparklesIcon size={16} />
-                  <span>Co-pilot</span>
-                </button>
+                {!showAskFriday && (
+                  <button 
+                    className="copilot-btn" 
+                    onClick={() => setShowAskFriday(true)}
+                    title="Ask Friday"
+                  >
+                    <SparklesIcon size={16} />
+                    <span>Ask Friday</span>
+                  </button>
+                )}
               </div>
             </div>
 
             {/* Main Content Area */}
             <div className="main-content-wrapper">
-              {/* Meeting Header */}
-              <div className="meeting-header">
-                <input
-                  type="text"
-                  className="meeting-title"
-                  placeholder="Meeting title"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-                <div className="meeting-meta">
-                  <span className="meeting-date">
-                    {meeting?.createdAt ? new Date(meeting.createdAt).toLocaleDateString('en-US', { 
-                      month: 'numeric', 
-                      day: 'numeric', 
-                      year: 'numeric' 
-                    }) : new Date().toLocaleDateString('en-US', { 
-                      month: 'numeric', 
-                      day: 'numeric', 
-                      year: 'numeric' 
-                    })} {new Date().toLocaleTimeString('en-US', { 
-                      hour12: false, 
-                      hour: '2-digit', 
-                      minute: '2-digit' 
-                    })}
-                  </span>
-                </div>
-                
-                <div className="meeting-badges">
-
-                </div>
-              </div>
-
               {/* Tab Content */}
               <div className="tab-content-area">
                 {renderTabContent()}
@@ -1364,96 +1327,115 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
               </button>
             </div>
 
-            {/* Action Cards */}
-            <div className="action-cards">
-              <div 
-                className="action-card email"
-                onClick={() => handleAskFridayAction('email-followup')}
-              >
-                <div className="action-icon">
-                  <MailIcon size={16} />
+            {/* Action Cards - Collapsible */}
+            {!hasStartedConversation ? (
+              <div className="action-cards">
+                <div 
+                  className="action-card email"
+                  onClick={() => handleAskFridayAction('email-followup')}
+                >
+                  <div className="action-icon">
+                    <MailIcon size={16} />
+                  </div>
+                  <div className="action-content">
+                    <h4>Email Follow-up</h4>
+                    <p>Draft a follow-up email</p>
+                  </div>
                 </div>
-                <div className="action-content">
-                  <h4>Email Follow-up</h4>
-                  <p>Draft a follow-up email</p>
+
+                <div 
+                  className="action-card slack"
+                  onClick={() => handleAskFridayAction('slack-summary')}
+                >
+                  <div className="action-icon">
+                    <MessageSquareIcon size={16} />
+                  </div>
+                  <div className="action-content">
+                    <h4>Slack Summary</h4>
+                    <p>Create a Slack update</p>
+                  </div>
+                </div>
+
+                <div 
+                  className="action-card missed"
+                  onClick={() => handleAskFridayAction('what-missed')}
+                >
+                  <div className="action-icon">
+                    <HelpCircleIcon size={16} />
+                  </div>
+                  <div className="action-content">
+                    <h4>What Did I Miss?</h4>
+                    <p>Catch up on key points</p>
+                  </div>
+                </div>
+
+                <div 
+                  className="action-card actions"
+                  onClick={() => handleAskFridayAction('action-items')}
+                >
+                  <div className="action-icon">
+                    <CheckSquareIcon size={16} />
+                  </div>
+                  <div className="action-content">
+                    <h4>Generate Action Items</h4>
+                    <p>Extract next steps</p>
+                  </div>
+                </div>
+
+                <div 
+                  className="action-card summary"
+                  onClick={() => handleAskFridayAction('summary')}
+                >
+                  <div className="action-icon">
+                    <BotIcon size={16} />
+                  </div>
+                  <div className="action-content">
+                    <h4>Generate Summary</h4>
+                    <p>Summarize the meeting</p>
+                  </div>
                 </div>
               </div>
-
-              <div 
-                className="action-card slack"
-                onClick={() => handleAskFridayAction('slack-summary')}
-              >
-                <div className="action-icon">
-                  <MessageSquareIcon size={16} />
-                </div>
-                <div className="action-content">
-                  <h4>Slack Summary</h4>
-                  <p>Create a Slack update</p>
-                </div>
-              </div>
-
-              <div 
-                className="action-card missed"
-                onClick={() => handleAskFridayAction('what-missed')}
-              >
-                <div className="action-icon">
-                  <HelpCircleIcon size={16} />
-                </div>
-                <div className="action-content">
-                  <h4>What Did I Miss?</h4>
-                  <p>Catch up on key points</p>
-                </div>
-              </div>
-
-              <div 
-                className="action-card actions"
-                onClick={() => handleAskFridayAction('action-items')}
-              >
-                <div className="action-icon">
-                  <CheckSquareIcon size={16} />
-                </div>
-                <div className="action-content">
-                  <h4>Generate Action Items</h4>
-                  <p>Extract next steps</p>
-                </div>
-              </div>
-
-              <div 
-                className="action-card summary"
-                onClick={() => handleAskFridayAction('summary')}
-              >
-                <div className="action-icon">
-                  <BotIcon size={16} />
-                </div>
-                <div className="action-content">
-                  <h4>Generate Summary</h4>
-                  <p>Summarize the meeting</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Chat Input */}
-            <div className="chat-input-section">
-              <form onSubmit={handleChatSubmit} className="chat-form">
-                <div className="chat-input-wrapper">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Ask Friday anything about your meeting..."
-                    className="friday-chat-input"
-                    disabled={isAskFridayGenerating}
-                  />
-                  <button
-                    type="submit"
-                    className="send-btn"
-                    disabled={!chatInput.trim() || isAskFridayGenerating}
+            ) : (
+              <div className="action-cards-collapsed">
+                <div className="quick-actions-row">
+                  <button 
+                    className="quick-action-btn email"
+                    onClick={() => handleAskFridayAction('email-followup')}
+                    title="Email Follow-up"
                   >
-                    <SendIcon size={16} />
+                    <MailIcon size={14} />
+                  </button>
+                  <button 
+                    className="quick-action-btn slack"
+                    onClick={() => handleAskFridayAction('slack-summary')}
+                    title="Slack Summary"
+                  >
+                    <MessageSquareIcon size={14} />
+                  </button>
+                  <button 
+                    className="quick-action-btn missed"
+                    onClick={() => handleAskFridayAction('what-missed')}
+                    title="What Did I Miss?"
+                  >
+                    <HelpCircleIcon size={14} />
+                  </button>
+                  <button 
+                    className="quick-action-btn actions"
+                    onClick={() => handleAskFridayAction('action-items')}
+                    title="Generate Action Items"
+                  >
+                    <CheckSquareIcon size={14} />
+                  </button>
+                  <button 
+                    className="quick-action-btn summary"
+                    onClick={() => handleAskFridayAction('summary')}
+                    title="Generate Summary"
+                  >
+                    <BotIcon size={14} />
                   </button>
                 </div>
-              </form>
-            </div>
+              </div>
+            )}
 
             {/* Chat Messages */}
             {chatMessages.length > 0 && (
@@ -1482,6 +1464,29 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
                 )}
               </div>
             )}
+
+            {/* Chat Input - Always at Bottom */}
+            <div className="chat-input-section">
+              <form onSubmit={handleChatSubmit} className="chat-form">
+                <div className="chat-input-wrapper">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Ask Friday anything about your meeting..."
+                    className="friday-chat-input"
+                    disabled={isAskFridayGenerating}
+                  />
+                  <button
+                    type="submit"
+                    className="send-btn"
+                    disabled={!chatInput.trim() || isAskFridayGenerating}
+                  >
+                    <SendIcon size={16} />
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>}
          </div>
        </div>

@@ -1,28 +1,37 @@
 import React from "react";
-import { Sparkles, RefreshCw, Zap } from "lucide-react";
+import { RefreshCw, Zap } from "lucide-react";
+import BlockNoteEditor from "./BlockNoteEditor";
 
-export const AISummaryTab = (): React.ReactElement => {
-  // Initial empty state - in real implementation this would come from props or context
-  const summary = {
-    keyPoints: [],
-    decisions: [],
-    nextSteps: []
-  };
+interface AISummaryTabProps {
+  summary: string;
+  isGenerating: boolean;
+  onGenerate: () => void;
+  onSummaryChange: (summary: string) => void;
+}
 
-  // Check if any summary content exists
-  const hasSummaryContent = summary.keyPoints.length > 0 || 
-                           summary.decisions.length > 0 || 
-                           summary.nextSteps.length > 0;
+export const AISummaryTab = ({ 
+  summary, 
+  isGenerating, 
+  onGenerate,
+  onSummaryChange
+}: AISummaryTabProps): React.ReactElement => {
+  // Check if summary content exists
+  const hasSummaryContent = summary && summary.trim().length > 0;
 
   return (
     <div className="ai-summary-tab-content">
       <div className="summary-header">
-        <div>
-          <h2>AI Summary</h2>
-          <p className="tab-description">AI-generated insights from your meeting</p>
-        </div>
-        <button className="regenerate-btn">
-          {hasSummaryContent ? (
+        <button 
+          className="regenerate-btn"
+          onClick={onGenerate}
+          disabled={isGenerating}
+        >
+          {isGenerating ? (
+            <>
+              <RefreshCw size={16} className="animate-spin" />
+              Generating...
+            </>
+          ) : hasSummaryContent ? (
             <>
               <RefreshCw size={16} />
               Regenerate
@@ -30,7 +39,7 @@ export const AISummaryTab = (): React.ReactElement => {
           ) : (
             <>
               <Zap size={16} />
-              Generate
+              Generate Summary
             </>
           )}
         </button>
@@ -39,61 +48,30 @@ export const AISummaryTab = (): React.ReactElement => {
       {hasSummaryContent ? (
         <div className="summary-sections">
           <div className="summary-card">
-            <h3 className="section-title">
-              <Sparkles size={16} className="section-icon blue" />
-              Key Points
-            </h3>
-            <ul className="summary-list">
-              {summary.keyPoints.map((point, index) => (
-                <li key={index} className="summary-item">
-                  <span className="bullet-dot blue"></span>
-                  {point}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="summary-card">
-            <h3 className="section-title">
-              <span className="section-icon-square green"></span>
-              Decisions Made
-            </h3>
-            <ul className="summary-list">
-              {summary.decisions.map((decision, index) => (
-                <li key={index} className="summary-item">
-                  <span className="bullet-dot green"></span>
-                  {decision}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="summary-card">
-            <h3 className="section-title">
-              <span className="section-icon-square orange"></span>
-              Next Steps
-            </h3>
-            <ul className="summary-list">
-              {summary.nextSteps.map((step, index) => (
-                <li key={index} className="summary-item">
-                  <span className="bullet-dot orange"></span>
-                  {step}
-                </li>
-              ))}
-            </ul>
+            <BlockNoteEditor
+              value={summary}
+              onChange={onSummaryChange}
+              placeholder="AI-generated summary will appear here..."
+              readOnly={false}
+              height={400}
+            />
           </div>
         </div>
       ) : (
         <div className="empty-summary">
           <div className="empty-summary-content">
-            <Sparkles size={48} className="empty-icon" />
+            <Zap size={48} className="empty-icon" />
             <h3 className="empty-title">No AI Summary Yet</h3>
             <p className="empty-description">
               Generate an AI summary to get key points, decisions, and next steps from your meeting.
             </p>
-            <button className="generate-summary-btn">
+            <button 
+              className="generate-summary-btn"
+              onClick={onGenerate}
+              disabled={isGenerating}
+            >
               <Zap size={16} />
-              Generate AI Summary
+              {isGenerating ? 'Generating...' : 'Generate AI Summary'}
             </button>
           </div>
         </div>

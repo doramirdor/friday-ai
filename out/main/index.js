@@ -26,6 +26,7 @@ function _interopNamespaceDefault(e) {
 }
 const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
+const child_process__namespace = /* @__PURE__ */ _interopNamespaceDefault(child_process);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 const net__namespace = /* @__PURE__ */ _interopNamespaceDefault(net);
 const icon = path.join(__dirname, "../../resources/icon.png");
@@ -70,6 +71,7 @@ class DatabaseService {
           context_files TEXT,
           notes TEXT,
           summary TEXT,
+          chat_messages TEXT DEFAULT '[]',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           duration TEXT NOT NULL
@@ -128,6 +130,7 @@ class DatabaseService {
         }
         const hasContextFiles = rows.some((row) => row.name === "context_files");
         const hasNotes = rows.some((row) => row.name === "notes");
+        const hasChatMessages = rows.some((row) => row.name === "chat_messages");
         const migrations = [];
         if (!hasContextFiles) {
           console.log("Adding context_files column to meetings table...");
@@ -151,6 +154,19 @@ class DatabaseService {
                 return;
               }
               console.log("Successfully added notes column");
+              resolveInner();
+            });
+          }));
+        }
+        if (!hasChatMessages) {
+          console.log("Adding chat_messages column to meetings table...");
+          migrations.push(new Promise((resolveInner, rejectInner) => {
+            this.db.run("ALTER TABLE meetings ADD COLUMN chat_messages TEXT DEFAULT '[]'", (alterErr) => {
+              if (alterErr) {
+                rejectInner(alterErr);
+                return;
+              }
+              console.log("Successfully added chat_messages column");
               resolveInner();
             });
           }));
@@ -224,8 +240,8 @@ class DatabaseService {
       const sql = `
         INSERT INTO meetings (
           recording_path, transcript, title, description, tags,
-          action_items, context, context_files, notes, summary, created_at, updated_at, duration
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          action_items, context, context_files, notes, summary, chat_messages, created_at, updated_at, duration
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
       const recordingPathValue = Array.isArray(meeting.recordingPath) ? JSON.stringify(meeting.recordingPath) : meeting.recordingPath;
       const values = [
@@ -239,6 +255,7 @@ class DatabaseService {
         JSON.stringify(meeting.context_files),
         meeting.notes,
         meeting.summary,
+        JSON.stringify(meeting.chatMessages || []),
         meeting.createdAt,
         meeting.updatedAt,
         meeting.duration
@@ -335,6 +352,10 @@ class DatabaseService {
       if (meeting.summary !== void 0) {
         fields.push("summary = ?");
         values.push(meeting.summary);
+      }
+      if (meeting.chatMessages !== void 0) {
+        fields.push("chat_messages = ?");
+        values.push(JSON.stringify(meeting.chatMessages));
       }
       if (meeting.updatedAt !== void 0) {
         fields.push("updated_at = ?");
@@ -445,6 +466,7 @@ class DatabaseService {
       context_files: row.context_files ? JSON.parse(row.context_files) : [],
       notes: row.notes,
       summary: row.summary,
+      chatMessages: row.chat_messages ? JSON.parse(row.chat_messages) : [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       duration: row.duration
@@ -499,8 +521,10 @@ class GeminiService {
   setApiKey(apiKey) {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || null;
   }
-  async makeGeminiRequest(prompt, model = "gemini-2.5-pro-preview-06-05") {
+  async makeGeminiRequest(prompt, model = "gemini-1.5-pro-latest") {
+    console.log("🔑 Gemini API Key check:", { hasKey: !!this.apiKey, keyLength: this.apiKey?.length || 0 });
     if (!this.apiKey) {
+      console.error("❌ Gemini API key not configured");
       return { success: false, error: "Gemini API key not configured" };
     }
     try {
@@ -524,7 +548,25 @@ class GeminiService {
             topK: 40,
             topP: 0.95,
             maxOutputTokens: 2048
-          }
+          },
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_ONLY_HIGH"
+            },
+            {
+              category: "HARM_CATEGORY_HATE_SPEECH",
+              threshold: "BLOCK_ONLY_HIGH"
+            },
+            {
+              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+              threshold: "BLOCK_ONLY_HIGH"
+            },
+            {
+              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+              threshold: "BLOCK_ONLY_HIGH"
+            }
+          ]
         })
       });
       if (!response.ok) {
@@ -532,12 +574,28 @@ class GeminiService {
         return { success: false, error: `Gemini API error: ${response.status} - ${errorData}` };
       }
       const data = await response.json();
-      if (data.candidates && data.candidates.length > 0 && data.candidates[0].content) {
-        const content = data.candidates[0].content.parts[0].text;
-        return { success: true, content };
-      } else {
-        return { success: false, error: "No content generated by Gemini" };
+      if (data.promptFeedback && data.promptFeedback.blockReason) {
+        return { success: false, error: `Content blocked by safety filters: ${data.promptFeedback.blockReason}` };
       }
+      if (data.candidates && Array.isArray(data.candidates) && data.candidates.length > 0) {
+        const candidate = data.candidates[0];
+        if (candidate.finishReason === "SAFETY") {
+          return { success: false, error: "Response blocked by safety filters" };
+        }
+        if (candidate && candidate.content && candidate.content.parts && Array.isArray(candidate.content.parts) && candidate.content.parts.length > 0) {
+          const content = candidate.content.parts[0].text;
+          return { success: true, content };
+        }
+      }
+      console.error("Unexpected Gemini API response structure:", JSON.stringify(data, null, 2));
+      console.error("Response keys:", Object.keys(data));
+      if (data.candidates) {
+        console.error("Candidates length:", data.candidates.length);
+        if (data.candidates.length > 0) {
+          console.error("First candidate:", JSON.stringify(data.candidates[0], null, 2));
+        }
+      }
+      return { success: false, error: "No content generated by Gemini - unexpected response structure" };
     } catch (error) {
       return { success: false, error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}` };
     }
@@ -557,6 +615,12 @@ ${transcriptText}
 
 NOTES:
 ${options.notes}
+
+DEBUG INFO:
+- Global Context Length: ${options.globalContext?.length || 0} characters
+- Meeting Context Length: ${options.meetingContext?.length || 0} characters
+- Transcript Lines: ${options.transcript?.length || 0}
+- Notes Length: ${options.notes?.length || 0} characters
 
 Please provide your response in the following JSON format (ensure it's valid JSON with escaped quotes):
 {
@@ -615,7 +679,7 @@ Guidelines:
   async generateSummaryOnly(options) {
     try {
       const transcriptText = options.transcript.map((line) => `[${line.time}] ${line.text}`).join("\n");
-      const prompt = `Please provide a concise 2-3 sentence summary of this meeting:
+      const prompt = `Please provide a comprehensive, well-structured summary of this meeting using proper HTML formatting:
 
 CONTEXT: ${options.globalContext}
 MEETING CONTEXT: ${options.meetingContext}
@@ -624,7 +688,20 @@ ${transcriptText}
 NOTES:
 ${options.notes}
 
-Please respond with only the summary, no additional formatting or explanations.`;
+Please create a detailed summary that includes:
+- **Key Discussion Points**: Main topics and important discussions
+- **Decisions Made**: Any decisions or conclusions reached
+- **Action Items**: Tasks or next steps identified
+- **Important Details**: Relevant specifics, numbers, dates, or commitments mentioned
+
+Format your response using proper HTML with:
+- <h3> tags for section headings
+- <p> tags for paragraphs
+- <ul> and <li> tags for lists
+- <strong> tags for emphasis
+- <em> tags for important details
+
+Make it comprehensive but well-organized and easy to read. Focus on actionable insights and key takeaways.`;
       const result = await this.makeGeminiRequest(prompt);
       if (!result.success || !result.content) {
         return { success: false, error: result.error || "Failed to generate summary" };
@@ -637,7 +714,7 @@ Please respond with only the summary, no additional formatting or explanations.`
   async generateMessage(options) {
     try {
       const { type, data } = options;
-      const model = options.model || "gemini-2.5-pro-preview-06-05";
+      const model = options.model || "gemini-1.5-pro-latest";
       const contextSections = [];
       if (data.globalContext) {
         contextSections.push(`GLOBAL CONTEXT:
@@ -855,19 +932,93 @@ let isSwiftRecorderAvailable = false;
 let currentRecordingPath = null;
 let currentRecordingFilename = null;
 let isStoppingRecording = false;
-const currentShortcuts = {
-  "toggle-recording": "CmdOrCtrl+Alt+R",
-  "quick-note": "CmdOrCtrl+Alt+N",
-  "show-hide": "CmdOrCtrl+Shift+H",
-  "pause-resume": "CmdOrCtrl+Alt+P"
+let currentShortcuts = {
+  "toggleRecording": "CmdOrCtrl+Alt+R",
+  "quickNote": "CmdOrCtrl+Alt+N",
+  "showHide": "CmdOrCtrl+Shift+H",
+  "pauseResume": "CmdOrCtrl+Alt+P"
 };
 const activeChunkedRecordings = /* @__PURE__ */ new Map();
 const CHUNK_DURATION_MS = 5 * 60 * 1e3;
 const CHUNK_SIZE_LIMIT = 50 * 1024 * 1024;
+async function requestMicrophonePermission() {
+  try {
+    const hasPermission = electron.systemPreferences.getMediaAccessStatus("microphone");
+    console.log("🎤 Current microphone permission status:", hasPermission);
+    if (hasPermission === "granted") {
+      console.log("✅ Microphone permission already granted");
+      return true;
+    }
+    if (hasPermission === "denied") {
+      console.log("❌ Microphone permission denied - please enable in System Preferences");
+      return false;
+    }
+    if (hasPermission === "not-determined") {
+      console.log("🔐 Requesting microphone permission...");
+      const granted = await electron.systemPreferences.askForMediaAccess("microphone");
+      console.log(granted ? "✅ Permission granted!" : "❌ Permission denied");
+      return granted;
+    }
+    return false;
+  } catch (error) {
+    console.error("❌ Error requesting microphone permission:", error);
+    return false;
+  }
+}
+async function requestScreenCapturePermission() {
+  try {
+    const hasPermission = electron.systemPreferences.getMediaAccessStatus("screen");
+    console.log("🖥️ Current screen capture permission status:", hasPermission);
+    if (hasPermission === "granted") {
+      console.log("✅ Screen capture permission already granted");
+      return true;
+    }
+    if (hasPermission === "denied") {
+      console.log("❌ Screen capture permission denied - please enable in System Preferences");
+      return false;
+    }
+    if (hasPermission === "not-determined") {
+      console.log("🔐 Requesting screen capture permission...");
+      electron.dialog.showMessageBox(mainWindow, {
+        type: "info",
+        title: "Screen Recording Permission Required",
+        message: "Friday needs screen recording permission to capture system audio.",
+        detail: "You will be prompted to grant screen recording permission. Please enable it in System Preferences.",
+        buttons: ["Continue"],
+        defaultId: 0
+      });
+      electron.systemPreferences.openSystemPreferences("security", "Privacy_ScreenCapture");
+      return new Promise((resolve) => {
+        const checkPermission = () => {
+          const currentStatus = electron.systemPreferences.getMediaAccessStatus("screen");
+          if (currentStatus === "granted") {
+            console.log("✅ Screen capture permission granted!");
+            resolve(true);
+          } else if (currentStatus === "denied") {
+            console.log("❌ Screen capture permission denied");
+            resolve(false);
+          } else {
+            setTimeout(checkPermission, 1e3);
+          }
+        };
+        checkPermission();
+      });
+    }
+    return false;
+  } catch (error) {
+    console.error("❌ Error requesting screen capture permission:", error);
+    return false;
+  }
+}
 function createWindow() {
   mainWindow = new electron.BrowserWindow({
-    width: 1200,
+    width: 1e3,
     height: 800,
+    minWidth: 1e3,
+    minHeight: 800,
+    maxWidth: 1e3,
+    maxHeight: 800,
+    resizable: false,
     show: false,
     autoHideMenuBar: true,
     icon: getAppIcon(),
@@ -883,6 +1034,11 @@ function createWindow() {
   });
   mainWindow.on("ready-to-show", () => {
     mainWindow?.show();
+  });
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.key === "F11" || input.key === "f" && input.control && input.meta) {
+      mainWindow?.setFullScreen(!mainWindow.isFullScreen());
+    }
   });
   mainWindow.webContents.setWindowOpenHandler((details) => {
     electron.shell.openExternal(details.url);
@@ -930,489 +1086,727 @@ async function checkSwiftRecorderAvailability() {
   return new Promise((resolve) => {
     const recorderPath = path__namespace.join(process.cwd(), "Recorder");
     if (!fs__namespace.existsSync(recorderPath)) {
-      console.log("❌ Swift recorder not found at:", recorderPath);
+      console.log("❌ Swift recorder binary not found at:", recorderPath);
       resolve(false);
       return;
     }
-    const testProcess = child_process.spawn(recorderPath, ["--check-permissions", "--audio-only"], {
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    let output = "";
-    testProcess.stdout?.on("data", (data) => {
-      output += data.toString();
-    });
-    testProcess.on("close", (code) => {
-      try {
-        const result = JSON.parse(output.trim().split("\n").pop() || "{}");
-        const available = code === 0 && (result.code === "PERMISSION_GRANTED" || result.code === "PERMISSION_DENIED");
-        console.log(available ? "✅ Swift recorder is available" : "❌ Swift recorder test failed");
-        resolve(available);
-      } catch (error) {
-        console.log("❌ Swift recorder test failed:", error);
-        resolve(false);
-      }
-    });
-    testProcess.on("error", (error) => {
-      console.log("❌ Swift recorder error:", error);
-      resolve(false);
-    });
+    console.log("✅ Swift recorder binary found at:", recorderPath);
+    resolve(true);
   });
 }
-async function startCombinedRecording(recordingPath, filename) {
-  return new Promise((resolve) => {
-    if (!isSwiftRecorderAvailable) {
-      resolve({ success: false, error: "Swift recorder not available" });
-      return;
+function ensureRecordingDirectory(dirPath) {
+  try {
+    const resolvedPath = dirPath.startsWith("~/") ? path__namespace.join(os__namespace.homedir(), dirPath.slice(2)) : dirPath;
+    console.log("📂 Ensuring recording directory exists:", resolvedPath);
+    if (!fs__namespace.existsSync(resolvedPath)) {
+      fs__namespace.mkdirSync(resolvedPath, { recursive: true });
+      console.log("✅ Created recording directory:", resolvedPath);
     }
-    databaseService.getSettings().then((settings) => {
-      const finalPath = recordingPath || settings.defaultSaveLocation || path__namespace.join(os__namespace.homedir(), "Friday Recordings");
-      const resolvedPath = finalPath.startsWith("~/") ? path__namespace.join(os__namespace.homedir(), finalPath.slice(2)) : finalPath;
-      if (!fs__namespace.existsSync(resolvedPath)) {
-        fs__namespace.mkdirSync(resolvedPath, { recursive: true });
-      }
-      const recorderPath = path__namespace.join(process.cwd(), "src", "main", "recorder", "recorder");
-      const args = ["--record", resolvedPath, "--source", "both", "--audio-only"];
-      currentRecordingPath = resolvedPath;
-      if (filename) {
-        args.push("--filename", filename);
-        currentRecordingFilename = filename;
-      } else {
-        const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        currentRecordingFilename = `combined-recording-${timestamp}.mp3`;
-        args.push("--filename", currentRecordingFilename);
-      }
-      console.log("📁 Recording will be saved to:", path__namespace.join(currentRecordingPath, currentRecordingFilename));
-      console.log("🎯 Current recording path:", currentRecordingPath);
-      console.log("📄 Current recording filename:", currentRecordingFilename);
-      console.log("🎙️ Starting combined recording with Swift recorder...");
-      console.log("Command:", recorderPath, args.join(" "));
-      swiftRecorderProcess = child_process.spawn(recorderPath, args, {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, NSUnbufferedIO: "YES" }
-        // Force unbuffered output
+    const testFile = path__namespace.join(resolvedPath, ".test-write-permissions");
+    try {
+      fs__namespace.writeFileSync(testFile, "test");
+      fs__namespace.unlinkSync(testFile);
+      console.log("✅ Recording directory has write permissions");
+    } catch (permError) {
+      console.error("❌ No write permissions for recording directory:", permError);
+      return { success: false, error: "No write permissions for recording directory" };
+    }
+    return { success: true, path: resolvedPath };
+  } catch (error) {
+    console.error("❌ Failed to ensure recording directory:", error);
+    return { success: false, error: `Failed to create recording directory: ${error}` };
+  }
+}
+const audioDeviceManager = {
+  async getCurrentDevice() {
+    try {
+      console.log("🔊 Getting current audio device...");
+      const result = await new Promise((resolve) => {
+        const { spawn: spawn2 } = require("child_process");
+        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
+        let output = "";
+        swift.stdout.on("data", (data) => {
+          output += data.toString();
+        });
+        swift.on("close", (code) => {
+          if (code === 0) {
+            const lines = output.split("\n");
+            const deviceLine = lines.find((line) => line.includes("Current audio device:"));
+            const bluetoothLine = lines.find((line) => line.includes("Is Bluetooth:"));
+            if (deviceLine && bluetoothLine) {
+              const deviceName = deviceLine.split("'")[1] || "Unknown";
+              const isBluetooth = bluetoothLine.includes("true");
+              resolve({
+                success: true,
+                deviceName,
+                isBluetooth
+              });
+            } else {
+              resolve({
+                success: false,
+                error: "Could not parse device information"
+              });
+            }
+          } else {
+            resolve({
+              success: false,
+              error: "Audio device check failed"
+            });
+          }
+        });
       });
-      let hasStarted = false;
-      let hasCompleted = false;
-      let outputReceived = false;
-      let lastOutputTime = Date.now();
-      let bluetoothMicStarted = false;
-      let systemAudioStarted = false;
-      let isAudioOnlyMode = false;
-      const outputTimeoutId = setTimeout(() => {
-        if (!outputReceived) {
-          console.log("❌ TIMEOUT: No output received from Swift recorder after 10 seconds");
-          console.log("   This indicates the process failed to start or crashed immediately");
-          console.log("   Process exists:", !!swiftRecorderProcess);
-          console.log("   Process killed status:", swiftRecorderProcess?.killed);
-          if (swiftRecorderProcess && !swiftRecorderProcess.killed) {
-            swiftRecorderProcess.kill("SIGKILL");
-            swiftRecorderProcess = null;
-          }
-          if (!hasStarted) {
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  },
+  async switchToBuiltInSpeakers() {
+    try {
+      console.log("🔊 Switching to built-in speakers for recording...");
+      return {
+        success: true,
+        message: "Audio will be temporarily switched during recording and automatically restored after"
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  },
+  async enableBluetoothWorkaround() {
+    try {
+      console.log("🔧 Running Bluetooth audio restoration...");
+      const { spawn: spawn2 } = require("child_process");
+      const result = await new Promise((resolve) => {
+        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
+        let output = "";
+        swift.stdout.on("data", (data) => {
+          output += data.toString();
+        });
+        swift.on("close", (code) => {
+          if (code === 0) {
+            if (output.includes("Successfully switched audio to:")) {
+              resolve({
+                success: true,
+                message: "Bluetooth audio restored successfully"
+              });
+            } else if (output.includes("already using a Bluetooth device")) {
+              resolve({
+                success: true,
+                message: "Audio is already configured correctly"
+              });
+            } else {
+              resolve({
+                success: false,
+                error: "Could not restore Bluetooth audio"
+              });
+            }
+          } else {
             resolve({
               success: false,
-              error: "Swift recorder failed to produce any output",
-              cause: "Process started but produced no output within 10 seconds",
-              solution: "Check if the recorder binary exists and has proper permissions"
+              error: "Audio restoration failed"
             });
           }
+        });
+      });
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  },
+  async prepareForRecording() {
+    try {
+      console.log("🎙️ Preparing audio devices for recording...");
+      const currentDevices = {
+        input: await this.getCurrentInputDevice(),
+        output: await this.getCurrentOutputDevice()
+      };
+      const hasBluetoothDevice = await this.hasConnectedBluetoothDevice();
+      if (hasBluetoothDevice) {
+        console.log("🎧 Bluetooth audio device detected");
+      }
+      await this.validateAudioRouting();
+      return {
+        success: true,
+        previousDevices: currentDevices,
+        message: "Audio devices prepared for recording"
+      };
+    } catch (error) {
+      console.error("❌ Failed to prepare audio devices:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  },
+  async validateAudioRouting() {
+    try {
+      const inputDevice = await this.getCurrentInputDevice();
+      if (!inputDevice) {
+        throw new Error("No audio input device found");
+      }
+      const deviceInfo = await this.getDeviceInfo();
+      if (deviceInfo.sampleRate !== 44100) {
+        console.warn(`⚠️ Input device sample rate (${deviceInfo.sampleRate}Hz) differs from recording rate (44100Hz)`);
+      }
+      return true;
+    } catch (error) {
+      console.error("❌ Audio routing validation failed:", error);
+      throw error;
+    }
+  },
+  async hasConnectedBluetoothDevice() {
+    try {
+      const devices = await this.getAudioDevices();
+      return devices.some(
+        (device) => device.name.toLowerCase().includes("bluetooth") || device.name.toLowerCase().includes("airpods") || device.name.toLowerCase().includes("headphones") || device.name.toLowerCase().includes("headset")
+      );
+    } catch (error) {
+      console.error("❌ Failed to check for Bluetooth devices:", error);
+      return false;
+    }
+  },
+  async getCurrentInputDevice() {
+    const device = await this.getCurrentDevice();
+    return device.success ? device.deviceName : null;
+  },
+  async getCurrentOutputDevice() {
+    return null;
+  },
+  async getDeviceInfo() {
+    return {
+      sampleRate: 44100,
+      channels: 2,
+      format: "PCM"
+    };
+  },
+  async getAudioDevices() {
+    try {
+      const result = await this.getCurrentDevice();
+      return result.success && result.deviceName ? [{ name: result.deviceName }] : [];
+    } catch (error) {
+      console.error("Failed to get audio devices:", error);
+      return [];
+    }
+  },
+  async switchToBuiltInDevices() {
+    return this.switchToBuiltInSpeakers();
+  }
+};
+async function startCombinedRecording(recordingPath, filename) {
+  try {
+    const devicePrep = await audioDeviceManager.prepareForRecording();
+    if (!devicePrep.success) {
+      return {
+        success: false,
+        error: "Failed to prepare audio devices",
+        cause: devicePrep.error,
+        solution: "Try disconnecting and reconnecting your audio devices, or restart the application"
+      };
+    }
+    const hasScreenPermission = await requestScreenCapturePermission();
+    if (!hasScreenPermission) {
+      return {
+        success: false,
+        error: "Screen recording permission required for system audio capture",
+        solution: "Please grant screen recording permission in System Preferences > Security & Privacy > Privacy > Screen Recording"
+      };
+    }
+    return new Promise((resolve) => {
+      databaseService.getSettings().then((settings) => {
+        const finalPath = recordingPath || settings.defaultSaveLocation || path__namespace.join(os__namespace.homedir(), "Friday Recordings");
+        const dirResult = ensureRecordingDirectory(finalPath);
+        if (!dirResult.success) {
+          resolve({
+            success: false,
+            error: dirResult.error || "Failed to create recording directory"
+          });
+          return;
         }
-      }, 1e4);
-      const hangDetectionInterval = setInterval(() => {
-        const now = Date.now();
-        const timeSinceLastOutput = now - lastOutputTime;
-        if (outputReceived && timeSinceLastOutput > 25e3 && !hasStarted) {
-          console.log("❌ HANG DETECTION: Output stopped flowing for 25+ seconds during initialization");
-          console.log(`   Last output was ${timeSinceLastOutput}ms ago`);
-          if (swiftRecorderProcess && !swiftRecorderProcess.killed) {
-            console.log("   Terminating stalled process...");
-            swiftRecorderProcess.kill("SIGKILL");
-          }
-          clearInterval(hangDetectionInterval);
-          if (!hasStarted) {
+        const resolvedPath = dirResult.path;
+        const recorderPath = path__namespace.join(process.cwd(), "Recorder");
+        currentRecordingPath = resolvedPath;
+        let baseFilename;
+        if (filename) {
+          baseFilename = filename.replace(/\.(wav|mp3|flac)$/, "");
+          currentRecordingFilename = `${baseFilename}.flac`;
+        } else {
+          const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+          baseFilename = `combined-${timestamp}`;
+          currentRecordingFilename = `${baseFilename}.flac`;
+        }
+        const outputPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
+        console.log("📁 Recording will be saved to:", outputPath);
+        console.log("🎯 Current recording path:", currentRecordingPath);
+        console.log("📄 Current recording filename:", currentRecordingFilename);
+        console.log("🎙️ Starting ScreenCaptureKit recording...");
+        const args = [
+          "--record",
+          resolvedPath,
+          "--filename",
+          baseFilename,
+          "--live-transcription"
+          // Enable live transcription chunks
+        ];
+        console.log("Command:", recorderPath, args.join(" "));
+        swiftRecorderProcess = child_process.spawn(recorderPath, args, {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env }
+        });
+        let hasStarted = false;
+        let outputReceived = false;
+        let lastOutputTime = Date.now();
+        const outputTimeoutId = setTimeout(() => {
+          if (!outputReceived) {
+            console.log("❌ No output received from Swift recorder within 10 seconds");
+            if (swiftRecorderProcess) {
+              swiftRecorderProcess.kill("SIGTERM");
+              swiftRecorderProcess = null;
+            }
             resolve({
               success: false,
-              error: "Swift recorder initialization stalled - output stopped during startup",
-              cause: "Process started but became unresponsive during initialization phase",
-              solution: "This may indicate Core Audio device conflicts or system audio routing issues"
+              error: "Swift recorder failed to start - no output received",
+              cause: "The recorder process may have crashed or failed to initialize",
+              solution: "Check that screen recording permissions are granted and try restarting the app"
             });
           }
-        }
-      }, 5e3);
-      swiftRecorderProcess.stdout?.on("data", (data) => {
-        outputReceived = true;
-        lastOutputTime = Date.now();
-        clearTimeout(outputTimeoutId);
-        console.log("📥 Raw Swift recorder stdout:", data.toString());
-        const lines = data.toString().split("\n").filter((line) => line.trim());
-        for (const line of lines) {
+        }, 1e4);
+        const hangDetectionInterval = setInterval(() => {
+          const timeSinceLastOutput = Date.now() - lastOutputTime;
+          if (timeSinceLastOutput > 15e3 && !hasStarted) {
+            console.log("❌ Swift recorder appears to be hanging");
+            clearInterval(hangDetectionInterval);
+            clearTimeout(outputTimeoutId);
+            if (swiftRecorderProcess) {
+              console.log("🛑 Terminating hanging Swift recorder process");
+              swiftRecorderProcess.kill("SIGKILL");
+              swiftRecorderProcess = null;
+            }
+            if (!hasStarted) {
+              resolve({
+                success: false,
+                error: "Recording process hung during initialization",
+                cause: "The Swift recorder process stopped responding",
+                solution: "This may indicate permission issues or system conflicts. Try restarting the app."
+              });
+            }
+          }
+        }, 5e3);
+        swiftRecorderProcess.stdout?.on("data", (data) => {
+          outputReceived = true;
+          lastOutputTime = Date.now();
+          const output = data.toString().trim();
+          console.log("📤 Swift recorder output:", output);
           try {
-            const result = JSON.parse(line);
-            console.log("📝 Swift recorder output:", result);
-            if (result.code === "RECORDING_STARTED" && !hasStarted) {
+            const response = JSON.parse(output);
+            if (response.code === "RECORDING_STARTED") {
               hasStarted = true;
+              clearTimeout(outputTimeoutId);
               clearInterval(hangDetectionInterval);
-              resolve({ success: true, path: result.path });
-              if (mainWindow) {
-                mainWindow.webContents.send("combined-recording-started", result);
+              console.log("✅ ScreenCaptureKit recording started successfully");
+              console.log("📝 Output file:", response.path);
+              currentRecordingPath = path__namespace.dirname(response.path);
+              currentRecordingFilename = path__namespace.basename(response.path);
+              resolve({
+                success: true,
+                path: response.path,
+                warning: "Recording in FLAC format - will be converted to MP3 when stopped"
+              });
+            } else if (response.code === "TRANSCRIPTION_CHUNK") {
+              console.log("🎵 Received system audio transcription chunk:", {
+                path: response.path,
+                stream_type: response.stream_type,
+                socket_available: !!(transcriptionSocket && !transcriptionSocket.destroyed)
+              });
+              if (transcriptionSocket && !transcriptionSocket.destroyed) {
+                const request = {
+                  type: "dual_stream_chunk",
+                  audio_path: response.path,
+                  stream_type: response.stream_type || "system"
+                };
+                console.log("📤 Sending system audio chunk request:", request);
+                try {
+                  transcriptionSocket.write(JSON.stringify(request) + "\n");
+                  console.log("✅ Successfully sent system audio chunk for transcription");
+                } catch (error) {
+                  console.error("❌ Failed to send system audio chunk:", error);
+                }
+              } else {
+                console.warn("⚠️ Transcription socket not available for system audio chunk:", {
+                  socket_exists: !!transcriptionSocket,
+                  socket_destroyed: transcriptionSocket?.destroyed
+                });
               }
-            } else if ((result.code === "COMBINED_RECORDING_FAILED_BLUETOOTH" || result.code === "COMBINED_RECORDING_FAILED_PERMISSION" || result.code === "COMBINED_RECORDING_FAILED_SYSTEM") && !hasStarted) {
-              hasStarted = true;
+            } else if (response.code === "DEBUG") {
+              console.log("🔍 Swift recorder debug:", response.message);
+            } else if (response.code === "PERMISSION_DENIED") {
+              clearTimeout(outputTimeoutId);
               clearInterval(hangDetectionInterval);
               resolve({
                 success: false,
-                error: result.error,
-                recommendation: result.recommendation
+                error: "Screen recording permission denied",
+                solution: "Please grant screen recording permission in System Preferences > Security & Privacy > Privacy > Screen Recording"
               });
-              if (mainWindow) {
-                mainWindow.webContents.send("combined-recording-failed", result);
-              }
-              console.log("❌ Combined recording failed:", result.error);
-            } else if (result.code === "RECORDING_STOPPED") {
-              hasCompleted = true;
-              if (mainWindow) {
-                mainWindow.webContents.send("combined-recording-stopped", result);
-              }
-            } else if (result.code === "RECORDING_ERROR" && !hasStarted) {
+            } else if (response.code === "NO_DISPLAY_FOUND") {
+              clearTimeout(outputTimeoutId);
               clearInterval(hangDetectionInterval);
-              resolve({ success: false, error: result.error });
-            } else if (result.code === "RECORDING_FAILED") {
-              console.error("❌ Recording failed after start:", result.error);
-              if (mainWindow) {
-                mainWindow.webContents.send("combined-recording-failed", result);
-              }
-              if (hasStarted) {
-                swiftRecorderProcess = null;
-              } else {
-                hasStarted = true;
-                clearInterval(hangDetectionInterval);
-                resolve({ success: false, error: result.error });
-              }
+              resolve({
+                success: false,
+                error: "No display found for recording",
+                solution: "Ensure your display is connected and try again"
+              });
+            } else if (response.code === "CAPTURE_FAILED") {
+              clearTimeout(outputTimeoutId);
+              clearInterval(hangDetectionInterval);
+              resolve({
+                success: false,
+                error: "Failed to start screen capture",
+                solution: "Check screen recording permissions and try again"
+              });
             }
           } catch {
-            const logLine = line.toLowerCase();
-            if (logLine.includes("audio-only mode enabled") || logLine.includes("skipping system audio in audio-only mode")) {
-              isAudioOnlyMode = true;
-              console.log("🎵 Detected: Audio-only mode enabled (system audio will be skipped)");
-            }
-            if (logLine.includes("bluetooth microphone recording started") || logLine.includes("microphone recording started")) {
-              bluetoothMicStarted = true;
-              console.log("🎧 Detected: Bluetooth microphone started");
-            }
-            if (logLine.includes("system audio recording started")) {
-              systemAudioStarted = true;
-              console.log("🔊 Detected: System audio started");
-            }
-            const shouldMarkAsStarted = isAudioOnlyMode ? bluetoothMicStarted : bluetoothMicStarted && systemAudioStarted;
-            if (shouldMarkAsStarted && !hasStarted) {
-              const message = isAudioOnlyMode ? "Bluetooth microphone started successfully (audio-only mode)" : "Both Bluetooth microphone and system audio started successfully";
-              console.log(`✅ Recording components started - marking as successful (${isAudioOnlyMode ? "audio-only" : "combined"} mode)`);
-              hasStarted = true;
-              clearInterval(hangDetectionInterval);
-              resolve({ success: true });
-              if (mainWindow) {
-                mainWindow.webContents.send("combined-recording-started", {
-                  code: "RECORDING_STARTED",
-                  message
-                });
-              }
-            }
-            console.log("Swift recorder log:", line);
+            console.log("📝 Non-JSON output from Swift recorder:", output);
           }
-        }
-      });
-      swiftRecorderProcess.stderr?.on("data", (data) => {
-        outputReceived = true;
-        lastOutputTime = Date.now();
-        clearTimeout(outputTimeoutId);
-        console.log("📥 Swift recorder stderr:", data.toString());
-      });
-      swiftRecorderProcess.on("spawn", () => {
-        console.log("🚀 Swift recorder process spawned successfully (PID: " + swiftRecorderProcess?.pid + ")");
-      });
-      swiftRecorderProcess.on("close", (code, signal) => {
-        console.log(`Swift recorder process exited with code ${code}, signal: ${signal}`);
-        clearTimeout(outputTimeoutId);
-        clearInterval(hangDetectionInterval);
-        swiftRecorderProcess = null;
-        if (!hasStarted && !hasCompleted) {
-          resolve({
-            success: false,
-            error: `Recorder exited unexpectedly with code ${code}`,
-            cause: signal ? `Process terminated by signal: ${signal}` : `Exit code: ${code}`,
-            solution: "Check console logs for detailed error information"
-          });
-        } else if (hasCompleted && code === 0) {
-          console.log("✅ Recording completed successfully");
-        } else if (code !== 0 && hasStarted) {
-          console.log(`❌ Recording failed with exit code ${code}`);
-        }
-      });
-      swiftRecorderProcess.on("error", (error) => {
-        console.error("Swift recorder error:", error);
-        clearTimeout(outputTimeoutId);
-        clearInterval(hangDetectionInterval);
-        if (!hasStarted) {
-          resolve({ success: false, error: error.message });
-        }
-      });
-      setTimeout(() => {
-        if (!hasStarted) {
+        });
+        swiftRecorderProcess.stderr?.on("data", (data) => {
+          outputReceived = true;
+          lastOutputTime = Date.now();
+          const error = data.toString().trim();
+          console.error("❌ Swift recorder error:", error);
+        });
+        swiftRecorderProcess.on("close", (code) => {
+          clearTimeout(outputTimeoutId);
           clearInterval(hangDetectionInterval);
-          if (swiftRecorderProcess) {
-            console.log("❌ TIMEOUT: Force terminating Swift recorder after 30 seconds");
-            swiftRecorderProcess.kill("SIGKILL");
-            swiftRecorderProcess = null;
+          console.log(`🔚 Swift recorder process exited with code: ${code}`);
+          if (!hasStarted) {
+            resolve({
+              success: false,
+              error: `Swift recorder exited with code ${code}`,
+              solution: "Check the console for error details and ensure all permissions are granted"
+            });
           }
-          resolve({
-            success: false,
-            error: "Recording start timeout after 30 seconds",
-            cause: "Swift recorder failed to initialize within timeout period",
-            solution: "This may indicate system audio routing conflicts or permission issues. Try restarting the app or switching audio devices."
-          });
-        }
-      }, 3e4);
-    }).catch((error) => {
-      console.error("Failed to get settings:", error);
-      resolve({ success: false, error: "Failed to get settings" });
+        });
+        swiftRecorderProcess.on("error", (error) => {
+          console.error("Swift recorder error:", error);
+          clearTimeout(outputTimeoutId);
+          clearInterval(hangDetectionInterval);
+          if (!hasStarted) {
+            resolve({ success: false, error: error.message });
+          }
+        });
+        setTimeout(() => {
+          if (!hasStarted) {
+            clearInterval(hangDetectionInterval);
+            if (swiftRecorderProcess) {
+              console.log("❌ TIMEOUT: Force terminating Swift recorder after 30 seconds");
+              swiftRecorderProcess.kill("SIGKILL");
+              swiftRecorderProcess = null;
+            }
+            resolve({
+              success: false,
+              error: "Recording start timeout after 30 seconds",
+              cause: "Swift recorder failed to initialize within timeout period",
+              solution: "This may indicate system audio routing conflicts or permission issues. Try restarting the app or switching audio devices."
+            });
+          }
+        }, 3e4);
+      }).catch((error) => {
+        console.error("Failed to get settings:", error);
+        resolve({ success: false, error: "Failed to get settings" });
+      });
     });
-  });
+  } catch (error) {
+    console.error("❌ Failed to start recording:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      solution: "Please check your audio device connections and permissions"
+    };
+  }
 }
 async function stopCombinedRecording() {
   return new Promise((resolve) => {
     if (!swiftRecorderProcess) {
-      console.log("⚠️ No tracked Swift recorder process found");
-      resolve({ success: false, error: "No active recording" });
+      resolve({ success: false, error: "No recording in progress" });
       return;
     }
     if (isStoppingRecording) {
-      console.log("⚠️ Stop operation already in progress");
-      resolve({ success: false, error: "Stop operation already in progress" });
+      resolve({ success: false, error: "Recording is already being stopped" });
       return;
     }
     isStoppingRecording = true;
-    console.log("🛑 Stopping combined recording...");
-    let hasFinished = false;
-    let recordingPath;
-    const handleOutput = (data) => {
-      const lines = data.toString().split("\n").filter((line) => line.trim());
-      for (const line of lines) {
-        try {
-          const result = JSON.parse(line);
-          console.log("📝 Stop process received:", result);
-          if (result.code === "RECORDING_STOPPED" && !hasFinished) {
-            hasFinished = true;
-            recordingPath = result.path;
-            console.log("✅ Recording stopped successfully with path:", recordingPath);
-            resolve({ success: true, path: result.path });
-          }
-        } catch {
-          console.log("Swift recorder stop log:", line);
-          if (line.includes("Processing final recording") || line.includes("RECORDING_STOPPED")) {
-            console.log("🔄 Detected recording completion in progress...");
-          }
-        }
-      }
-    };
-    const handleExit = (code, signal) => {
-      console.log(`Swift recorder process exited during stop with code ${code}, signal: ${signal}`);
-      if (!hasFinished) {
-        if (!recordingPath && currentRecordingFilename && currentRecordingPath) {
-          const expectedPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
-          console.log("🔍 Looking for recording file at:", expectedPath);
-          console.log("📂 Current recording path:", currentRecordingPath);
-          console.log("📄 Current recording filename:", currentRecordingFilename);
-          if (fs__namespace.existsSync(expectedPath)) {
-            recordingPath = expectedPath;
-            console.log("📁 Found recording file at expected location:", recordingPath);
-          } else {
-            console.log("❌ Recording file not found at expected location");
-            try {
-              const files = fs__namespace.readdirSync(currentRecordingPath);
-              console.log("📋 Files in recording directory:", files);
-              const mp3Files = files.filter((f) => f.endsWith(".mp3") && !f.endsWith(".mp3.mp3"));
-              if (mp3Files.length > 0 && currentRecordingPath) {
-                const mostRecentMp3 = mp3Files.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
-                recordingPath = mostRecentMp3.path;
-                console.log("📁 Found most recent MP3 file:", recordingPath);
-              }
-            } catch (error) {
-              console.log("❌ Could not read recording directory:", error);
-            }
-          }
-        } else {
-          console.log("⚠️ Missing recording info for fallback:", {
-            hasRecordingPath: !!recordingPath,
-            hasCurrentFilename: !!currentRecordingFilename,
-            hasCurrentPath: !!currentRecordingPath
-          });
-        }
-        if (code === 0 || signal === "SIGINT") {
-          console.log("✅ Recording process exited normally - assuming successful completion");
-          cleanup();
-          resolve({ success: true, path: recordingPath });
-        } else {
-          console.log("❌ Recording process exited with error during stop");
-          cleanup();
-          resolve({ success: false, error: `Process exited with code ${code}` });
-        }
-      }
-    };
-    swiftRecorderProcess.stdout?.on("data", handleOutput);
-    swiftRecorderProcess.once("exit", handleExit);
-    console.log("📤 Sending SIGINT to Swift recorder for graceful shutdown...");
-    swiftRecorderProcess.kill("SIGINT");
-    const cleanup = () => {
-      currentRecordingPath = null;
-      currentRecordingFilename = null;
-      swiftRecorderProcess = null;
-      isStoppingRecording = false;
-    };
-    setTimeout(() => {
-      if (!hasFinished) {
-        console.log("⏰ Stop timeout reached - checking for recording file...");
-        console.log("🔍 Debug info:", {
-          hasRecordingPath: !!recordingPath,
-          hasCurrentFilename: !!currentRecordingFilename,
-          hasCurrentPath: !!currentRecordingPath,
-          currentFilename: currentRecordingFilename,
-          currentPath: currentRecordingPath
-        });
-        if (!recordingPath && currentRecordingFilename && currentRecordingPath) {
-          const expectedPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
-          console.log("⏰ Timeout: Looking for recording file at:", expectedPath);
-          if (fs__namespace.existsSync(expectedPath)) {
-            recordingPath = expectedPath;
-            console.log("📁 Timeout: Found recording file at expected location:", recordingPath);
-            hasFinished = true;
-            cleanup();
-            resolve({ success: true, path: recordingPath });
-            return;
-          } else {
-            console.log("❌ Timeout: Recording file not found at expected location");
-            try {
-              const files = fs__namespace.readdirSync(currentRecordingPath);
-              console.log("📋 Timeout: Files in recording directory:", files);
-              const audioFiles = files.filter(
-                (f) => f.endsWith(".mp3") && !f.endsWith(".mp3.mp3") || f.endsWith(".wav")
-              );
-              console.log("🎵 Timeout: Found audio files:", audioFiles);
-              if (audioFiles.length > 0 && currentRecordingPath) {
-                const filenameStem = currentRecordingFilename.replace(".mp3", "");
-                console.log("🔍 Timeout: Looking for files containing:", filenameStem);
-                const matchingFiles = audioFiles.filter((f) => f.includes(filenameStem));
-                console.log("🎯 Timeout: Matching files:", matchingFiles);
-                if (matchingFiles.length > 0) {
-                  const hasMicFile = matchingFiles.some((f) => f.includes("_mic.wav"));
-                  const hasSystemFile = matchingFiles.some((f) => f.includes("_system.wav"));
-                  if (hasMicFile && hasSystemFile) {
-                    console.log("🔧 Timeout: Found both component files in matching results, attempting manual combination...");
-                    const micFile = matchingFiles.find((f) => f.includes("_mic.wav"));
-                    const systemFile = matchingFiles.find((f) => f.includes("_system.wav"));
-                    console.log("🎤 Mic file:", micFile);
-                    console.log("🔊 System file:", systemFile);
-                    const micPath = path__namespace.join(currentRecordingPath, micFile);
-                    const systemPath = path__namespace.join(currentRecordingPath, systemFile);
-                    const outputPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
-                    try {
-                      const ffmpegProcess = child_process.spawn("ffmpeg", [
-                        "-i",
-                        systemPath,
-                        "-i",
-                        micPath,
-                        "-filter_complex",
-                        "[0:a][1:a]amix=inputs=2:weights=1.0 0.8",
-                        "-c:a",
-                        "libmp3lame",
-                        "-b:a",
-                        "192k",
-                        "-y",
-                        // Overwrite output file
-                        outputPath
-                      ], { stdio: "pipe" });
-                      let ffmpegCompleted = false;
-                      ffmpegProcess.on("close", (code) => {
-                        if (!ffmpegCompleted) {
-                          ffmpegCompleted = true;
-                          if (code === 0 && fs__namespace.existsSync(outputPath)) {
-                            console.log("✅ Timeout: Manual FFmpeg combination successful");
-                            recordingPath = outputPath;
-                            hasFinished = true;
-                            cleanup();
-                            resolve({ success: true, path: recordingPath });
-                          } else {
-                            console.log("❌ Timeout: Manual FFmpeg combination failed with code:", code);
-                            const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
-                            recordingPath = mostRecentAudio.path;
-                            console.log("📁 Timeout: Using most recent audio file as fallback:", recordingPath);
-                            hasFinished = true;
-                            cleanup();
-                            resolve({ success: true, path: recordingPath });
-                          }
-                        }
-                      });
-                      ffmpegProcess.on("error", (error) => {
-                        if (!ffmpegCompleted) {
-                          ffmpegCompleted = true;
-                          console.log("❌ Timeout: FFmpeg process error:", error.message);
-                          const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
-                          recordingPath = mostRecentAudio.path;
-                          console.log("📁 Timeout: Using most recent audio file after error:", recordingPath);
-                          hasFinished = true;
-                          cleanup();
-                          resolve({ success: true, path: recordingPath });
-                        }
-                      });
-                      setTimeout(() => {
-                        if (!ffmpegCompleted) {
-                          ffmpegCompleted = true;
-                          console.log("⏰ Timeout: Manual FFmpeg taking too long, killing process");
-                          ffmpegProcess.kill("SIGKILL");
-                          const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
-                          recordingPath = mostRecentAudio.path;
-                          console.log("📁 Timeout: Using most recent audio file after manual timeout:", recordingPath);
-                          hasFinished = true;
-                          cleanup();
-                          resolve({ success: true, path: recordingPath });
-                        }
-                      }, 1e4);
-                      return;
-                    } catch (error) {
-                      console.log("❌ Timeout: Failed to start manual FFmpeg:", error);
-                    }
-                  } else {
-                    const selectedFile = matchingFiles.find((f) => f.endsWith(".mp3")) || matchingFiles[0];
-                    recordingPath = path__namespace.join(currentRecordingPath, selectedFile);
-                    console.log("📁 Timeout: Using matching file:", recordingPath);
-                    hasFinished = true;
-                    cleanup();
-                    resolve({ success: true, path: recordingPath });
-                    return;
-                  }
-                } else {
-                  const mostRecentAudio = audioFiles.map((f) => ({ name: f, path: path__namespace.join(currentRecordingPath, f) })).sort((a, b) => fs__namespace.statSync(b.path).mtime.getTime() - fs__namespace.statSync(a.path).mtime.getTime())[0];
-                  recordingPath = mostRecentAudio.path;
-                  console.log("📁 Timeout: Using most recent audio file:", recordingPath);
-                  hasFinished = true;
-                  cleanup();
-                  resolve({ success: true, path: recordingPath });
-                  return;
-                }
-              }
-            } catch (error) {
-              console.log("❌ Timeout: Could not read recording directory:", error);
-            }
-          }
-        }
+    console.log("🛑 Stopping ScreenCaptureKit recording...");
+    let hasResponded = false;
+    const timeout = setTimeout(() => {
+      if (!hasResponded) {
+        console.log("❌ Timeout waiting for recording to stop, force killing process");
         if (swiftRecorderProcess) {
-          console.log("🔪 Force terminating Swift recorder...");
           swiftRecorderProcess.kill("SIGKILL");
+          swiftRecorderProcess = null;
         }
-        cleanup();
-        resolve({ success: false, error: "Stop timeout - recording may have completed but response was not received" });
+        isStoppingRecording = false;
+        resolve({
+          success: false,
+          error: "Timeout stopping recording",
+          warning: "Recording may have been saved but conversion failed"
+        });
       }
     }, 15e3);
+    const handleStopOutput = (data) => {
+      const output = data.toString().trim();
+      console.log("📤 Stop output:", output);
+      try {
+        const response = JSON.parse(output);
+        if (response.code === "RECORDING_STOPPED") {
+          hasResponded = true;
+          clearTimeout(timeout);
+          console.log("✅ ScreenCaptureKit recording stopped");
+          const flacPath = response.path || (currentRecordingPath && currentRecordingFilename ? path__namespace.join(currentRecordingPath, currentRecordingFilename) : null);
+          if (flacPath && fs__namespace.existsSync(flacPath)) {
+            console.log("🔄 Converting FLAC to MP3...");
+            convertFlacToMp3(flacPath).then(async (mp3Path) => {
+              console.log("✅ Conversion completed:", mp3Path);
+              try {
+                fs__namespace.unlinkSync(flacPath);
+                console.log("🗑️ Cleaned up FLAC file");
+              } catch (cleanupError) {
+                console.warn("⚠️ Failed to clean up FLAC file:", cleanupError);
+              }
+              console.log("📝 Starting transcription of recording...");
+              const transcriptionResult = await transcribeRecording(mp3Path);
+              swiftRecorderProcess = null;
+              isStoppingRecording = false;
+              if (transcriptionResult.success) {
+                resolve({
+                  success: true,
+                  path: mp3Path,
+                  warning: "Recording converted from FLAC to MP3",
+                  transcript: transcriptionResult.transcript
+                });
+              } else {
+                resolve({
+                  success: true,
+                  path: mp3Path,
+                  warning: `Recording converted from FLAC to MP3. Transcription failed: ${transcriptionResult.error}`
+                });
+              }
+            }).catch((conversionError) => {
+              console.error("❌ FLAC to MP3 conversion failed:", conversionError);
+              swiftRecorderProcess = null;
+              isStoppingRecording = false;
+              resolve({
+                success: true,
+                path: flacPath,
+                warning: "Recording saved as FLAC (MP3 conversion failed)"
+              });
+            });
+          } else {
+            console.warn("⚠️ Recording file not found:", flacPath);
+            swiftRecorderProcess = null;
+            isStoppingRecording = false;
+            resolve({
+              success: false,
+              error: "Recording file not found after stopping"
+            });
+          }
+        }
+      } catch {
+        console.log("📝 Non-JSON stop output:", output);
+      }
+    };
+    swiftRecorderProcess.stdout?.on("data", handleStopOutput);
+    swiftRecorderProcess.stderr?.on("data", handleStopOutput);
+    swiftRecorderProcess.kill("SIGINT");
+    swiftRecorderProcess.on("close", (code) => {
+      console.log(`🔚 Swift recorder stopped with code: ${code}`);
+      if (!hasResponded) {
+        hasResponded = true;
+        clearTimeout(timeout);
+        const possibleFlacPath = currentRecordingPath && currentRecordingFilename ? path__namespace.join(currentRecordingPath, currentRecordingFilename) : null;
+        if (possibleFlacPath && fs__namespace.existsSync(possibleFlacPath)) {
+          console.log("🔄 Converting FLAC to MP3 (fallback)...");
+          convertFlacToMp3(possibleFlacPath).then(async (mp3Path) => {
+            console.log("✅ Fallback conversion completed:", mp3Path);
+            try {
+              fs__namespace.unlinkSync(possibleFlacPath);
+              console.log("🗑️ Cleaned up FLAC file");
+            } catch (cleanupError) {
+              console.warn("⚠️ Failed to clean up FLAC file:", cleanupError);
+            }
+            console.log("📝 Starting transcription of recording (fallback)...");
+            const transcriptionResult = await transcribeRecording(mp3Path);
+            swiftRecorderProcess = null;
+            isStoppingRecording = false;
+            if (transcriptionResult.success) {
+              resolve({
+                success: true,
+                path: mp3Path,
+                warning: "Recording converted from FLAC to MP3 (fallback)",
+                transcript: transcriptionResult.transcript
+              });
+            } else {
+              resolve({
+                success: true,
+                path: mp3Path,
+                warning: `Recording converted from FLAC to MP3 (fallback). Transcription failed: ${transcriptionResult.error}`
+              });
+            }
+          }).catch((conversionError) => {
+            console.error("❌ Fallback FLAC to MP3 conversion failed:", conversionError);
+            swiftRecorderProcess = null;
+            isStoppingRecording = false;
+            resolve({
+              success: true,
+              path: possibleFlacPath,
+              warning: "Recording saved as FLAC (MP3 conversion failed)"
+            });
+          });
+        } else {
+          swiftRecorderProcess = null;
+          isStoppingRecording = false;
+          resolve({
+            success: false,
+            error: "Recording stopped but file not found"
+          });
+        }
+      }
+    });
   });
+}
+async function convertFlacToMp3(flacPath) {
+  return new Promise((resolve, reject) => {
+    const mp3Path = flacPath.replace(".flac", ".mp3");
+    console.log(`🔄 Converting: ${flacPath} -> ${mp3Path}`);
+    const ffmpeg2 = child_process__namespace.spawn("ffmpeg", [
+      "-i",
+      flacPath,
+      "-codec:a",
+      "libmp3lame",
+      "-b:a",
+      "192k",
+      "-y",
+      // Overwrite output file
+      mp3Path
+    ], { stdio: "pipe" });
+    let errorOutput = "";
+    ffmpeg2.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+    });
+    ffmpeg2.on("close", (code) => {
+      if (code === 0 && fs__namespace.existsSync(mp3Path)) {
+        const stats = fs__namespace.statSync(mp3Path);
+        if (stats.size > 1e3) {
+          console.log(`✅ FLAC to MP3 conversion successful: ${stats.size} bytes`);
+          resolve(mp3Path);
+        } else {
+          console.error("❌ MP3 file too small, conversion may have failed");
+          reject(new Error("MP3 file too small"));
+        }
+      } else {
+        console.error(`❌ FFmpeg conversion failed with code: ${code}`);
+        console.error("FFmpeg error output:", errorOutput);
+        reject(new Error(`FFmpeg conversion failed: ${code}`));
+      }
+    });
+    ffmpeg2.on("error", (error) => {
+      console.error("❌ FFmpeg process error:", error);
+      reject(error);
+    });
+  });
+}
+async function transcribeRecording(audioPath) {
+  try {
+    console.log("📝 Sending recording to transcription service...");
+    if (!isTranscriptionReady) {
+      console.log("⚠️ Transcription service not ready, skipping transcription");
+      return {
+        success: false,
+        error: "Transcription service not ready"
+      };
+    }
+    if (!fs__namespace.existsSync(audioPath)) {
+      console.error("❌ Audio file not found:", audioPath);
+      return {
+        success: false,
+        error: "Audio file not found"
+      };
+    }
+    const audioBuffer = fs__namespace.readFileSync(audioPath);
+    console.log(`📁 Read audio file: ${audioBuffer.length} bytes`);
+    return new Promise((resolve) => {
+      if (!transcriptionSocket) {
+        resolve({
+          success: false,
+          error: "Transcription socket not connected"
+        });
+        return;
+      }
+      const handleTranscriptionData = (data) => {
+        try {
+          const lines = data.toString().split("\n").filter((line) => line.trim());
+          for (const line of lines) {
+            const result = JSON.parse(line);
+            if (result.type === "transcript") {
+              console.log("✅ Recording transcription completed");
+              console.log("📝 Transcript:", result.text);
+              transcriptionSocket?.off("data", handleTranscriptionData);
+              clearTimeout(timeout);
+              resolve({
+                success: true,
+                transcript: result.text
+              });
+              return;
+            } else if (result.type === "error") {
+              console.error("❌ Transcription error:", result.message);
+              transcriptionSocket?.off("data", handleTranscriptionData);
+              clearTimeout(timeout);
+              resolve({
+                success: false,
+                error: result.message
+              });
+              return;
+            }
+          }
+        } catch (error) {
+          console.error("❌ Error parsing transcription response:", error);
+        }
+      };
+      const timeout = setTimeout(() => {
+        console.log("⏰ Transcription timeout");
+        transcriptionSocket?.off("data", handleTranscriptionData);
+        resolve({
+          success: false,
+          error: "Transcription timeout"
+        });
+      }, 6e4);
+      transcriptionSocket.on("data", handleTranscriptionData);
+      try {
+        transcriptionSocket.write(audioPath + "\n");
+        console.log(`📤 Sent recording path for transcription: ${audioPath}`);
+      } catch (error) {
+        clearTimeout(timeout);
+        transcriptionSocket?.off("data", handleTranscriptionData);
+        console.error("❌ Error sending audio path for transcription:", error);
+        resolve({
+          success: false,
+          error: "Failed to send audio path for transcription"
+        });
+      }
+    });
+  } catch (error) {
+    console.error("❌ Error in transcribeRecording:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
 }
 function startTranscriptionService() {
   return new Promise((resolve, reject) => {
@@ -1549,9 +1943,9 @@ function stopTranscriptionService() {
   isTranscriptionReady = false;
   isTranscriptionStarting = false;
 }
-function saveAudioChunk(audioBuffer) {
+function saveAudioChunk(audioBuffer, streamType = "microphone") {
   const tempDir = os__namespace.tmpdir();
-  const fileName = `audio_chunk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.webm`;
+  const fileName = `audio_chunk_${streamType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.webm`;
   const filePath = path__namespace.join(tempDir, fileName);
   fs__namespace.writeFileSync(filePath, audioBuffer);
   return filePath;
@@ -1759,6 +2153,34 @@ function setupTranscriptionHandlers() {
       return { success: true };
     } catch (error) {
       console.error("Failed to process audio chunk:", error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  electron.ipcMain.handle("transcription:process-dual-stream-chunk", async (_, audioBuffer, streamType) => {
+    const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed;
+    const serviceReady = isTranscriptionReady && !isTranscriptionStarting;
+    const processRunning = transcriptionProcess && !transcriptionProcess.killed;
+    if (!serviceReady) {
+      return { success: false, error: "Transcription service not ready or still starting" };
+    }
+    if (!socketConnected) {
+      return { success: false, error: "Socket connection not available" };
+    }
+    if (!processRunning) {
+      return { success: false, error: "Transcription process not running" };
+    }
+    try {
+      const buffer = Buffer.from(audioBuffer);
+      const filePath = saveAudioChunk(buffer, streamType);
+      const request = {
+        type: "dual_stream_chunk",
+        audio_path: filePath,
+        stream_type: streamType
+      };
+      transcriptionSocket.write(JSON.stringify(request) + "\n");
+      return { success: true };
+    } catch (error) {
+      console.error(`Failed to process ${streamType} audio chunk:`, error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
@@ -2066,141 +2488,6 @@ function cleanupHangingRecorderProcesses() {
     console.error("Failed to cleanup hanging processes:", error);
   }
 }
-const audioDeviceManager = {
-  async getCurrentDevice() {
-    try {
-      console.log("🔊 Getting current audio device...");
-      const result = await new Promise((resolve) => {
-        const { spawn: spawn2 } = require("child_process");
-        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
-        let output = "";
-        swift.stdout.on("data", (data) => {
-          output += data.toString();
-        });
-        swift.on("close", (code) => {
-          if (code === 0) {
-            const lines = output.split("\n");
-            const deviceLine = lines.find((line) => line.includes("Current audio device:"));
-            const bluetoothLine = lines.find((line) => line.includes("Is Bluetooth:"));
-            if (deviceLine && bluetoothLine) {
-              const deviceName = deviceLine.split("'")[1] || "Unknown";
-              const isBluetooth = bluetoothLine.includes("true");
-              resolve({
-                success: true,
-                deviceName,
-                isBluetooth
-              });
-            } else {
-              resolve({
-                success: false,
-                error: "Could not parse device information"
-              });
-            }
-          } else {
-            resolve({
-              success: false,
-              error: "Audio device check failed"
-            });
-          }
-        });
-      });
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error"
-      };
-    }
-  },
-  async switchToBuiltInSpeakers() {
-    try {
-      console.log("🔊 Switching to built-in speakers for recording...");
-      return {
-        success: true,
-        message: "Audio will be temporarily switched during recording and automatically restored after"
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error"
-      };
-    }
-  },
-  async enableBluetoothWorkaround() {
-    try {
-      console.log("🔧 Running Bluetooth audio restoration...");
-      const { spawn: spawn2 } = require("child_process");
-      const result = await new Promise((resolve) => {
-        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
-        let output = "";
-        swift.stdout.on("data", (data) => {
-          output += data.toString();
-        });
-        swift.on("close", (code) => {
-          if (code === 0) {
-            if (output.includes("Successfully switched audio to:")) {
-              resolve({
-                success: true,
-                message: "Bluetooth audio restored successfully"
-              });
-            } else if (output.includes("already using a Bluetooth device")) {
-              resolve({
-                success: true,
-                message: "Audio is already configured correctly"
-              });
-            } else {
-              resolve({
-                success: false,
-                error: "Could not restore Bluetooth audio"
-              });
-            }
-          } else {
-            resolve({
-              success: false,
-              error: "Audio restoration failed"
-            });
-          }
-        });
-      });
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error"
-      };
-    }
-  }
-};
-function cleanupDoubleExtensionFiles(recordingDirectory) {
-  try {
-    if (!fs__namespace.existsSync(recordingDirectory)) {
-      return;
-    }
-    const files = fs__namespace.readdirSync(recordingDirectory);
-    const doubleExtensionFiles = files.filter((f) => f.endsWith(".mp3.mp3"));
-    if (doubleExtensionFiles.length > 0) {
-      console.log(`🧹 Found ${doubleExtensionFiles.length} files with double .mp3 extensions, fixing...`);
-      for (const file of doubleExtensionFiles) {
-        const oldPath = path__namespace.join(recordingDirectory, file);
-        const newPath = path__namespace.join(recordingDirectory, file.replace(".mp3.mp3", ".mp3"));
-        try {
-          if (fs__namespace.existsSync(newPath)) {
-            console.log(`⚠️ Target file already exists, removing duplicate: ${file}`);
-            fs__namespace.unlinkSync(oldPath);
-          } else {
-            console.log(`🔧 Renaming: ${file} → ${file.replace(".mp3.mp3", ".mp3")}`);
-            fs__namespace.renameSync(oldPath, newPath);
-          }
-        } catch (error) {
-          console.error(`❌ Failed to fix file ${file}:`, error);
-        }
-      }
-      console.log("✅ Cleanup completed");
-    }
-  } catch (error) {
-    console.error("❌ Failed to cleanup double extension files:", error);
-  }
-}
 electron.app.whenReady().then(async () => {
   try {
     await databaseService.initialize();
@@ -2219,6 +2506,14 @@ electron.app.whenReady().then(async () => {
     }
   } catch (error) {
     console.error("Failed to initialize database:", error);
+  }
+  try {
+    const hasPermission = await requestMicrophonePermission();
+    if (!hasPermission) {
+      console.log("⚠️ Microphone permission not granted - recording may not work");
+    }
+  } catch (error) {
+    console.error("Failed to request microphone permission:", error);
   }
   try {
     cleanupHangingRecorderProcesses();
@@ -2282,3 +2577,33 @@ electron.ipcMain.handle("audio-switch-to-built-in", async () => {
 electron.ipcMain.handle("audio-enable-bluetooth-workaround", async () => {
   return await audioDeviceManager.enableBluetoothWorkaround();
 });
+function cleanupDoubleExtensionFiles(recordingDirectory) {
+  try {
+    if (!fs__namespace.existsSync(recordingDirectory)) {
+      return;
+    }
+    const files = fs__namespace.readdirSync(recordingDirectory);
+    const doubleExtensionFiles = files.filter((f) => f.endsWith(".mp3.mp3"));
+    if (doubleExtensionFiles.length > 0) {
+      console.log(`🧹 Found ${doubleExtensionFiles.length} files with double .mp3 extensions, fixing...`);
+      for (const file of doubleExtensionFiles) {
+        const oldPath = path__namespace.join(recordingDirectory, file);
+        const newPath = path__namespace.join(recordingDirectory, file.replace(".mp3.mp3", ".mp3"));
+        try {
+          if (fs__namespace.existsSync(newPath)) {
+            console.log(`⚠️ Target file already exists, removing duplicate: ${file}`);
+            fs__namespace.unlinkSync(oldPath);
+          } else {
+            console.log(`🔧 Renaming: ${file} → ${file.replace(".mp3.mp3", ".mp3")}`);
+            fs__namespace.renameSync(oldPath, newPath);
+          }
+        } catch (error) {
+          console.error(`❌ Failed to fix file ${file}:`, error);
+        }
+      }
+      console.log("✅ Cleanup completed");
+    }
+  } catch (error) {
+    console.error("❌ Failed to cleanup double extension files:", error);
+  }
+}

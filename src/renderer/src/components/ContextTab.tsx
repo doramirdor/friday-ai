@@ -1,10 +1,22 @@
 import { useState } from "react";
 import { Upload, X, FileText, Users, Calendar, Target } from "lucide-react";
 
-export const ContextTab = () => {
+interface ContextTabProps {
+  contextText: string;
+  onContextTextChange: (text: string) => void;
+  uploadedFiles: string[];
+  onFilesChange: (files: string[]) => void;
+}
+
+export const ContextTab = ({ contextText, onContextTextChange }: ContextTabProps) => {
   const [contextTemplate, setContextTemplate] = useState("custom");
-  const [contextText, setContextText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+
+  // Debug logging
+  console.log('🔍 ContextTab Debug:', {
+    contextTextLength: contextText?.length || 0,
+    contextText: contextText
+  });
 
   const templates = {
     custom: {
@@ -51,12 +63,12 @@ export const ContextTab = () => {
     setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleTemplateChange = (templateKey: string) => {
+  const handleTemplateChange = (templateKey: string): void => {
     setContextTemplate(templateKey);
     if (templateKey !== "custom" && templates[templateKey as keyof typeof templates]) {
-      setContextText(templates[templateKey as keyof typeof templates].placeholder);
+      onContextTextChange(templates[templateKey as keyof typeof templates].placeholder);
     } else if (templateKey === "custom") {
-      setContextText("");
+      onContextTextChange("");
     }
   };
 
@@ -114,7 +126,7 @@ export const ContextTab = () => {
           <label>Context Details</label>
           <textarea
             value={contextText}
-            onChange={(e) => setContextText(e.target.value)}
+            onChange={(e) => onContextTextChange(e.target.value)}
             placeholder={templates[contextTemplate as keyof typeof templates]?.placeholder || "Enter meeting context..."}
             className="form-textarea"
             rows={10}

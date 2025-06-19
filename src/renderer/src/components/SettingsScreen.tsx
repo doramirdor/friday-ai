@@ -36,7 +36,10 @@ const SettingsScreen: React.FC = () => {
     globalContext: '',
     enableGlobalContext: true,
     includeContextInTranscriptions: true,
-    includeContextInActionItems: true
+    includeContextInActionItems: true,
+    aiProvider: 'gemini',
+    ollamaModel: 'mistral:7b',
+    ollamaApiUrl: 'http://localhost:11434'
   })
   const [shortcuts, setShortcuts] = useState<ShortcutKeys>({
     'toggle-recording': 'CmdOrCtrl+L',
@@ -527,40 +530,129 @@ const SettingsScreen: React.FC = () => {
 
                 <div className="settings-row">
                   <div className="settings-label">
-                    <h4>Gemini API Key</h4>
-                    <p>Required for AI-powered transcription and analysis</p>
+                    <h4>AI Provider</h4>
+                    <p>Choose between cloud-based Gemini or local Ollama models</p>
                   </div>
                   <div className="settings-control">
-                    <div className="input-group" style={{ marginBottom: 0 }}>
-                      <input
-                        type="password"
-                        className="input input-floating"
-                        placeholder=" "
-                        value={settings.geminiApiKey}
-                        onChange={(e) => updateSetting('geminiApiKey', e.target.value)}
-                      />
-                      <label className="input-label">API Key</label>
+                    <select 
+                      className="input" 
+                      style={{ minWidth: '200px' }}
+                      value={settings.aiProvider || 'gemini'}
+                      onChange={(e) => updateSetting('aiProvider', e.target.value as 'gemini' | 'ollama')}
+                    >
+                      <option value="gemini">Gemini (Cloud)</option>
+                      <option value="ollama">Ollama (Local)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {(settings.aiProvider || 'gemini') === 'gemini' && (
+                  <div className="settings-row">
+                    <div className="settings-label">
+                      <h4>Gemini API Key</h4>
+                      <p>Required for AI-powered transcription and analysis</p>
                     </div>
-                    <div style={{ marginTop: '8px' }}>
+                    <div className="settings-control">
+                      <div className="input-group" style={{ marginBottom: 0 }}>
+                        <input
+                          type="password"
+                          className="input input-floating"
+                          placeholder=" "
+                          value={settings.geminiApiKey}
+                          onChange={(e) => updateSetting('geminiApiKey', e.target.value)}
+                        />
+                        <label className="input-label">API Key</label>
+                      </div>
+                      <div style={{ marginTop: '8px' }}>
+                        <a
+                          href="https://makersuite.google.com/app/apikey"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm"
+                          style={{
+                            color: 'var(--interactive-primary)',
+                            textDecoration: 'none',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <ExternalLinkIcon size={12} />
+                          Get your Gemini API key
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {(settings.aiProvider || 'gemini') === 'ollama' && (
+                  <>
+                    <div className="settings-row">
+                      <div className="settings-label">
+                        <h4>Ollama Model</h4>
+                        <p>Choose the local AI model to use</p>
+                      </div>
+                      <div className="settings-control">
+                        <select 
+                          className="input" 
+                          style={{ minWidth: '200px' }}
+                          value={settings.ollamaModel || 'mistral:7b'}
+                          onChange={(e) => updateSetting('ollamaModel', e.target.value as 'mistral:7b' | 'qwen2.5:1.5b' | 'qwen2.5:0.5b' | 'gemma2:2b')}
+                        >
+                          <option value="mistral:7b">Mistral 7B (Recommended)</option>
+                          <option value="qwen2.5:1.5b">Qwen2.5 1.5B (Fast)</option>
+                          <option value="qwen2.5:0.5b">Qwen2.5 0.5B (Fastest)</option>
+                          <option value="gemma2:2b">Gemma2 2B (Efficient)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="settings-row">
+                      <div className="settings-label">
+                        <h4>Ollama API URL</h4>
+                        <p>Local Ollama server endpoint</p>
+                      </div>
+                      <div className="settings-control">
+                        <input
+                          type="text"
+                          className="input"
+                          value={settings.ollamaApiUrl || 'http://localhost:11434'}
+                          onChange={(e) => updateSetting('ollamaApiUrl', e.target.value)}
+                          style={{ minWidth: '300px' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{
+                      padding: '12px',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'rgba(255, 149, 0, 0.1)',
+                      color: 'var(--orange-dark)',
+                      fontSize: 'var(--font-size-sm)',
+                      marginTop: '16px'
+                    }}>
+                      <strong>Note:</strong> Ollama must be installed and running locally. 
+                      The selected model will be automatically downloaded if not available.
+                      <br />
                       <a
-                        href="https://makersuite.google.com/app/apikey"
+                        href="https://ollama.ai"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm"
                         style={{
                           color: 'var(--interactive-primary)',
                           textDecoration: 'none',
-                          display: 'flex',
+                          display: 'inline-flex',
                           alignItems: 'center',
-                          gap: '4px'
+                          gap: '4px',
+                          marginTop: '8px'
                         }}
                       >
                         <ExternalLinkIcon size={12} />
-                        Get your Gemini API key
+                        Download Ollama
                       </a>
                     </div>
-                  </div>
-                </div>
+                  </>
+                )}
 
                 <div className="settings-row">
                   <div className="settings-label">

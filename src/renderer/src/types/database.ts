@@ -51,6 +51,10 @@ export interface Settings {
   enableGlobalContext: boolean
   includeContextInTranscriptions: boolean
   includeContextInActionItems: boolean
+  // AI Model Configuration
+  aiProvider: 'gemini' | 'ollama'
+  ollamaModel: 'mistral:7b' | 'qwen2.5:1.5b' | 'qwen2.5:0.5b' | 'gemma2:2b'
+  ollamaApiUrl: string
 }
 
 // API interface for the main world
@@ -82,6 +86,16 @@ export interface GeminiAPI {
   generateMessage: (options: any) => Promise<{ success: boolean; message?: string; error?: string }>
   generateFollowupQuestions: (options: any) => Promise<any>
   askQuestion: (options: any) => Promise<{ success: boolean; response?: string; error?: string }>
+}
+
+export interface OllamaAPI {
+  generateContent: (options: any) => Promise<any>
+  generateSummary: (options: any) => Promise<any>
+  generateMessage: (options: any) => Promise<{ success: boolean; message?: string; error?: string }>
+  generateFollowupQuestions: (options: any) => Promise<any>
+  askQuestion: (options: any) => Promise<{ success: boolean; response?: string; error?: string }>
+  setModel: (model: string) => Promise<{ success: boolean; error?: string }>
+  setApiUrl: (url: string) => Promise<{ success: boolean; error?: string }>
 }
 
 export interface AlertsAPI {
@@ -123,6 +137,7 @@ declare global {
       db: DatabaseAPI
       transcription: TranscriptionAPI
       gemini: GeminiAPI
+      ollama: OllamaAPI
       alerts: AlertsAPI
       swiftRecorder: SwiftRecorderAPI
       chunkedRecording: ChunkedRecordingAPI

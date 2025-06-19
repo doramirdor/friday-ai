@@ -14,6 +14,7 @@ import * as child_process from 'child_process'
 
 // Import services
 import { geminiService } from './gemini'
+import { ollamaService } from './ollama'
 
 let mainWindow: BrowserWindow | null = null
 // let tray: Tray | null = null
@@ -2023,6 +2024,80 @@ function setupGeminiHandlers(): void {
   })
 }
 
+// Ollama IPC handlers
+function setupOllamaHandlers(): void {
+  ipcMain.handle('ollama:generate-content', async (_, options) => {
+    try {
+      const result = await ollamaService.generateMeetingContent(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate content with Ollama:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ollama:generate-summary', async (_, options) => {
+    try {
+      const result = await ollamaService.generateSummaryOnly(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate summary with Ollama:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ollama:generate-message', async (_, options) => {
+    try {
+      const result = await ollamaService.generateMessage(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate message with Ollama:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ollama:generate-followup-questions', async (_, options) => {
+    try {
+      const result = await ollamaService.generateFollowupQuestions(options)
+      return result
+    } catch (error) {
+      console.error('Failed to generate followup questions with Ollama:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ollama:ask-question', async (_, options) => {
+    try {
+      const result = await ollamaService.askQuestion(options)
+      return result
+    } catch (error) {
+      console.error('Failed to ask question with Ollama:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  // Ollama-specific handlers
+  ipcMain.handle('ollama:set-model', async (_, model: string) => {
+    try {
+      ollamaService.setModel(model)
+      return { success: true }
+    } catch (error) {
+      console.error('Failed to set Ollama model:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ollama:set-api-url', async (_, url: string) => {
+    try {
+      ollamaService.setApiUrl(url)
+      return { success: true }
+    } catch (error) {
+      console.error('Failed to set Ollama API URL:', error)
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+}
+
 // Handle dialog requests
 ipcMain.handle('dialog:showOpenDialog', async (_, options: Electron.OpenDialogOptions) => {
   return dialog.showOpenDialog(options)
@@ -2263,6 +2338,7 @@ app.whenReady().then(async () => {
   setupDatabaseHandlers()
   setupTranscriptionHandlers()
   setupGeminiHandlers()
+  setupOllamaHandlers()
   setupSystemHandlers()
 
   // Register global shortcuts

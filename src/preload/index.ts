@@ -119,6 +119,30 @@ const api = {
     askQuestion: (options: any) => ipcRenderer.invoke('gemini:ask-question', options)
   },
 
+  // Ollama AI API (local models)
+  ollama: {
+    // Generate comprehensive meeting content (summary, description, action items, tags)
+    generateContent: (options: any) => ipcRenderer.invoke('ollama:generate-content', options),
+
+    // Generate summary only
+    generateSummary: (options: any) => ipcRenderer.invoke('ollama:generate-summary', options),
+
+    // Generate Slack or Email messages
+    generateMessage: (options: any) => ipcRenderer.invoke('ollama:generate-message', options),
+
+    // Generate followup questions, risks, and comments
+    generateFollowupQuestions: (options: any) => ipcRenderer.invoke('ollama:generate-followup-questions', options),
+
+    // Ask a question about the meeting
+    askQuestion: (options: any) => ipcRenderer.invoke('ollama:ask-question', options),
+
+    // Set the Ollama model to use
+    setModel: (model: string) => ipcRenderer.invoke('ollama:set-model', model),
+
+    // Set the Ollama API URL
+    setApiUrl: (url: string) => ipcRenderer.invoke('ollama:set-api-url', url)
+  },
+
   // System APIs for shortcuts and menu bar
   system: {
     // Get current shortcuts

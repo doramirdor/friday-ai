@@ -56,6 +56,10 @@ export interface Settings {
   enableGlobalContext: boolean
   includeContextInTranscriptions: boolean
   includeContextInActionItems: boolean
+  // AI Model Configuration
+  aiProvider: 'gemini' | 'ollama'
+  ollamaModel: 'mistral:7b' | 'qwen2.5:1.5b' | 'qwen2.5:0.5b' | 'gemma2:2b'
+  ollamaApiUrl: string
 }
 
 class DatabaseService {
@@ -132,7 +136,10 @@ class DatabaseService {
           global_context TEXT,
           enable_global_context BOOLEAN DEFAULT 1,
           include_context_in_transcriptions BOOLEAN DEFAULT 1,
-          include_context_in_action_items BOOLEAN DEFAULT 1
+          include_context_in_action_items BOOLEAN DEFAULT 1,
+          ai_provider TEXT DEFAULT 'gemini',
+          ollama_model TEXT DEFAULT 'mistral:7b',
+          ollama_api_url TEXT DEFAULT 'http://localhost:11434'
         )
       `
 
@@ -222,7 +229,60 @@ class DatabaseService {
             })
           }))
         }
-        
+
+        // Check for AI provider settings columns
+        this.db!.all("PRAGMA table_info(settings)", (settingsErr, settingsRows: any[]) => {
+          if (settingsErr) {
+            reject(settingsErr)
+            return
+          }
+
+          const hasAiProvider = settingsRows.some(row => row.name === 'ai_provider')
+          const hasOllamaModel = settingsRows.some(row => row.name === 'ollama_model')
+          const hasOllamaApiUrl = settingsRows.some(row => row.name === 'ollama_api_url')
+
+          if (!hasAiProvider) {
+            console.log('Adding ai_provider column to settings table...')
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db!.run("ALTER TABLE settings ADD COLUMN ai_provider TEXT DEFAULT 'gemini'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr)
+                  return
+                }
+                console.log('Successfully added ai_provider column')
+                resolveInner()
+              })
+            }))
+          }
+
+          if (!hasOllamaModel) {
+            console.log('Adding ollama_model column to settings table...')
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db!.run("ALTER TABLE settings ADD COLUMN ollama_model TEXT DEFAULT 'mistral:7b'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr)
+                  return
+                }
+                console.log('Successfully added ollama_model column')
+                resolveInner()
+              })
+            }))
+          }
+
+          if (!hasOllamaApiUrl) {
+            console.log('Adding ollama_api_url column to settings table...')
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db!.run("ALTER TABLE settings ADD COLUMN ollama_api_url TEXT DEFAULT 'http://localhost:11434'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr)
+                  return
+                }
+                console.log('Successfully added ollama_api_url column')
+                resolveInner()
+              })
+            }))
+          }
+
         if (migrations.length === 0) {
           resolve()
         } else {
@@ -264,7 +324,10 @@ class DatabaseService {
               "I am a product manager at a tech startup. We're building a mobile app for productivity. Our team includes developers, designers, and data analysts. We use agile methodology with weekly sprints.",
             enable_global_context: 1,
             include_context_in_transcriptions: 1,
-            include_context_in_action_items: 1
+            include_context_in_action_items: 1,
+            ai_provider: 'gemini',
+            ollama_model: 'mistral:7b',
+            ollama_api_url: 'http://localhost:11434'
           }
 
           const sql = `
@@ -273,8 +336,8 @@ class DatabaseService {
               auto_save_recordings, realtime_transcription, transcription_language,
               gemini_api_key, auto_generate_action_items, auto_suggest_tags,
               global_context, enable_global_context, include_context_in_transcriptions,
-              include_context_in_action_items
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              include_context_in_action_items, ai_provider, ollama_model, ollama_api_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `
 
           this.db!.run(sql, Object.values(defaultSettings), (err) => {
@@ -590,7 +653,10 @@ class DatabaseService {
       globalContext: row.global_context,
       enableGlobalContext: Boolean(row.enable_global_context),
       includeContextInTranscriptions: Boolean(row.include_context_in_transcriptions),
-      includeContextInActionItems: Boolean(row.include_context_in_action_items)
+      includeContextInActionItems: Boolean(row.include_context_in_action_items),
+      aiProvider: row.ai_provider as 'gemini' | 'ollama',
+      ollamaModel: row.ollama_model as 'mistral:7b' | 'qwen2.5:1.5b' | 'qwen2.5:0.5b' | 'gemma2:2b',
+      ollamaApiUrl: row.ollama_api_url as string
     }
   }
 

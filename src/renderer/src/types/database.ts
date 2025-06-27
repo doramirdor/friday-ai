@@ -51,8 +51,11 @@ export interface Settings {
   enableGlobalContext: boolean
   includeContextInTranscriptions: boolean
   includeContextInActionItems: boolean
+  // Two-Party Consent Compliance
+  twoPartyConsent: boolean
   // AI Model Configuration
   aiProvider: 'gemini' | 'ollama'
+  geminiModel: 'gemini-1.5-pro-latest' | 'gemini-2.0-flash-exp' | 'gemini-2.5-flash-lite-preview-06-17'
   ollamaModel: 'mistral:7b' | 'qwen2.5:1.5b' | 'qwen2.5:0.5b' | 'gemma2:2b'
   ollamaApiUrl: string
 }

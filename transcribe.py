@@ -630,7 +630,7 @@ class TranscriptionSocketServer:
                 sum_squares += (audio_array ** 2).sum()
                 
                 # Count silent samples (below threshold)
-                silence_threshold = 0.01  # 1% of max amplitude
+                silence_threshold = 0.001  # 0.1% of max amplitude for better sensitivity
                 silent_samples += (abs_samples < silence_threshold).sum()
             
             container.close()
@@ -654,7 +654,10 @@ class TranscriptionSocketServer:
     def transcribe_chunk(self, audio_path, stream_type="microphone"):
         """Transcribe a single audio chunk quickly with stream identification"""
         try:
-            print(f"🔍 DEBUG: Processing {stream_type} chunk: {audio_path}", file=sys.stderr, flush=True)
+            if stream_type == 'system':
+                print(f"🔍 SYSTEM_AUDIO_DEBUG: Processing system audio chunk: {audio_path}", file=sys.stderr, flush=True)
+            else:
+                print(f"🔍 DEBUG: Processing {stream_type} chunk: {audio_path}", file=sys.stderr, flush=True)
             
             # Check if file exists and get size with retry for timing issues
             file_exists = False
@@ -722,7 +725,7 @@ class TranscriptionSocketServer:
             
             # Check if audio has sufficient duration
             duration = audio_analysis.get("duration", 0)
-            if duration < 0.1:  # Less than 100ms
+            if duration < 0.05:  # Less than 50ms
                 print(f"⚠️ DEBUG: Audio duration too short: {duration:.2f}s", file=sys.stderr, flush=True)
                 
                 # Preserve short duration files for debugging
@@ -746,8 +749,8 @@ class TranscriptionSocketServer:
             rms_level = audio_analysis.get("rms_level", 0)
             
             # Skip transcription if audio is too quiet or mostly silent
-            # Updated thresholds based on actual amplitude ranges (16-bit audio: -32768 to 32767)
-            if silence_percentage > 95 or max_amplitude < 10 or rms_level < 1:
+            # Relaxed thresholds for better live transcription sensitivity
+            if silence_percentage > 99.5 or max_amplitude < 0.5 or rms_level < 0.05:
                 print(f"⚠️ DEBUG: Audio too quiet/silent - Silence: {silence_percentage:.1f}%, Max: {max_amplitude:.4f}, RMS: {rms_level:.4f}", file=sys.stderr, flush=True)
                 
                 # Preserve silent files for debugging
@@ -777,6 +780,7 @@ class TranscriptionSocketServer:
             # Based on diagnostic testing, VAD is too aggressive and filters out valid speech
             # Different settings for system vs microphone audio
             if stream_type == "system":
+                print(f"🎵 SYSTEM_AUDIO_DEBUG: Starting Whisper transcription for system audio (NO VAD)", file=sys.stderr, flush=True)
                 # System audio often has different characteristics, disable VAD
                 segments, info = self.model.transcribe(
                     audio_path,
@@ -802,7 +806,10 @@ class TranscriptionSocketServer:
                     )
                 )
             
-            print(f"📊 DEBUG: Whisper info - Duration: {info.duration:.2f}s, Language: {info.language} ({info.language_probability:.2f})", file=sys.stderr, flush=True)
+            if stream_type == "system":
+                print(f"📊 SYSTEM_AUDIO_DEBUG: Whisper info - Duration: {info.duration:.2f}s, Language: {info.language} ({info.language_probability:.2f})", file=sys.stderr, flush=True)
+            else:
+                print(f"📊 DEBUG: Whisper info - Duration: {info.duration:.2f}s, Language: {info.language} ({info.language_probability:.2f})", file=sys.stderr, flush=True)
             
             # Collect all segments quickly
             transcription = ""
@@ -810,10 +817,28 @@ class TranscriptionSocketServer:
             for segment in segments:
                 transcription += segment.text + " "
                 segment_count += 1
-                print(f"🗣️ DEBUG: Segment {segment_count}: '{segment.text}' (start: {segment.start:.2f}s, end: {segment.end:.2f}s)", file=sys.stderr, flush=True)
+                if stream_type == "system":
+                    print(f"🗣️ SYSTEM_AUDIO_DEBUG: Segment {segment_count}: '{segment.text}' (start: {segment.start:.2f}s, end: {segment.end:.2f}s)", file=sys.stderr, flush=True)
+                else:
+                    print(f"🗣️ DEBUG: Segment {segment_count}: '{segment.text}' (start: {segment.start:.2f}s, end: {segment.end:.2f}s)", file=sys.stderr, flush=True)
+                
+                # NOTE: Live text updates would be sent via socket connection
+                # but transcribe_chunk method doesn't have access to conn
+                # This functionality would need to be implemented in handle_client method
+                live_update = {
+                    "type": "live_text",
+                    "text": transcription.strip(),
+                    "stream_type": stream_type,
+                    "chunk_id": self.chunk_counter
+                }
+                # Log live update instead of sending (since conn is not available)
+                print(f"📡 Live text update: {live_update}", file=sys.stderr, flush=True)
             
             final_text = transcription.strip()
-            print(f"✅ DEBUG: Final {stream_type} transcription: '{final_text}' (length: {len(final_text)})", file=sys.stderr, flush=True)
+            if stream_type == "system":
+                print(f"✅ SYSTEM_AUDIO_DEBUG: Final system audio transcription: '{final_text}' (length: {len(final_text)})", file=sys.stderr, flush=True)
+            else:
+                print(f"✅ DEBUG: Final {stream_type} transcription: '{final_text}' (length: {len(final_text)})", file=sys.stderr, flush=True)
             
             # Preserve and log the transcription file before cleanup
             # Use the converted file if it was created, otherwise use the original
@@ -1023,18 +1048,32 @@ class TranscriptionSocketServer:
                         if not audio_path:
                             continue
                         
-                        print(f"🔄 Processing {stream_type} audio: {os.path.basename(audio_path)}", file=sys.stderr, flush=True)
+                        if stream_type == 'system':
+                            print(f"🔄 SYSTEM_AUDIO_DEBUG: Processing system audio: {os.path.basename(audio_path)}", file=sys.stderr, flush=True)
+                            print(f"🔄 SYSTEM_AUDIO_DEBUG: File exists: {os.path.exists(audio_path)}, Size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 0} bytes", file=sys.stderr, flush=True)
+                        else:
+                            print(f"🔄 Processing {stream_type} audio: {os.path.basename(audio_path)}", file=sys.stderr, flush=True)
                         
                         self.chunk_counter += 1
                         
                         # Process the audio chunk with stream identification
                         result = self.transcribe_chunk(audio_path, stream_type)
                         
+                        if stream_type == 'system':
+                            print(f"🎵 SYSTEM_AUDIO_DEBUG: Transcription result for system audio:", file=sys.stderr, flush=True)
+                            print(f"   Type: {result.get('type', 'unknown')}", file=sys.stderr, flush=True)
+                            print(f"   Text length: {len(result.get('text', ''))}", file=sys.stderr, flush=True)
+                            print(f"   Text preview: {result.get('text', '')[:100]}...", file=sys.stderr, flush=True)
+                            print(f"   Stream type: {result.get('stream_type', 'unknown')}", file=sys.stderr, flush=True)
+                        
                         # Send result back to client
                         response = json.dumps(result) + "\n"
                         conn.send(response.encode())
                         
-                        print(f"📤 Sent {stream_type}: {result.get('type', 'unknown')}", file=sys.stderr, flush=True)
+                        if stream_type == 'system':
+                            print(f"📤 SYSTEM_AUDIO_DEBUG: Sent system audio result: {result.get('type', 'unknown')}", file=sys.stderr, flush=True)
+                        else:
+                            print(f"📤 Sent {stream_type}: {result.get('type', 'unknown')}", file=sys.stderr, flush=True)
                         continue
                         
                 except json.JSONDecodeError:

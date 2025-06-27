@@ -74,12 +74,18 @@ interface AskQuestionResult {
 
 class GeminiService {
   private apiKey: string | null = null
+  private defaultModel: string = 'gemini-2.5-flash-lite-preview-06-17'
 
   setApiKey(apiKey: string): void {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || null
   }
 
-  private async makeGeminiRequest(prompt: string, model: string = 'gemini-1.5-pro-latest'): Promise<{ success: boolean; content?: string; error?: string }> {
+  setDefaultModel(model: string): void {
+    this.defaultModel = model
+  }
+
+  private async makeGeminiRequest(prompt: string, model?: string): Promise<{ success: boolean; content?: string; error?: string }> {
+    const selectedModel = model || this.defaultModel
     console.log('🔑 Gemini API Key check:', { hasKey: !!this.apiKey, keyLength: this.apiKey?.length || 0 })
     
     if (!this.apiKey) {
@@ -88,7 +94,7 @@ class GeminiService {
     }
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${this.apiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -307,7 +313,7 @@ Make it comprehensive but well-organized and easy to read. Focus on actionable i
   async generateMessage(options: GeminiMessageOptions): Promise<{ success: boolean; message?: string; error?: string }> {
     try {
       const { type, data } = options
-      const model = options.model || 'gemini-1.5-pro-latest'
+      const model = options.model || this.defaultModel
 
       // Build the context sections that are provided
       const contextSections: string[] = []
@@ -530,7 +536,7 @@ Instructions:
 
 Respond with a well-structured, informative answer that combines both sources appropriately.`
 
-      const result = await this.makeGeminiRequest(prompt, 'gemini-2.0-flash-exp')
+      const result = await this.makeGeminiRequest(prompt)
       
       if (!result.success || !result.content) {
         return { success: false, error: result.error || 'Failed to get answer' }

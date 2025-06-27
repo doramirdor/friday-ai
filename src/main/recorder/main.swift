@@ -4,6 +4,7 @@ import ScreenCaptureKit
 class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
     static var screenCaptureStream: SCStream?
     static var audioFileForRecording: AVAudioFile?
+    static var systemAudioFile: AVAudioFile?  // Separate file for system audio only
     var contentEligibleForSharing: SCShareableContent?
     let semaphoreRecordingStopped = DispatchSemaphore(value: 0)
     var recordingPath: String?
@@ -13,7 +14,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
     
     // Live transcription support
     var enableLiveTranscription = false
-    var transcriptionChunkDuration: TimeInterval = 3.0 // 3 seconds per chunk
+    var transcriptionChunkDuration: TimeInterval = 2.0  // Default 2 seconds
     var currentChunkStartTime: CMTime = CMTime.zero
     var audioBufferQueue: [AVAudioPCMBuffer] = []
     let audioBufferQueueLock = NSLock()
@@ -81,12 +82,36 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
     }
 
     func executeRecordingProcess() {
-        self.updateAvailableContent()
-        setupInterruptSignalHandler()
-        setupStreamFunctionTimeout()
+        // Use already parsed recording path and filename from processCommandLineArguments
+        guard let recordPath = recordingPath, let filename = recordingFilename else {
+            ResponseHandler.returnResponse(["code": "INVALID_ARGUMENTS"])
+            return
+        }
+
+        self.recordingPath = recordPath
         
-        // Note: Live transcription timer will be started after stream is created
+        // Prepare both combined and system-only audio files
+        let combinedPath = "\(recordPath)/\(filename)"
+        let systemOnlyPath = "\(recordPath)/system_only_\(filename)"
         
+        prepareAudioFile(at: combinedPath)
+        prepareSystemAudioFile(at: systemOnlyPath)
+
+        PermissionsRequester.requestScreenCaptureAccess { granted in
+            guard granted else {
+                ResponseHandler.returnResponse(["code": "PERMISSION_DENIED"])
+                self.semaphoreRecordingStopped.signal() // Signal to exit
+                return
+            }
+
+            ResponseHandler.returnResponse([
+                "code": "DEBUG",
+                "message": "Screen capture permission granted, starting recording..."
+            ], shouldExitProcess: false)
+
+            self.updateAvailableContent()
+        }
+
         semaphoreRecordingStopped.wait()
     }
 
@@ -132,8 +157,8 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
             
             // Log timer setup
             ResponseHandler.returnResponse([
-                "code": "DEBUG",
-                "message": "🔄 Setting up live transcription timer with \(self.transcriptionChunkDuration) second intervals"
+                "code": "SYSTEM_AUDIO_DEBUG",
+                "message": "🔄 SYSTEM AUDIO: Setting up live transcription timer with \(self.transcriptionChunkDuration) second intervals"
             ], shouldExitProcess: false)
             
             var cycleCount = 0
@@ -143,8 +168,8 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
                 cycleCount += 1
                 
                 ResponseHandler.returnResponse([
-                    "code": "DEBUG",
-                    "message": "⏰ Timer cycle \(cycleCount) - sleeping for \(self.transcriptionChunkDuration) seconds"
+                    "code": "SYSTEM_AUDIO_DEBUG",
+                    "message": "⏰ SYSTEM AUDIO: Timer cycle \(cycleCount) - sleeping for \(self.transcriptionChunkDuration) seconds"
                 ], shouldExitProcess: false)
                 
                 Thread.sleep(forTimeInterval: self.transcriptionChunkDuration)
@@ -152,23 +177,23 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
                 // Check if we're still recording
                 guard self.isRecording else {
                     ResponseHandler.returnResponse([
-                        "code": "DEBUG",
-                        "message": "🛑 Live transcription timer stopped - recording ended at cycle \(cycleCount)"
+                        "code": "SYSTEM_AUDIO_DEBUG",
+                        "message": "🛑 SYSTEM AUDIO: Live transcription timer stopped - recording ended at cycle \(cycleCount)"
                     ], shouldExitProcess: false)
                     break
                 }
                 
                 ResponseHandler.returnResponse([
-                    "code": "DEBUG",
-                    "message": "🔄 Timer cycle \(cycleCount) - about to process audio chunk"
+                    "code": "SYSTEM_AUDIO_DEBUG",
+                    "message": "🔄 SYSTEM AUDIO: Timer cycle \(cycleCount) - about to process audio chunk"
                 ], shouldExitProcess: false)
                 
                 self.processAudioChunkForTranscription()
             }
             
             ResponseHandler.returnResponse([
-                "code": "DEBUG",
-                "message": "🏁 Live transcription timer completed after \(cycleCount) cycles"
+                "code": "SYSTEM_AUDIO_DEBUG",
+                "message": "🏁 SYSTEM AUDIO: Live transcription timer completed after \(cycleCount) cycles"
             ], shouldExitProcess: false)
         }
     }
@@ -181,23 +206,23 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
         
         // Always log processing attempts to help debug
         ResponseHandler.returnResponse([
-            "code": "DEBUG",
-            "message": "🔍 processAudioChunkForTranscription called - buffer count: \(bufferCount), isRecording: \(isRecording)"
+            "code": "SYSTEM_AUDIO_DEBUG",
+            "message": "🔍 SYSTEM AUDIO: processAudioChunkForTranscription called - buffer count: \(bufferCount), isRecording: \(isRecording)"
         ], shouldExitProcess: false)
         
         guard !audioBufferQueue.isEmpty else {
             // Debug: Log when no audio buffers are available
             ResponseHandler.returnResponse([
-                "code": "DEBUG",
-                "message": "⚠️ No audio buffers for transcription chunk - queue is empty"
+                "code": "SYSTEM_AUDIO_DEBUG",
+                "message": "⚠️ SYSTEM AUDIO: No audio buffers for transcription chunk - queue is empty"
             ], shouldExitProcess: false)
             return
         }
         
         // Debug: Log buffer processing
         ResponseHandler.returnResponse([
-            "code": "DEBUG",
-            "message": "📊 Processing \(bufferCount) audio buffers for transcription"
+            "code": "SYSTEM_AUDIO_DEBUG",
+            "message": "📊 SYSTEM AUDIO: Processing \(bufferCount) audio buffers for transcription"
         ], shouldExitProcess: false)
         
         // Combine buffered audio into a single chunk
@@ -206,15 +231,15 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
         
         guard let combinedBuffer = combinedBuffer else {
             ResponseHandler.returnResponse([
-                "code": "DEBUG",
-                "message": "❌ Failed to combine \(bufferCount) audio buffers"
+                "code": "SYSTEM_AUDIO_DEBUG",
+                "message": "❌ SYSTEM AUDIO: Failed to combine \(bufferCount) audio buffers"
             ], shouldExitProcess: false)
             return
         }
         
         ResponseHandler.returnResponse([
-            "code": "DEBUG",
-            "message": "✅ Successfully combined \(bufferCount) buffers into single chunk with \(combinedBuffer.frameLength) frames"
+            "code": "SYSTEM_AUDIO_DEBUG",
+            "message": "✅ SYSTEM AUDIO: Successfully combined \(bufferCount) buffers into single chunk with \(combinedBuffer.frameLength) frames"
         ], shouldExitProcess: false)
         
         // Save chunk to temporary file for transcription
@@ -228,13 +253,13 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
             ], shouldExitProcess: false)
             
             ResponseHandler.returnResponse([
-                "code": "DEBUG",
-                "message": "🎵 Successfully generated TRANSCRIPTION_CHUNK: \(chunkPath)"
+                "code": "SYSTEM_AUDIO_DEBUG",
+                "message": "🎵 SYSTEM AUDIO: Successfully generated TRANSCRIPTION_CHUNK: \(chunkPath)"
             ], shouldExitProcess: false)
         } else {
             ResponseHandler.returnResponse([
-                "code": "DEBUG",
-                "message": "❌ Failed to save audio chunk to file"
+                "code": "SYSTEM_AUDIO_DEBUG",
+                "message": "❌ SYSTEM AUDIO: Failed to save audio chunk to file"
             ], shouldExitProcess: false)
         }
     }
@@ -274,40 +299,67 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
         let chunkFilename = "system_audio_chunk_\(timestamp).wav"
         let chunkPath = "\(recordingPath!)/\(chunkFilename)"
         
-        // Debug: Log buffer format details
+        // Debug: Log buffer format details and check for audio content
+        let hasValidAudio = validateAudioBuffer(buffer)
         ResponseHandler.returnResponse([
             "code": "DEBUG",
-            "message": "Saving audio chunk - Format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount) channels, \(buffer.frameLength) frames"
+            "message": "Saving audio chunk - Format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount) channels, \(buffer.frameLength) frames, hasValidAudio: \(hasValidAudio)"
         ], shouldExitProcess: false)
         
+        // Skip saving if buffer doesn't contain valid audio data
+        guard hasValidAudio else {
+            ResponseHandler.returnResponse([
+                "code": "DEBUG",
+                "message": "Skipping save - audio buffer contains no valid audio data"
+            ], shouldExitProcess: false)
+            return nil
+        }
+        
         do {
-            // Convert to transcription-optimized format (16kHz mono)
-            let transcriptionFormat = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
+            // First save in original format to preserve quality
+            let originalPath = "\(recordingPath!)/original_\(chunkFilename)"
+            let originalFile = try AVAudioFile(forWriting: URL(fileURLWithPath: originalPath), 
+                                             settings: buffer.format.settings)
+            try originalFile.write(from: buffer)
             
-            // Create converter to downsample and convert to mono
+            // Create a proper transcription format with better settings
+            let transcriptionFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, 
+                                                   sampleRate: 16000, 
+                                                   channels: 1, 
+                                                   interleaved: false)!
+            
+            // Create converter with better error handling
             guard let converter = AVAudioConverter(from: buffer.format, to: transcriptionFormat) else {
                 ResponseHandler.returnResponse([
                     "code": "DEBUG",
-                    "message": "Failed to create audio converter"
+                    "message": "Failed to create audio converter from \(buffer.format) to \(transcriptionFormat)"
                 ], shouldExitProcess: false)
-                return nil
+                return originalPath // Return original format file as fallback
             }
             
-            // Calculate the output buffer size needed
-            let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * transcriptionFormat.sampleRate / buffer.format.sampleRate)
+            // Calculate the output buffer size more accurately
+            let ratio = transcriptionFormat.sampleRate / buffer.format.sampleRate
+            let outputFrameCapacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * ratio))
             
             guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: transcriptionFormat, frameCapacity: outputFrameCapacity) else {
                 ResponseHandler.returnResponse([
                     "code": "DEBUG",
-                    "message": "Failed to create output buffer"
+                    "message": "Failed to create output buffer with capacity \(outputFrameCapacity)"
                 ], shouldExitProcess: false)
-                return nil
+                return originalPath // Return original format file as fallback
             }
             
-            // Perform the conversion
+            // Improved conversion with proper input handling
             var error: NSError?
+            var inputBufferUsed = false
+            
             let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+                guard !inputBufferUsed else {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
                 outStatus.pointee = .haveData
+                inputBufferUsed = true // Mark as used to ensure we only return the buffer once
                 return buffer
             }
             
@@ -318,46 +370,96 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
                     "code": "DEBUG",
                     "message": "Audio conversion failed: \(error?.localizedDescription ?? "Unknown error")"
                 ], shouldExitProcess: false)
-                return nil
+                return originalPath // Return original format file as fallback
             }
             
-            // Save the converted audio optimized for transcription
+            // Validate the converted audio
+            let convertedHasAudio = validateAudioBuffer(outputBuffer)
+            ResponseHandler.returnResponse([
+                "code": "DEBUG",
+                "message": "Conversion result: \(outputBuffer.frameLength) frames, hasValidAudio: \(convertedHasAudio)"
+            ], shouldExitProcess: false)
+            
+            if !convertedHasAudio {
+                ResponseHandler.returnResponse([
+                    "code": "DEBUG",
+                    "message": "Converted audio is invalid, using original format"
+                ], shouldExitProcess: false)
+                return originalPath // Return original format file if conversion corrupted audio
+            }
+            
+            // Save the converted audio with float format (better for transcription)
             let audioFile = try AVAudioFile(forWriting: URL(fileURLWithPath: chunkPath), 
                                           settings: [
                                             AVFormatIDKey: kAudioFormatLinearPCM,
-                                            AVSampleRateKey: 16000, // 16kHz for optimal transcription
-                                            AVNumberOfChannelsKey: 1, // Mono for transcription
-                                            AVLinearPCMBitDepthKey: 16,
-                                            AVLinearPCMIsFloatKey: false
+                                            AVSampleRateKey: 16000,
+                                            AVNumberOfChannelsKey: 1,
+                                            AVLinearPCMBitDepthKey: 32,
+                                            AVLinearPCMIsFloatKey: true, // Use float for better precision
+                                            AVLinearPCMIsBigEndianKey: false
                                           ])
             try audioFile.write(from: outputBuffer)
             
-            // Ensure file is written to disk by closing the file
-            // The file will be automatically closed when it goes out of scope
-            
-            // Verify file exists and has content immediately after creation
+            // Verify file exists and has content
             if FileManager.default.fileExists(atPath: chunkPath) {
                 let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunkPath)[.size] as? NSNumber)?.intValue ?? 0
                 ResponseHandler.returnResponse([
                     "code": "DEBUG",
-                    "message": "✅ File verified after creation: \(chunkPath) (\(fileSize) bytes)"
+                    "message": "✅ Converted file created: \(chunkPath) (\(fileSize) bytes)"
                 ], shouldExitProcess: false)
+                
+                // Clean up original file since conversion was successful
+                try? FileManager.default.removeItem(atPath: originalPath)
+                
+                return chunkPath
             } else {
                 ResponseHandler.returnResponse([
                     "code": "DEBUG", 
-                    "message": "❌ File NOT found immediately after creation: \(chunkPath)"
+                    "message": "❌ Converted file NOT found, using original: \(originalPath)"
                 ], shouldExitProcess: false)
+                return originalPath
             }
             
-            return chunkPath
         } catch {
-            // Debug: Log the specific error
             ResponseHandler.returnResponse([
                 "code": "DEBUG",
                 "message": "Failed to save audio chunk: \(error.localizedDescription)"
             ], shouldExitProcess: false)
             return nil
         }
+    }
+    
+    func validateAudioBuffer(_ buffer: AVAudioPCMBuffer) -> Bool {
+        guard buffer.frameLength > 0 else { return false }
+        
+        // Check if buffer has valid audio data by looking for non-zero samples
+        guard let floatChannelData = buffer.floatChannelData else { return false }
+        
+        let frameLength = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+        var maxAmplitude: Float = 0.0
+        var sampleCount = 0
+        
+        for channel in 0..<channelCount {
+            let channelData = floatChannelData[channel]
+            for frame in 0..<frameLength {
+                let sample = abs(channelData[frame])
+                maxAmplitude = max(maxAmplitude, sample)
+                if sample > 0.001 { // Threshold for non-silent audio
+                    sampleCount += 1
+                }
+            }
+        }
+        
+        // Consider buffer valid if it has some amplitude and non-silent samples
+        let hasAudio = maxAmplitude > 0.001 && sampleCount > frameLength / 20 // At least 5% non-silent
+        
+        ResponseHandler.returnResponse([
+            "code": "DEBUG",
+            "message": "Audio validation - Max amplitude: \(maxAmplitude), Non-silent samples: \(sampleCount)/\(frameLength * channelCount), Valid: \(hasAudio)"
+        ], shouldExitProcess: false)
+        
+        return hasAudio
     }
 
     func updateAvailableContent() {
@@ -371,6 +473,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
     func setupRecordingEnvironment() {
         guard let firstDisplay = contentEligibleForSharing?.displays.first else {
             ResponseHandler.returnResponse(["code": "NO_DISPLAY_FOUND"])
+            semaphoreRecordingStopped.signal() // Signal to exit
             return
         }
 
@@ -384,6 +487,14 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
             RecorderCLI.audioFileForRecording = try AVAudioFile(forWriting: URL(fileURLWithPath: path), settings: [AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVFormatIDKey: kAudioFormatFLAC], commonFormat: .pcmFormatFloat32, interleaved: false)
         } catch {
             ResponseHandler.returnResponse(["code": "AUDIO_FILE_CREATION_FAILED"])
+        }
+    }
+
+    func prepareSystemAudioFile(at path: String) {
+        do {
+            RecorderCLI.systemAudioFile = try AVAudioFile(forWriting: URL(fileURLWithPath: path), settings: [AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVFormatIDKey: kAudioFormatFLAC], commonFormat: .pcmFormatFloat32, interleaved: false)
+        } catch {
+            ResponseHandler.returnResponse(["code": "SYSTEM_AUDIO_FILE_CREATION_FAILED"])
         }
     }
 
@@ -413,6 +524,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
             }
         } catch {
             ResponseHandler.returnResponse(["code": "CAPTURE_FAILED"])
+            semaphoreRecordingStopped.signal() // Signal to exit on failure
         }
     }
 
@@ -430,11 +542,21 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
         self.streamFunctionCalled = true
         guard let audioBuffer = sampleBuffer.asPCMBuffer, sampleBuffer.isValid else { return }
 
-        // Write to main recording file
+        // Write to main combined recording file
         do {
             try RecorderCLI.audioFileForRecording?.write(from: audioBuffer)
         } catch {
             ResponseHandler.returnResponse(["code": "AUDIO_BUFFER_WRITE_FAILED"])
+        }
+        
+        // Write to system-only recording file for debugging
+        do {
+            try RecorderCLI.systemAudioFile?.write(from: audioBuffer)
+        } catch {
+            ResponseHandler.returnResponse([
+                "code": "DEBUG",
+                "message": "Failed to write to system-only file: \(error.localizedDescription)"
+            ], shouldExitProcess: false)
         }
         
         // Also buffer for live transcription if enabled
@@ -447,13 +569,13 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
             // Log first buffer and then every 20 buffers to avoid spam
             if currentQueueSize == 1 {
                 ResponseHandler.returnResponse([
-                    "code": "DEBUG",
-                    "message": "First audio buffer received for live transcription!"
+                    "code": "SYSTEM_AUDIO_DEBUG",
+                    "message": "🎵 SYSTEM AUDIO: First audio buffer received for live transcription!"
                 ], shouldExitProcess: false)
             } else if currentQueueSize % 20 == 0 {
                 ResponseHandler.returnResponse([
-                    "code": "DEBUG",
-                    "message": "Audio buffer queue size: \(currentQueueSize) buffers"
+                    "code": "SYSTEM_AUDIO_DEBUG",
+                    "message": "🎵 SYSTEM AUDIO: Audio buffer queue size: \(currentQueueSize) buffers"
                 ], shouldExitProcess: false)
             }
         }
@@ -470,6 +592,7 @@ class RecorderCLI: NSObject, SCStreamDelegate, SCStreamOutput {
         screenCaptureStream?.stopCapture()
         screenCaptureStream = nil
         audioFileForRecording = nil
+        systemAudioFile = nil
     }
     
     func stopRecording() {

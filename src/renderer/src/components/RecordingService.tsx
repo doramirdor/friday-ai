@@ -97,6 +97,8 @@ export const useRecordingService = ({
   const recordingChunksRef = useRef<Blob[]>([])
   const recordingStartTime = useRef<number>(0)
 
+
+
   // Format time utility
   const formatTime = useCallback((seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -148,12 +150,15 @@ export const useRecordingService = ({
 
   // Handle transcription results
   const handleTranscriptionResult = useCallback((result: TranscriptionResult & { stream_type?: string }): void => {
-    console.log('📝 Received transcription:', {
+    console.log('📝 COMPLETE Received transcription result:', {
       type: result.type,
       text: result.text?.substring(0, 50) + (result.text && result.text.length > 50 ? '...' : ''),
       stream_type: result.stream_type,
+      original_stream_type: result.stream_type,
+      has_stream_type: !!result.stream_type,
       language: result.language,
-      language_probability: result.language_probability
+      language_probability: result.language_probability,
+      full_result_keys: Object.keys(result)
     })
 
     if (result.type === 'transcript' && result.text && result.text.trim() !== '' && result.text !== 'undefined') {
@@ -178,7 +183,8 @@ export const useRecordingService = ({
         liveTextSystemAudioRef.current = liveTextSystemAudioRef.current + ' ' + result.text
         const updatedSystemTranscript = [...systemAudioTranscriptRef.current, newLine]
         systemAudioTranscriptRef.current = updatedSystemTranscript
-        console.log('🎵 Added system audio transcript line:', newLine, 'Total system lines:', updatedSystemTranscript.length)
+        console.log('🎵 SYSTEM_AUDIO_DEBUG: Added system audio transcript line:', newLine, 'Total system lines:', updatedSystemTranscript.length)
+        console.log('🎵 SYSTEM_AUDIO_DEBUG: System live text now:', liveTextSystemAudioRef.current.substring(0, 100) + '...')
       } else {
         // Add to microphone live text and transcript
         liveTextMicrophoneRef.current = liveTextMicrophoneRef.current + ' ' + result.text
@@ -217,7 +223,7 @@ export const useRecordingService = ({
       const recordingPath = '/Users/amirdor/Documents/Friday Recordings'
       const filename = `combined-recording-${timestamp}.wav`
 
-      // Start combined recording via Swift recorder
+      // Start combined recording via Swift recorder (this will now create both combined and system-only files)
       const result = await window.api.swiftRecorder.startCombinedRecording(
         recordingPath,
         filename
@@ -245,13 +251,18 @@ export const useRecordingService = ({
           currentTimeRef.current += 1
         }, 1000)
 
-        // Start microphone transcription and rely on Swift recorder for system audio transcription
+        // Start microphone transcription for the microphone stream
         await startMicrophoneOnlyTranscription()
         
         console.log('✅ Combined recording started successfully')
+        console.log('📁 System-only file will be created: system_only_' + filename)
         console.log('🎤 Microphone live transcription enabled')
         console.log('🎵 System audio live transcription enabled via Swift recorder')
         console.log('📝 Live transcription from both microphone and system audio streams')
+        console.log('🔍 Debug: You will now have separate files to analyze:')
+        console.log('   - Combined: ' + filename + ' (system + microphone)')
+        console.log('   - System only: system_only_' + filename + ' (system audio only)')
+        console.log('   - Transcription chunks: system_audio_chunk_*.wav (for debugging)')
       } else {
         console.error('Failed to start combined recording:', result.error)
         transcriptionStatusRef.current = 'error'
@@ -263,6 +274,8 @@ export const useRecordingService = ({
       onTranscriptionStatusChange('error')
     }
   }, [onTranscriptionStatusChange])
+
+
 
   // Start microphone-only transcription for combined recording (avoids system audio conflicts)
   const startMicrophoneOnlyTranscription = useCallback(async (): Promise<void> => {
@@ -389,8 +402,8 @@ export const useRecordingService = ({
                 console.log('🎤 Chunks:', chunks.length)
                 const completeBlob = new Blob(chunks, { type: mimeType })
                 console.log(`🎤 Audio chunk: ${completeBlob.size} bytes, hasAudio: ${hasAudio}`)
-                // Only process if we have sufficient audio data and detected audio activity
-                if (completeBlob.size > 2000) {
+                // Only process if we have sufficient audio data
+                if (completeBlob.size > 500) {
                   const arrayBuffer = await completeBlob.arrayBuffer()
                   const result = await window.api.transcription.processChunk(arrayBuffer)
                   if (result.success) {
@@ -417,7 +430,7 @@ export const useRecordingService = ({
             if (recorder.state === 'recording') {
               recorder.stop()
             }
-          }, 5000) // Increased to 5 seconds for better speech detection
+          }, 3000) // 3 seconds for better speech detection while maintaining responsiveness
         })
       }
 
@@ -426,7 +439,7 @@ export const useRecordingService = ({
         while (isRecordingRef.current && isCombinedRecordingRef.current) {
           await processTranscriptionChunk()
           if (isRecordingRef.current && isCombinedRecordingRef.current) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 500))
+            await new Promise<void>((resolve) => setTimeout(resolve, 200))
           }
         }
       }
@@ -913,10 +926,18 @@ export const useRecordingService = ({
           })
         }
       } else {
-        console.error('Failed to stop combined recording:', result.error)
-        
-        // Check if it's a timeout error - the recording may have actually completed
-        if (result.error && result.error.includes('timeout')) {
+        // Check if it's a "No recording in progress" error - this is normal, not an error
+        if (result.error && result.error.includes('No recording in progress')) {
+          console.log('⚠️ No recording in progress - this is normal if stop was called multiple times')
+          console.log('🔄 Triggering stopped callback to maintain consistent state')
+          
+          // Trigger stopped callback to maintain consistent state
+          onCombinedRecordingStopped({
+            success: true,
+            code: 'RECORDING_STOPPED',
+            warning: 'No recording was in progress'
+          })
+        } else if (result.error && result.error.includes('timeout')) {
           console.log('⚠️ Timeout error detected - recording may have completed successfully')
           console.log('🔄 Triggering stopped callback to preserve transcript data')
           
@@ -927,7 +948,9 @@ export const useRecordingService = ({
             warning: 'Recording completed but path verification timed out'
           })
         } else {
-          // Trigger failure callback for non-timeout errors
+          console.error('Failed to stop combined recording:', result.error)
+          
+          // Trigger failure callback for actual errors
           onCombinedRecordingFailed({
             success: false,
             error: result.error,

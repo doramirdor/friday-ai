@@ -56,8 +56,11 @@ export interface Settings {
   enableGlobalContext: boolean
   includeContextInTranscriptions: boolean
   includeContextInActionItems: boolean
+  // Two-Party Consent Compliance
+  twoPartyConsent: boolean
   // AI Model Configuration
   aiProvider: 'gemini' | 'ollama'
+  geminiModel: 'gemini-1.5-pro-latest' | 'gemini-2.0-flash-exp' | 'gemini-2.5-flash-lite-preview-06-17'
   ollamaModel: 'mistral:7b' | 'qwen2.5:1.5b' | 'qwen2.5:0.5b' | 'gemma2:2b'
   ollamaApiUrl: string
 }
@@ -137,7 +140,9 @@ class DatabaseService {
           enable_global_context BOOLEAN DEFAULT 1,
           include_context_in_transcriptions BOOLEAN DEFAULT 1,
           include_context_in_action_items BOOLEAN DEFAULT 1,
+          two_party_consent BOOLEAN DEFAULT 0,
           ai_provider TEXT DEFAULT 'gemini',
+          gemini_model TEXT DEFAULT 'gemini-2.5-flash-lite-preview-06-17',
           ollama_model TEXT DEFAULT 'mistral:7b',
           ollama_api_url TEXT DEFAULT 'http://localhost:11434'
         )
@@ -238,8 +243,10 @@ class DatabaseService {
           }
 
           const hasAiProvider = settingsRows.some(row => row.name === 'ai_provider')
+          const hasGeminiModel = settingsRows.some(row => row.name === 'gemini_model')
           const hasOllamaModel = settingsRows.some(row => row.name === 'ollama_model')
           const hasOllamaApiUrl = settingsRows.some(row => row.name === 'ollama_api_url')
+          const hasTwoPartyConsent = settingsRows.some(row => row.name === 'two_party_consent')
 
           if (!hasAiProvider) {
             console.log('Adding ai_provider column to settings table...')
@@ -250,6 +257,20 @@ class DatabaseService {
                   return
                 }
                 console.log('Successfully added ai_provider column')
+                resolveInner()
+              })
+            }))
+          }
+
+          if (!hasGeminiModel) {
+            console.log('Adding gemini_model column to settings table...')
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db!.run("ALTER TABLE settings ADD COLUMN gemini_model TEXT DEFAULT 'gemini-2.5-flash-lite-preview-06-17'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr)
+                  return
+                }
+                console.log('Successfully added gemini_model column')
                 resolveInner()
               })
             }))
@@ -278,6 +299,20 @@ class DatabaseService {
                   return
                 }
                 console.log('Successfully added ollama_api_url column')
+                resolveInner()
+              })
+            }))
+          }
+
+          if (!hasTwoPartyConsent) {
+            console.log('Adding two_party_consent column to settings table...')
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db!.run("ALTER TABLE settings ADD COLUMN two_party_consent BOOLEAN DEFAULT 0", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr)
+                  return
+                }
+                console.log('Successfully added two_party_consent column')
                 resolveInner()
               })
             }))
@@ -326,7 +361,9 @@ class DatabaseService {
             enable_global_context: 1,
             include_context_in_transcriptions: 1,
             include_context_in_action_items: 1,
+            two_party_consent: 0,
             ai_provider: 'gemini',
+            gemini_model: 'gemini-2.5-flash-lite-preview-06-17',
             ollama_model: 'mistral:7b',
             ollama_api_url: 'http://localhost:11434'
           }
@@ -337,8 +374,8 @@ class DatabaseService {
               auto_save_recordings, realtime_transcription, transcription_language,
               gemini_api_key, auto_generate_action_items, auto_suggest_tags,
               global_context, enable_global_context, include_context_in_transcriptions,
-              include_context_in_action_items, ai_provider, ollama_model, ollama_api_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              include_context_in_action_items, two_party_consent, ai_provider, gemini_model, ollama_model, ollama_api_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `
 
           this.db!.run(sql, Object.values(defaultSettings), (err) => {
@@ -655,7 +692,9 @@ class DatabaseService {
       enableGlobalContext: Boolean(row.enable_global_context),
       includeContextInTranscriptions: Boolean(row.include_context_in_transcriptions),
       includeContextInActionItems: Boolean(row.include_context_in_action_items),
+      twoPartyConsent: Boolean(row.two_party_consent),
       aiProvider: row.ai_provider as 'gemini' | 'ollama',
+      geminiModel: row.gemini_model as 'gemini-1.5-pro-latest' | 'gemini-2.0-flash-exp' | 'gemini-2.5-flash-lite-preview-06-17',
       ollamaModel: row.ollama_model as 'mistral:7b' | 'qwen2.5:1.5b' | 'qwen2.5:0.5b' | 'gemma2:2b',
       ollamaApiUrl: row.ollama_api_url as string
     }

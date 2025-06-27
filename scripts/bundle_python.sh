@@ -43,6 +43,10 @@ EOF
 # Install requirements
 pip install -r "$BUILD_DIR/requirements.txt"
 
+# Copy requirements.txt to the build subdirectory that PyInstaller expects
+mkdir -p "$BUILD_DIR/build/python"
+cp "$BUILD_DIR/requirements.txt" "$BUILD_DIR/build/python/requirements.txt"
+
 # Create a standalone Python script for Ollama
 cat > "$BUILD_DIR/friday_ollama.py" << 'EOF'
 #!/usr/bin/env python3

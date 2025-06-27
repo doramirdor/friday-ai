@@ -37,7 +37,9 @@ const SettingsScreen: React.FC = () => {
     enableGlobalContext: true,
     includeContextInTranscriptions: true,
     includeContextInActionItems: true,
+    twoPartyConsent: false,
     aiProvider: 'gemini',
+    geminiModel: 'gemini-2.5-flash-lite-preview-06-17',
     ollamaModel: 'mistral:7b',
     ollamaApiUrl: 'http://localhost:11434'
   })
@@ -323,7 +325,7 @@ const SettingsScreen: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="settings-row">
+                {/* <div className="settings-row">
                   <div className="settings-label">
                     <h4>Launch at Login</h4>
                     <p>Automatically start Friday when you log in to your Mac</p>
@@ -338,7 +340,7 @@ const SettingsScreen: React.FC = () => {
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
-                </div>
+                </div> */}
 
                 <div className="settings-row">
                   <div className="settings-label">
@@ -460,22 +462,7 @@ const SettingsScreen: React.FC = () => {
                 ))}
               </div>
 
-              <div
-                style={{
-                  marginTop: '24px',
-                  padding: '16px',
-                  background: 'var(--green-light)',
-                  borderRadius: 'var(--radius-md)',
-                  color: 'var(--green-dark)'
-                }}
-              >
-                <div className="flex gap-sm items-center">
-                  <HelpCircleIcon size={16} />
-                  <span className="text-sm font-medium">
-                    Tip: Global shortcuts work from any application. Click &ldquo;Change&rdquo; and press your desired key combination.
-                  </span>
-                </div>
-              </div>
+        
             </div>
           </div>
         )
@@ -547,11 +534,31 @@ const SettingsScreen: React.FC = () => {
                 </div>
 
                 {(settings.aiProvider || 'gemini') === 'gemini' && (
-                  <div className="settings-row">
-                    <div className="settings-label">
-                      <h4>Gemini API Key</h4>
-                      <p>Required for AI-powered transcription and analysis</p>
+                  <>
+                    <div className="settings-row">
+                      <div className="settings-label">
+                        <h4>Gemini Model</h4>
+                        <p>Choose which Gemini model to use for AI analysis</p>
+                      </div>
+                      <div className="settings-control">
+                        <select 
+                          className="input" 
+                          style={{ minWidth: '300px' }}
+                          value={settings.geminiModel || 'gemini-2.5-flash-lite-preview-06-17'}
+                          onChange={(e) => updateSetting('geminiModel', e.target.value as 'gemini-1.5-pro-latest' | 'gemini-2.0-flash-exp' | 'gemini-2.5-flash-lite-preview-06-17')}
+                        >
+                          <option value="gemini-2.5-flash-lite-preview-06-17">Gemini 2.5 Flash Lite (Recommended - Fast & Efficient)</option>
+                          <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (Most Capable)</option>
+                          <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
+                        </select>
+                      </div>
                     </div>
+
+                    <div className="settings-row">
+                      <div className="settings-label">
+                        <h4>Gemini API Key</h4>
+                        <p>Required for AI-powered transcription and analysis</p>
+                      </div>
                     <div className="settings-control">
                       <div className="input-group" style={{ marginBottom: 0 }}>
                         <input
@@ -583,6 +590,7 @@ const SettingsScreen: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                </>
                 )}
 
                 {(settings.aiProvider || 'gemini') === 'ollama' && (
@@ -687,7 +695,37 @@ const SettingsScreen: React.FC = () => {
                     </label>
                   </div>
                 </div>
+
+                <div className="settings-row">
+                  <div className="settings-label">
+                    <h4>Two-Party Consent Mode</h4>
+                    <p>Auto-delete recordings after processing (compliance mode)</p>
+                  </div>
+                  <div className="settings-control">
+                    <label className="toggle">
+                      <input 
+                        type="checkbox" 
+                        checked={settings.twoPartyConsent || false}
+                        onChange={(e) => updateSetting('twoPartyConsent', e.target.checked)}
+                      />
+                      <span className="toggle-slider"></span>
+                    </label>
+                  </div>
+                </div>
               </div>
+
+              {settings.twoPartyConsent && (
+                <div style={{
+                  padding: '12px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'rgba(255, 149, 0, 0.1)',
+                  color: 'var(--orange-dark)',
+                  fontSize: 'var(--font-size-sm)',
+                  marginTop: '16px'
+                }}>
+                  <strong>⚠️ Compliance Mode:</strong> When enabled, original recordings and transcripts will be permanently deleted after generating summaries and action items. Only the processed content will be retained for privacy compliance.
+                </div>
+              )}
 
               <div style={{ marginTop: '24px' }}>
                 <button 
@@ -773,7 +811,7 @@ const SettingsScreen: React.FC = () => {
                     </label>
                   </div>
                 </div>
-
+{/* 
                 <div className="settings-row">
                   <div className="settings-label">
                     <h4>Include in Transcriptions</h4>
@@ -789,7 +827,7 @@ const SettingsScreen: React.FC = () => {
                       <span className="toggle-slider"></span>
                     </label>
                   </div>
-                </div>
+                </div> */}
 
                 <div className="settings-row">
                   <div className="settings-label">

@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, systemPreferences } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, systemPreferences, Tray, Menu } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -15,10 +15,11 @@ import * as child_process from 'child_process'
 // Import services
 import { geminiService } from './gemini'
 import { ollamaService } from './ollama'
+import { complianceService } from './compliance'
 import { firstRunSetupService } from './firstRunSetup'
 
 let mainWindow: BrowserWindow | null = null
-// let tray: Tray | null = null
+let tray: Tray | null = null
 let transcriptionProcess: ChildProcess | null = null
 let transcriptionSocket: net.Socket | null = null
 let isTranscriptionReady = false
@@ -197,7 +198,7 @@ function createWindow(): void {
   })
 
   // Allow fullscreen toggle with F11 or Cmd+Ctrl+F
-  mainWindow.webContents.on('before-input-event', (event, input) => {
+  mainWindow.webContents.on('before-input-event', (_, input) => {
     if (input.key === 'F11' || (input.key === 'f' && input.control && input.meta)) {
       mainWindow?.setFullScreen(!mainWindow.isFullScreen())
     }
@@ -260,8 +261,7 @@ function getAppIcon(): string {
   return icon
 }
 
-// Function to get appropriate tray icon based on platform - currently unused
-/*
+// Function to get appropriate tray icon based on platform
 function getTrayIcon(): string {
   console.log('🔍 Resolving tray icon for platform:', process.platform)
   
@@ -314,7 +314,6 @@ function getTrayIcon(): string {
   console.log('⚠️ Using bundled fallback icon for tray:', icon)
   return icon
 }
-*/
 
 // Check if Swift recorder is available - Used by app initialization
 async function checkSwiftRecorderAvailability(): Promise<boolean> {
@@ -678,7 +677,8 @@ async function startCombinedRecording(
           const args = [
             '--record', resolvedPath,
             '--filename', baseFilename,
-            '--live-transcription'  // Enable live transcription chunks
+            '--live-transcription',  // Enable live transcription chunks
+            '--chunk-duration', '3.0'  // Longer chunks for better transcription quality
           ]
 
           console.log('Command:', recorderPath, args.join(' '))
@@ -762,13 +762,15 @@ async function startCombinedRecording(
                 })
               } else if (response.code === 'TRANSCRIPTION_CHUNK') {
                 // Handle live transcription chunks from system audio
-                console.log('🎵 Received system audio transcription chunk:', {
+                console.log('🎵 SYSTEM_AUDIO_DEBUG: Received system audio transcription chunk:', {
                   path: response.path,
                   stream_type: response.stream_type,
-                  socket_available: !!(transcriptionSocket && !transcriptionSocket.destroyed)
+                  socket_available: !!(transcriptionSocket && !transcriptionSocket.destroyed),
+                  file_exists: require('fs').existsSync(response.path),
+                  file_size: require('fs').existsSync(response.path) ? require('fs').statSync(response.path).size : 0
                 })
                 
-                if (transcriptionSocket && !transcriptionSocket.destroyed) {
+                if (transcriptionSocket && !transcriptionSocket.destroyed && isTranscriptionReady) {
                   // Send the chunk to transcription service with stream type
                   const request = {
                     type: 'dual_stream_chunk',
@@ -776,23 +778,48 @@ async function startCombinedRecording(
                     stream_type: response.stream_type || 'system'
                   }
                   
-                  console.log('📤 Sending system audio chunk request:', request)
+                  console.log('📤 SYSTEM_AUDIO_DEBUG: Sending system audio chunk request:', request)
                   
                   try {
                     transcriptionSocket.write(JSON.stringify(request) + '\n')
-                    console.log('✅ Successfully sent system audio chunk for transcription')
+                    console.log('✅ SYSTEM_AUDIO_DEBUG: Successfully sent system audio chunk for transcription')
                   } catch (error) {
-                    console.error('❌ Failed to send system audio chunk:', error)
+                    console.error('❌ SYSTEM_AUDIO_DEBUG: Failed to send system audio chunk:', error)
                   }
                 } else {
-                  console.warn('⚠️ Transcription socket not available for system audio chunk:', {
+                  console.warn('⚠️ SYSTEM_AUDIO_DEBUG: Transcription socket not available for system audio chunk:', {
                     socket_exists: !!transcriptionSocket,
-                    socket_destroyed: transcriptionSocket?.destroyed
+                    socket_destroyed: transcriptionSocket?.destroyed,
+                    service_ready: isTranscriptionReady
                   })
+                  
+                  // Queue the chunk for later processing if service isn't ready
+                  if (!isTranscriptionReady) {
+                    console.log('⏳ Queuing system audio chunk for later processing when service is ready')
+                    // Store chunk path for retry when service becomes ready
+                    setTimeout(() => {
+                      if (isTranscriptionReady && transcriptionSocket && !transcriptionSocket.destroyed) {
+                        const retryRequest = {
+                          type: 'dual_stream_chunk',
+                          audio_path: response.path,
+                          stream_type: response.stream_type || 'system'
+                        }
+                        try {
+                          transcriptionSocket.write(JSON.stringify(retryRequest) + '\n')
+                          console.log('✅ Successfully sent queued system audio chunk for transcription')
+                        } catch (error) {
+                          console.error('❌ Failed to send queued system audio chunk:', error)
+                        }
+                      }
+                    }, 2000) // Retry after 2 seconds
+                  }
                 }
               } else if (response.code === 'DEBUG') {
                 // Handle debug messages from Swift recorder
                 console.log('🔍 Swift recorder debug:', response.message)
+              } else if (response.code === 'SYSTEM_AUDIO_DEBUG') {
+                // Handle system audio debug messages from Swift recorder
+                console.log('🎵 SYSTEM_AUDIO_DEBUG:', response.message)
               } else if (response.code === 'PERMISSION_DENIED') {
                 clearTimeout(outputTimeoutId)
                 clearInterval(hangDetectionInterval)
@@ -1330,7 +1357,14 @@ function startTranscriptionService(): Promise<void> {
 
 function connectToTranscriptionSocket(): Promise<void> {
   return new Promise((resolve, reject) => {
+    console.log('🔍 DEBUG: Starting connectToTranscriptionSocket', {
+      actualTranscriptionPort,
+      existingSocket: !!transcriptionSocket,
+      existingSocketDestroyed: transcriptionSocket?.destroyed
+    })
+    
     if (transcriptionSocket) {
+      console.log('🔍 DEBUG: Destroying existing socket')
       transcriptionSocket.destroy()
     }
     
@@ -1339,8 +1373,10 @@ function connectToTranscriptionSocket(): Promise<void> {
     // Remove timeout - let it stay connected
     // transcriptionSocket.setTimeout(30000) // 30 second timeout
 
+    console.log(`🔍 DEBUG: Attempting to connect to port ${actualTranscriptionPort}`)
     transcriptionSocket.connect(actualTranscriptionPort, 'localhost', () => {
       console.log(`🔌 Connected to transcription socket server on port ${actualTranscriptionPort}`)
+      console.log('🔍 DEBUG: Connection successful, resolving promise')
       resolve()
     })
 
@@ -1354,7 +1390,32 @@ function connectToTranscriptionSocket(): Promise<void> {
         for (const line of lines) {
           const result = JSON.parse(line)
 
-          if (mainWindow) {
+          console.log('📝 MAIN PROCESS forwarding transcription result:', {
+            type: result.type,
+            stream_type: result.stream_type,
+            has_stream_type: !!result.stream_type,
+            text_preview: result.text?.substring(0, 50) || result.message,
+            all_keys: Object.keys(result)
+          })
+
+          if (result.stream_type === 'system') {
+            console.log('🎵 SYSTEM_AUDIO_DEBUG: Transcription result for system audio:', {
+              type: result.type,
+              text_length: result.text?.length || 0,
+              text_preview: result.text?.substring(0, 100) || result.message,
+              language: result.language,
+              language_probability: result.language_probability
+            })
+          }
+
+          if (result.type === 'live_text') {
+            if (mainWindow) {
+              mainWindow.webContents.send('on-live-transcription-data', {
+                text: result.text,
+                stream_type: result.stream_type
+              })
+            }
+          } else if (mainWindow) {
             mainWindow.webContents.send('transcription-result', result)
           }
 
@@ -1370,9 +1431,15 @@ function connectToTranscriptionSocket(): Promise<void> {
     })
 
     transcriptionSocket.on('error', (error) => {
-      console.error('Socket error:', error)
+      console.error('🔍 DEBUG: Socket error:', error)
+      console.log('🔍 DEBUG: Error context:', {
+        isTranscriptionReady,
+        errorCode: (error as any).code,
+        errorMessage: error.message
+      })
       // Don't reject here during normal operation, only during initial connection
       if (!isTranscriptionReady) {
+        console.log('🔍 DEBUG: Rejecting connection promise due to error')
         reject(error)
       }
     })
@@ -1677,14 +1744,46 @@ function setupTranscriptionHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('transcription:is-ready', () => {
-    // More comprehensive readiness check
+  ipcMain.handle('transcription:is-ready', async () => {
+    // Check if we can connect to an existing transcription service
     const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed
     const serviceReady = isTranscriptionReady && !isTranscriptionStarting
     const processRunning = transcriptionProcess && !transcriptionProcess.killed
     
-    return { 
-      ready: serviceReady && socketConnected && processRunning,
+    console.log('🔍 DEBUG: transcription:is-ready check:', {
+      socketConnected,
+      serviceReady,
+      processRunning,
+      isTranscriptionReady,
+      isTranscriptionStarting,
+      hasTranscriptionSocket: !!transcriptionSocket,
+      socketDestroyed: transcriptionSocket?.destroyed
+    })
+    
+    // If no connection but not starting, try to connect to existing service
+    if (!socketConnected && !isTranscriptionStarting) {
+      try {
+        console.log('🔍 Attempting to connect to existing transcription service...')
+        await connectToTranscriptionSocket()
+        isTranscriptionReady = true
+        console.log('✅ Connected to existing transcription service')
+        return { 
+          ready: true,
+          details: {
+            serviceReady: true,
+            socketConnected: true,
+            processRunning: false, // External process
+            isStarting: false,
+            connectedToExternal: true
+          }
+        }
+      } catch (error) {
+        console.log('❌ No existing transcription service found:', error)
+      }
+    }
+    
+    const finalResult = { 
+      ready: serviceReady && socketConnected,
       details: {
         serviceReady,
         socketConnected,
@@ -1692,6 +1791,9 @@ function setupTranscriptionHandlers(): void {
         isStarting: isTranscriptionStarting
       }
     }
+    
+    console.log('🔍 DEBUG: transcription:is-ready final result:', finalResult)
+    return finalResult
   })
 
   ipcMain.handle('transcription:process-chunk', async (_, audioBuffer: ArrayBuffer) => {
@@ -1708,7 +1810,9 @@ function setupTranscriptionHandlers(): void {
       return { success: false, error: 'Socket connection not available' }
     }
     
-    if (!processRunning) {
+    // For external transcription services, we don't have a process reference
+    // Only require process to be running if we started it ourselves
+    if (transcriptionProcess && !processRunning) {
       return { success: false, error: 'Transcription process not running' }
     }
 
@@ -1716,8 +1820,11 @@ function setupTranscriptionHandlers(): void {
       const buffer = Buffer.from(audioBuffer)
       const filePath = saveAudioChunk(buffer)
 
+      console.log(`🎤 Processing audio chunk: ${buffer.length} bytes -> ${filePath}`)
+      
       // Send the file path via socket
       transcriptionSocket!.write(filePath + '\n')
+      console.log(`📤 Sent chunk path to transcription service: ${filePath}`)
 
       return { success: true }
     } catch (error) {
@@ -1741,7 +1848,9 @@ function setupTranscriptionHandlers(): void {
       return { success: false, error: 'Socket connection not available' }
     }
     
-    if (!processRunning) {
+    // For external transcription services, we don't have a process reference
+    // Only require process to be running if we started it ourselves
+    if (transcriptionProcess && !processRunning) {
       return { success: false, error: 'Transcription process not running' }
     }
 
@@ -1962,7 +2071,27 @@ function setupDatabaseHandlers(): void {
   })
 
   ipcMain.handle('db:updateMeeting', async (_, id: number, meeting: Partial<Meeting>) => {
-    return await databaseService.updateMeeting(id, meeting)
+    const result = await databaseService.updateMeeting(id, meeting)
+    
+    // After successful update, check if we should process for compliance
+    try {
+      const shouldProcess = await complianceService.shouldProcessForCompliance(id)
+      if (shouldProcess) {
+        // Get the updated meeting to check if it has transcript data
+        const updatedMeeting = await databaseService.getMeeting(id)
+        if (updatedMeeting && updatedMeeting.transcript && updatedMeeting.transcript.length > 0) {
+          console.log(`🔐 Triggering two-party consent compliance processing for meeting ${id}`)
+          // Process compliance asynchronously to not block the save operation
+          complianceService.processTwoPartyConsentCompliance(id).catch(error => {
+            console.error(`❌ Background compliance processing failed for meeting ${id}:`, error)
+          })
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Error checking compliance requirements for meeting ${id}:`, error)
+    }
+    
+    return result
   })
 
   ipcMain.handle('db:deleteMeeting', async (_, id: number) => {
@@ -1977,9 +2106,12 @@ function setupDatabaseHandlers(): void {
   ipcMain.handle('db:updateSettings', async (_, settings: Partial<Settings>) => {
     const result = await databaseService.updateSettings(settings)
     
-    // Update Gemini API key if it was changed
+    // Update Gemini API key and model if they were changed
     if (settings.geminiApiKey !== undefined) {
       geminiService.setApiKey(settings.geminiApiKey)
+    }
+    if (settings.geminiModel !== undefined) {
+      geminiService.setDefaultModel(settings.geminiModel)
     }
     
     return result
@@ -2180,61 +2312,61 @@ function unregisterGlobalShortcuts(): void {
   console.log('🗑️ Global shortcuts unregistered')
 }
 
-// Tray functionality - currently not used but available for future implementation
-// function createTray(): void {
-//   tray = new Tray(getTrayIcon())
-//   
-//   const contextMenu = Menu.buildFromTemplate([
-//     {
-//       label: 'Show Friday',
-//       click: () => {
-//         if (mainWindow) {
-//           if (mainWindow.isMinimized()) mainWindow.restore()
-//           mainWindow.show()
-//           mainWindow.focus()
-//         }
-//       }
-//     },
-//     {
-//       label: 'Hide Friday',
-//       click: () => {
-//         if (mainWindow) {
-//           mainWindow.hide()
-//         }
-//       }
-//     },
-//     { type: 'separator' },
-//     {
-//       label: 'Quit',
-//       click: () => {
-//         app.quit()
-//       }
-//     }
-//   ])
-//   
-//   tray.setContextMenu(contextMenu)
-//   tray.setToolTip('Friday - AI Meeting Assistant')
-//   
-//   // Handle tray click
-//   tray.on('click', () => {
-//     if (mainWindow) {
-//       if (mainWindow.isVisible()) {
-//         mainWindow.hide()
-//       } else {
-//         if (mainWindow.isMinimized()) mainWindow.restore()
-//         mainWindow.show()
-//         mainWindow.focus()
-//       }
-//     }
-//   })
-// }
+// Tray functionality
+function createTray(): void {
+  tray = new Tray(getTrayIcon())
+  
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show Friday',
+      click: () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      }
+    },
+    {
+      label: 'Hide Friday',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.hide()
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.quit()
+      }
+    }
+  ])
+  
+  tray.setContextMenu(contextMenu)
+  tray.setToolTip('Friday - AI Meeting Assistant')
+  
+  // Handle tray click
+  tray.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide()
+      } else {
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    }
+  })
+}
 
-// function destroyTray(): void {
-//   if (tray) {
-//     tray.destroy()
-//     tray = null
-//   }
-// }
+function destroyTray(): void {
+  if (tray) {
+    tray.destroy()
+    tray = null
+  }
+}
 
 function updateShortcuts(newShortcuts: Record<string, string>): boolean {
   try {
@@ -2257,6 +2389,27 @@ function setupSystemHandlers(): void {
   ipcMain.handle('system:updateShortcuts', async (_, shortcuts: Record<string, string>) => {
     const success = updateShortcuts(shortcuts)
     return { success }
+  })
+
+  // Menu bar toggle
+  ipcMain.handle('system:toggle-menu-bar', async (_, show: boolean) => {
+    try {
+      if (show) {
+        createTray()
+        console.log('✅ Menu bar tray created')
+        return { success: true, message: 'Menu bar icon enabled' }
+      } else {
+        destroyTray()
+        console.log('✅ Menu bar tray destroyed')
+        return { success: true, message: 'Menu bar icon disabled' }
+      }
+    } catch (error) {
+      console.error('❌ Failed to toggle menu bar:', error)
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      }
+    }
   })
 
   // System info
@@ -2305,12 +2458,22 @@ app.whenReady().then(async () => {
     // Seed database with sample data
     await seedDatabase()
     
-    // Initialize Gemini API key from settings
+    // Initialize Gemini API key and model from settings
     try {
       const settings = await databaseService.getSettings()
       if (settings.geminiApiKey) {
         geminiService.setApiKey(settings.geminiApiKey)
         console.log('Gemini API key initialized from settings')
+      }
+      if (settings.geminiModel) {
+        geminiService.setDefaultModel(settings.geminiModel)
+        console.log('Gemini model initialized from settings:', settings.geminiModel)
+      }
+      
+      // Initialize menu bar if enabled in settings
+      if (settings.showInMenuBar) {
+        createTray()
+        console.log('✅ Menu bar tray initialized from settings')
       }
       
       // Clean up any existing files with double extensions
@@ -2387,6 +2550,9 @@ app.on('window-all-closed', async () => {
 
   // Unregister global shortcuts
   unregisterGlobalShortcuts()
+  
+  // Destroy tray
+  destroyTray()
 
   // Close database connection
   await databaseService.close()
@@ -2400,6 +2566,7 @@ app.on('window-all-closed', async () => {
 app.on('before-quit', async () => {
   stopTranscriptionService()
   unregisterGlobalShortcuts()
+  destroyTray()
   await databaseService.close()
 })
 

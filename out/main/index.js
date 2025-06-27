@@ -94,7 +94,9 @@ class DatabaseService {
           enable_global_context BOOLEAN DEFAULT 1,
           include_context_in_transcriptions BOOLEAN DEFAULT 1,
           include_context_in_action_items BOOLEAN DEFAULT 1,
+          two_party_consent BOOLEAN DEFAULT 0,
           ai_provider TEXT DEFAULT 'gemini',
+          gemini_model TEXT DEFAULT 'gemini-2.5-flash-lite-preview-06-17',
           ollama_model TEXT DEFAULT 'mistral:7b',
           ollama_api_url TEXT DEFAULT 'http://localhost:11434'
         )
@@ -180,8 +182,10 @@ class DatabaseService {
             return;
           }
           const hasAiProvider = settingsRows.some((row) => row.name === "ai_provider");
+          const hasGeminiModel = settingsRows.some((row) => row.name === "gemini_model");
           const hasOllamaModel = settingsRows.some((row) => row.name === "ollama_model");
           const hasOllamaApiUrl = settingsRows.some((row) => row.name === "ollama_api_url");
+          const hasTwoPartyConsent = settingsRows.some((row) => row.name === "two_party_consent");
           if (!hasAiProvider) {
             console.log("Adding ai_provider column to settings table...");
             migrations.push(new Promise((resolveInner, rejectInner) => {
@@ -191,6 +195,19 @@ class DatabaseService {
                   return;
                 }
                 console.log("Successfully added ai_provider column");
+                resolveInner();
+              });
+            }));
+          }
+          if (!hasGeminiModel) {
+            console.log("Adding gemini_model column to settings table...");
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db.run("ALTER TABLE settings ADD COLUMN gemini_model TEXT DEFAULT 'gemini-2.5-flash-lite-preview-06-17'", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr);
+                  return;
+                }
+                console.log("Successfully added gemini_model column");
                 resolveInner();
               });
             }));
@@ -217,6 +234,19 @@ class DatabaseService {
                   return;
                 }
                 console.log("Successfully added ollama_api_url column");
+                resolveInner();
+              });
+            }));
+          }
+          if (!hasTwoPartyConsent) {
+            console.log("Adding two_party_consent column to settings table...");
+            migrations.push(new Promise((resolveInner, rejectInner) => {
+              this.db.run("ALTER TABLE settings ADD COLUMN two_party_consent BOOLEAN DEFAULT 0", (alterErr) => {
+                if (alterErr) {
+                  rejectInner(alterErr);
+                  return;
+                }
+                console.log("Successfully added two_party_consent column");
                 resolveInner();
               });
             }));
@@ -258,7 +288,9 @@ class DatabaseService {
             enable_global_context: 1,
             include_context_in_transcriptions: 1,
             include_context_in_action_items: 1,
+            two_party_consent: 0,
             ai_provider: "gemini",
+            gemini_model: "gemini-2.5-flash-lite-preview-06-17",
             ollama_model: "mistral:7b",
             ollama_api_url: "http://localhost:11434"
           };
@@ -268,8 +300,8 @@ class DatabaseService {
               auto_save_recordings, realtime_transcription, transcription_language,
               gemini_api_key, auto_generate_action_items, auto_suggest_tags,
               global_context, enable_global_context, include_context_in_transcriptions,
-              include_context_in_action_items, ai_provider, ollama_model, ollama_api_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              include_context_in_action_items, two_party_consent, ai_provider, gemini_model, ollama_model, ollama_api_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `;
           this.db.run(sql, Object.values(defaultSettings), (err2) => {
             if (err2) {
@@ -543,7 +575,9 @@ class DatabaseService {
       enableGlobalContext: Boolean(row.enable_global_context),
       includeContextInTranscriptions: Boolean(row.include_context_in_transcriptions),
       includeContextInActionItems: Boolean(row.include_context_in_action_items),
+      twoPartyConsent: Boolean(row.two_party_consent),
       aiProvider: row.ai_provider,
+      geminiModel: row.gemini_model,
       ollamaModel: row.ollama_model,
       ollamaApiUrl: row.ollama_api_url
     };
@@ -575,17 +609,22 @@ async function seedDatabase() {
 }
 class GeminiService {
   apiKey = null;
+  defaultModel = "gemini-2.5-flash-lite-preview-06-17";
   setApiKey(apiKey) {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY || null;
   }
-  async makeGeminiRequest(prompt, model = "gemini-1.5-pro-latest") {
+  setDefaultModel(model) {
+    this.defaultModel = model;
+  }
+  async makeGeminiRequest(prompt, model) {
+    const selectedModel = model || this.defaultModel;
     console.log("🔑 Gemini API Key check:", { hasKey: !!this.apiKey, keyLength: this.apiKey?.length || 0 });
     if (!this.apiKey) {
       console.error("❌ Gemini API key not configured");
       return { success: false, error: "Gemini API key not configured" };
     }
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${this.apiKey}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -771,7 +810,7 @@ Make it comprehensive but well-organized and easy to read. Focus on actionable i
   async generateMessage(options) {
     try {
       const { type, data } = options;
-      const model = options.model || "gemini-1.5-pro-latest";
+      const model = options.model || this.defaultModel;
       const contextSections = [];
       if (data.globalContext) {
         contextSections.push(`GLOBAL CONTEXT:
@@ -967,7 +1006,7 @@ Instructions:
 - Provide actionable insights and recommendations when appropriate
 
 Respond with a well-structured, informative answer that combines both sources appropriately.`;
-      const result = await this.makeGeminiRequest(prompt, "gemini-2.0-flash-exp");
+      const result = await this.makeGeminiRequest(prompt);
       if (!result.success || !result.content) {
         return { success: false, error: result.error || "Failed to get answer" };
       }
@@ -1331,6 +1370,150 @@ Answer:`;
   }
 }
 const ollamaService = new OllamaService();
+class ComplianceService {
+  isProcessing = /* @__PURE__ */ new Set();
+  async processTwoPartyConsentCompliance(meetingId) {
+    if (this.isProcessing.has(meetingId)) {
+      console.log(`🔄 Two-party consent processing already in progress for meeting ${meetingId}`);
+      return;
+    }
+    try {
+      this.isProcessing.add(meetingId);
+      console.log(`🔐 Starting two-party consent compliance processing for meeting ${meetingId}`);
+      const settings = await databaseService.getSettings();
+      if (!settings.twoPartyConsent) {
+        console.log(`⏭️ Two-party consent not enabled, skipping compliance processing for meeting ${meetingId}`);
+        return;
+      }
+      const meeting = await databaseService.getMeeting(meetingId);
+      if (!meeting) {
+        console.error(`❌ Meeting ${meetingId} not found for compliance processing`);
+        return;
+      }
+      if (!meeting.transcript || meeting.transcript.length === 0) {
+        console.log(`⏭️ No transcript data for meeting ${meetingId}, skipping compliance processing`);
+        return;
+      }
+      console.log(`📝 Processing transcript with ${meeting.transcript.length} lines for compliance`);
+      const summaryResult = await this.generateExtendedSummary(meeting, settings);
+      if (!summaryResult.success) {
+        console.error(`❌ Failed to generate extended summary for meeting ${meetingId}:`, summaryResult.error);
+        return;
+      }
+      const actionItemsResult = await this.generateActionItems(meeting, settings);
+      if (!actionItemsResult.success) {
+        console.error(`❌ Failed to generate action items for meeting ${meetingId}:`, actionItemsResult.error);
+        return;
+      }
+      const complianceUpdate = {
+        summary: summaryResult.summary,
+        actionItems: actionItemsResult.actionItems,
+        // Clear sensitive data for compliance
+        transcript: [],
+        // Remove original transcript
+        recordingPath: "",
+        // Remove recording path reference
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      await databaseService.updateMeeting(meetingId, complianceUpdate);
+      console.log(`✅ Updated meeting ${meetingId} with compliance-safe content`);
+      await this.deleteRecordingFiles(meeting.recordingPath);
+      console.log(`🔐 Two-party consent compliance processing completed for meeting ${meetingId}`);
+    } catch (error) {
+      console.error(`❌ Error during two-party consent compliance processing for meeting ${meetingId}:`, error);
+    } finally {
+      this.isProcessing.delete(meetingId);
+    }
+  }
+  async generateExtendedSummary(meeting, settings) {
+    try {
+      console.log(`📄 Generating extended summary for compliance processing`);
+      const result = await geminiService.generateSummaryOnly({
+        transcript: meeting.transcript,
+        globalContext: settings.enableGlobalContext ? settings.globalContext : "",
+        meetingContext: meeting.context,
+        notes: meeting.notes || "",
+        existingTitle: meeting.title
+      });
+      if (result.success && result.summary) {
+        console.log(`✅ Generated extended summary (${result.summary.length} characters)`);
+        return {
+          success: true,
+          summary: result.summary
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error || "Unknown error generating summary"
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  async generateActionItems(meeting, settings) {
+    try {
+      console.log(`📋 Generating action items for compliance processing`);
+      const result = await geminiService.generateMeetingContent({
+        transcript: meeting.transcript,
+        globalContext: settings.enableGlobalContext ? settings.globalContext : "",
+        meetingContext: meeting.context,
+        notes: meeting.notes || "",
+        existingTitle: meeting.title
+      });
+      if (result.success && result.data?.actionItems) {
+        console.log(`✅ Generated ${result.data.actionItems.length} action items`);
+        return {
+          success: true,
+          actionItems: result.data.actionItems
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error || "Unknown error generating action items"
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
+  }
+  async deleteRecordingFiles(recordingPath) {
+    if (!recordingPath) {
+      console.log(`📁 No recording path to delete`);
+      return;
+    }
+    const pathsToDelete = Array.isArray(recordingPath) ? recordingPath : [recordingPath];
+    for (const filePath of pathsToDelete) {
+      if (!filePath) continue;
+      try {
+        if (fs__namespace.existsSync(filePath)) {
+          fs__namespace.unlinkSync(filePath);
+          console.log(`🗑️ Deleted recording file for compliance: ${filePath}`);
+        } else {
+          console.log(`📁 Recording file not found (may have been moved/deleted): ${filePath}`);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to delete recording file ${filePath}:`, error);
+      }
+    }
+  }
+  async shouldProcessForCompliance(meetingId) {
+    try {
+      const settings = await databaseService.getSettings();
+      return settings.twoPartyConsent || false;
+    } catch (error) {
+      console.error(`❌ Error checking compliance settings for meeting ${meetingId}:`, error);
+      return false;
+    }
+  }
+}
+const complianceService = new ComplianceService();
 class FirstRunSetupService {
   setupWindow = null;
   setupProcess = null;
@@ -1614,6 +1797,7 @@ class FirstRunSetupService {
 }
 const firstRunSetupService = new FirstRunSetupService();
 let mainWindow = null;
+let tray = null;
 let transcriptionProcess = null;
 let transcriptionSocket = null;
 let isTranscriptionReady = false;
@@ -1737,7 +1921,7 @@ function createWindow() {
     }
     mainWindow?.show();
   });
-  mainWindow.webContents.on("before-input-event", (event, input) => {
+  mainWindow.webContents.on("before-input-event", (_, input) => {
     if (input.key === "F11" || input.key === "f" && input.control && input.meta) {
       mainWindow?.setFullScreen(!mainWindow.isFullScreen());
     }
@@ -1782,6 +1966,45 @@ function getAppIcon() {
     return resourcesPath;
   }
   console.log("⚠️ Using bundled fallback icon:", icon);
+  return icon;
+}
+function getTrayIcon() {
+  console.log("🔍 Resolving tray icon for platform:", process.platform);
+  if (process.platform === "darwin") {
+    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
+    console.log("🔍 Checking for macOS tray icon at:", trayIconPath);
+    if (fs__namespace.existsSync(trayIconPath)) {
+      console.log("✅ Using macOS tray icon:", trayIconPath);
+      return trayIconPath;
+    }
+    const fridayLogoPath = path__namespace.join(__dirname, "../../resources/FridayLogoOnly.png");
+    console.log("🔍 Checking for Friday logo at:", fridayLogoPath);
+    if (fs__namespace.existsSync(fridayLogoPath)) {
+      console.log("✅ Using Friday logo for tray:", fridayLogoPath);
+      return fridayLogoPath;
+    }
+    const smallIconPath = path__namespace.join(__dirname, "../../build/icon.png");
+    console.log("🔍 Checking for build icon at:", smallIconPath);
+    if (fs__namespace.existsSync(smallIconPath)) {
+      console.log("✅ Using build icon for tray:", smallIconPath);
+      return smallIconPath;
+    }
+  } else if (process.platform === "win32") {
+    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
+    if (fs__namespace.existsSync(trayIconPath)) {
+      return trayIconPath;
+    }
+    const buildIconPath = path__namespace.join(__dirname, "../../build/icon.png");
+    if (fs__namespace.existsSync(buildIconPath)) {
+      return buildIconPath;
+    }
+  } else {
+    const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
+    if (fs__namespace.existsSync(trayIconPath)) {
+      return trayIconPath;
+    }
+  }
+  console.log("⚠️ Using bundled fallback icon for tray:", icon);
   return icon;
 }
 async function checkSwiftRecorderAvailability() {
@@ -2054,8 +2277,11 @@ async function startCombinedRecording(recordingPath, filename) {
           resolvedPath,
           "--filename",
           baseFilename,
-          "--live-transcription"
+          "--live-transcription",
           // Enable live transcription chunks
+          "--chunk-duration",
+          "3.0"
+          // Longer chunks for better transcription quality
         ];
         console.log("Command:", recorderPath, args.join(" "));
         swiftRecorderProcess = child_process.spawn(recorderPath, args, {
@@ -2122,32 +2348,55 @@ async function startCombinedRecording(recordingPath, filename) {
                 warning: "Recording in FLAC format - will be converted to MP3 when stopped"
               });
             } else if (response.code === "TRANSCRIPTION_CHUNK") {
-              console.log("🎵 Received system audio transcription chunk:", {
+              console.log("🎵 SYSTEM_AUDIO_DEBUG: Received system audio transcription chunk:", {
                 path: response.path,
                 stream_type: response.stream_type,
-                socket_available: !!(transcriptionSocket && !transcriptionSocket.destroyed)
+                socket_available: !!(transcriptionSocket && !transcriptionSocket.destroyed),
+                file_exists: require("fs").existsSync(response.path),
+                file_size: require("fs").existsSync(response.path) ? require("fs").statSync(response.path).size : 0
               });
-              if (transcriptionSocket && !transcriptionSocket.destroyed) {
+              if (transcriptionSocket && !transcriptionSocket.destroyed && isTranscriptionReady) {
                 const request = {
                   type: "dual_stream_chunk",
                   audio_path: response.path,
                   stream_type: response.stream_type || "system"
                 };
-                console.log("📤 Sending system audio chunk request:", request);
+                console.log("📤 SYSTEM_AUDIO_DEBUG: Sending system audio chunk request:", request);
                 try {
                   transcriptionSocket.write(JSON.stringify(request) + "\n");
-                  console.log("✅ Successfully sent system audio chunk for transcription");
+                  console.log("✅ SYSTEM_AUDIO_DEBUG: Successfully sent system audio chunk for transcription");
                 } catch (error) {
-                  console.error("❌ Failed to send system audio chunk:", error);
+                  console.error("❌ SYSTEM_AUDIO_DEBUG: Failed to send system audio chunk:", error);
                 }
               } else {
-                console.warn("⚠️ Transcription socket not available for system audio chunk:", {
+                console.warn("⚠️ SYSTEM_AUDIO_DEBUG: Transcription socket not available for system audio chunk:", {
                   socket_exists: !!transcriptionSocket,
-                  socket_destroyed: transcriptionSocket?.destroyed
+                  socket_destroyed: transcriptionSocket?.destroyed,
+                  service_ready: isTranscriptionReady
                 });
+                if (!isTranscriptionReady) {
+                  console.log("⏳ Queuing system audio chunk for later processing when service is ready");
+                  setTimeout(() => {
+                    if (isTranscriptionReady && transcriptionSocket && !transcriptionSocket.destroyed) {
+                      const retryRequest = {
+                        type: "dual_stream_chunk",
+                        audio_path: response.path,
+                        stream_type: response.stream_type || "system"
+                      };
+                      try {
+                        transcriptionSocket.write(JSON.stringify(retryRequest) + "\n");
+                        console.log("✅ Successfully sent queued system audio chunk for transcription");
+                      } catch (error) {
+                        console.error("❌ Failed to send queued system audio chunk:", error);
+                      }
+                    }
+                  }, 2e3);
+                }
               }
             } else if (response.code === "DEBUG") {
               console.log("🔍 Swift recorder debug:", response.message);
+            } else if (response.code === "SYSTEM_AUDIO_DEBUG") {
+              console.log("🎵 SYSTEM_AUDIO_DEBUG:", response.message);
             } else if (response.code === "PERMISSION_DENIED") {
               clearTimeout(outputTimeoutId);
               clearInterval(hangDetectionInterval);
@@ -2577,13 +2826,21 @@ function startTranscriptionService() {
 }
 function connectToTranscriptionSocket() {
   return new Promise((resolve, reject) => {
+    console.log("🔍 DEBUG: Starting connectToTranscriptionSocket", {
+      actualTranscriptionPort,
+      existingSocket: !!transcriptionSocket,
+      existingSocketDestroyed: transcriptionSocket?.destroyed
+    });
     if (transcriptionSocket) {
+      console.log("🔍 DEBUG: Destroying existing socket");
       transcriptionSocket.destroy();
     }
     transcriptionSocket = new net__namespace.Socket();
     transcriptionSocket.setKeepAlive(true, 6e4);
+    console.log(`🔍 DEBUG: Attempting to connect to port ${actualTranscriptionPort}`);
     transcriptionSocket.connect(actualTranscriptionPort, "localhost", () => {
       console.log(`🔌 Connected to transcription socket server on port ${actualTranscriptionPort}`);
+      console.log("🔍 DEBUG: Connection successful, resolving promise");
       resolve();
     });
     transcriptionSocket.on("data", (data) => {
@@ -2591,7 +2848,30 @@ function connectToTranscriptionSocket() {
         const lines = data.toString().split("\n").filter((line) => line.trim());
         for (const line of lines) {
           const result = JSON.parse(line);
-          if (mainWindow) {
+          console.log("📝 MAIN PROCESS forwarding transcription result:", {
+            type: result.type,
+            stream_type: result.stream_type,
+            has_stream_type: !!result.stream_type,
+            text_preview: result.text?.substring(0, 50) || result.message,
+            all_keys: Object.keys(result)
+          });
+          if (result.stream_type === "system") {
+            console.log("🎵 SYSTEM_AUDIO_DEBUG: Transcription result for system audio:", {
+              type: result.type,
+              text_length: result.text?.length || 0,
+              text_preview: result.text?.substring(0, 100) || result.message,
+              language: result.language,
+              language_probability: result.language_probability
+            });
+          }
+          if (result.type === "live_text") {
+            if (mainWindow) {
+              mainWindow.webContents.send("on-live-transcription-data", {
+                text: result.text,
+                stream_type: result.stream_type
+              });
+            }
+          } else if (mainWindow) {
             mainWindow.webContents.send("transcription-result", result);
           }
           console.log(
@@ -2605,8 +2885,14 @@ function connectToTranscriptionSocket() {
       }
     });
     transcriptionSocket.on("error", (error) => {
-      console.error("Socket error:", error);
+      console.error("🔍 DEBUG: Socket error:", error);
+      console.log("🔍 DEBUG: Error context:", {
+        isTranscriptionReady,
+        errorCode: error.code,
+        errorMessage: error.message
+      });
       if (!isTranscriptionReady) {
+        console.log("🔍 DEBUG: Rejecting connection promise due to error");
         reject(error);
       }
     });
@@ -2821,12 +3107,42 @@ function setupTranscriptionHandlers() {
     stopTranscriptionService();
     return { success: true };
   });
-  electron.ipcMain.handle("transcription:is-ready", () => {
+  electron.ipcMain.handle("transcription:is-ready", async () => {
     const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed;
     const serviceReady = isTranscriptionReady && !isTranscriptionStarting;
     const processRunning = transcriptionProcess && !transcriptionProcess.killed;
-    return {
-      ready: serviceReady && socketConnected && processRunning,
+    console.log("🔍 DEBUG: transcription:is-ready check:", {
+      socketConnected,
+      serviceReady,
+      processRunning,
+      isTranscriptionReady,
+      isTranscriptionStarting,
+      hasTranscriptionSocket: !!transcriptionSocket,
+      socketDestroyed: transcriptionSocket?.destroyed
+    });
+    if (!socketConnected && !isTranscriptionStarting) {
+      try {
+        console.log("🔍 Attempting to connect to existing transcription service...");
+        await connectToTranscriptionSocket();
+        isTranscriptionReady = true;
+        console.log("✅ Connected to existing transcription service");
+        return {
+          ready: true,
+          details: {
+            serviceReady: true,
+            socketConnected: true,
+            processRunning: false,
+            // External process
+            isStarting: false,
+            connectedToExternal: true
+          }
+        };
+      } catch (error) {
+        console.log("❌ No existing transcription service found:", error);
+      }
+    }
+    const finalResult = {
+      ready: serviceReady && socketConnected,
       details: {
         serviceReady,
         socketConnected,
@@ -2834,6 +3150,8 @@ function setupTranscriptionHandlers() {
         isStarting: isTranscriptionStarting
       }
     };
+    console.log("🔍 DEBUG: transcription:is-ready final result:", finalResult);
+    return finalResult;
   });
   electron.ipcMain.handle("transcription:process-chunk", async (_, audioBuffer) => {
     const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed;
@@ -2845,13 +3163,15 @@ function setupTranscriptionHandlers() {
     if (!socketConnected) {
       return { success: false, error: "Socket connection not available" };
     }
-    if (!processRunning) {
+    if (transcriptionProcess && !processRunning) {
       return { success: false, error: "Transcription process not running" };
     }
     try {
       const buffer = Buffer.from(audioBuffer);
       const filePath = saveAudioChunk(buffer);
+      console.log(`🎤 Processing audio chunk: ${buffer.length} bytes -> ${filePath}`);
       transcriptionSocket.write(filePath + "\n");
+      console.log(`📤 Sent chunk path to transcription service: ${filePath}`);
       return { success: true };
     } catch (error) {
       console.error("Failed to process audio chunk:", error);
@@ -2868,7 +3188,7 @@ function setupTranscriptionHandlers() {
     if (!socketConnected) {
       return { success: false, error: "Socket connection not available" };
     }
-    if (!processRunning) {
+    if (transcriptionProcess && !processRunning) {
       return { success: false, error: "Transcription process not running" };
     }
     try {
@@ -3042,7 +3362,22 @@ function setupDatabaseHandlers() {
     return await databaseService.getAllMeetings();
   });
   electron.ipcMain.handle("db:updateMeeting", async (_, id, meeting) => {
-    return await databaseService.updateMeeting(id, meeting);
+    const result = await databaseService.updateMeeting(id, meeting);
+    try {
+      const shouldProcess = await complianceService.shouldProcessForCompliance(id);
+      if (shouldProcess) {
+        const updatedMeeting = await databaseService.getMeeting(id);
+        if (updatedMeeting && updatedMeeting.transcript && updatedMeeting.transcript.length > 0) {
+          console.log(`🔐 Triggering two-party consent compliance processing for meeting ${id}`);
+          complianceService.processTwoPartyConsentCompliance(id).catch((error) => {
+            console.error(`❌ Background compliance processing failed for meeting ${id}:`, error);
+          });
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Error checking compliance requirements for meeting ${id}:`, error);
+    }
+    return result;
   });
   electron.ipcMain.handle("db:deleteMeeting", async (_, id) => {
     return await databaseService.deleteMeeting(id);
@@ -3054,6 +3389,9 @@ function setupDatabaseHandlers() {
     const result = await databaseService.updateSettings(settings);
     if (settings.geminiApiKey !== void 0) {
       geminiService.setApiKey(settings.geminiApiKey);
+    }
+    if (settings.geminiModel !== void 0) {
+      geminiService.setDefaultModel(settings.geminiModel);
     }
     return result;
   });
@@ -3217,6 +3555,55 @@ function unregisterGlobalShortcuts() {
   electron.globalShortcut.unregisterAll();
   console.log("🗑️ Global shortcuts unregistered");
 }
+function createTray() {
+  tray = new electron.Tray(getTrayIcon());
+  const contextMenu = electron.Menu.buildFromTemplate([
+    {
+      label: "Show Friday",
+      click: () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    },
+    {
+      label: "Hide Friday",
+      click: () => {
+        if (mainWindow) {
+          mainWindow.hide();
+        }
+      }
+    },
+    { type: "separator" },
+    {
+      label: "Quit",
+      click: () => {
+        electron.app.quit();
+      }
+    }
+  ]);
+  tray.setContextMenu(contextMenu);
+  tray.setToolTip("Friday - AI Meeting Assistant");
+  tray.on("click", () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide();
+      } else {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }
+  });
+}
+function destroyTray() {
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+}
 function updateShortcuts(newShortcuts) {
   try {
     currentShortcuts = { ...currentShortcuts, ...newShortcuts };
@@ -3231,6 +3618,25 @@ function setupSystemHandlers() {
   electron.ipcMain.handle("system:updateShortcuts", async (_, shortcuts) => {
     const success = updateShortcuts(shortcuts);
     return { success };
+  });
+  electron.ipcMain.handle("system:toggle-menu-bar", async (_, show) => {
+    try {
+      if (show) {
+        createTray();
+        console.log("✅ Menu bar tray created");
+        return { success: true, message: "Menu bar icon enabled" };
+      } else {
+        destroyTray();
+        console.log("✅ Menu bar tray destroyed");
+        return { success: true, message: "Menu bar icon disabled" };
+      }
+    } catch (error) {
+      console.error("❌ Failed to toggle menu bar:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
   });
   electron.ipcMain.handle("system:getInfo", async () => {
     return {
@@ -3265,6 +3671,14 @@ electron.app.whenReady().then(async () => {
       if (settings.geminiApiKey) {
         geminiService.setApiKey(settings.geminiApiKey);
         console.log("Gemini API key initialized from settings");
+      }
+      if (settings.geminiModel) {
+        geminiService.setDefaultModel(settings.geminiModel);
+        console.log("Gemini model initialized from settings:", settings.geminiModel);
+      }
+      if (settings.showInMenuBar) {
+        createTray();
+        console.log("✅ Menu bar tray initialized from settings");
       }
       const recordingDirectory = settings.defaultSaveLocation || path__namespace.join(os__namespace.homedir(), "Friday Recordings");
       cleanupDoubleExtensionFiles(recordingDirectory);
@@ -3309,6 +3723,7 @@ electron.app.whenReady().then(async () => {
 electron.app.on("window-all-closed", async () => {
   stopTranscriptionService();
   unregisterGlobalShortcuts();
+  destroyTray();
   await databaseService.close();
   if (process.platform !== "darwin") {
     electron.app.quit();
@@ -3317,6 +3732,7 @@ electron.app.on("window-all-closed", async () => {
 electron.app.on("before-quit", async () => {
   stopTranscriptionService();
   unregisterGlobalShortcuts();
+  destroyTray();
   await databaseService.close();
 });
 electron.ipcMain.handle("get-app-settings", async () => {

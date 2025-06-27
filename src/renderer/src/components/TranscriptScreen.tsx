@@ -5,7 +5,8 @@ import SidebarContent from './SidebarContent'
 import BlockNoteEditor from './BlockNoteEditor'
 import SaveIndicator from './SaveIndicator'
 import { ContextTab } from './ContextTab'
-import { ActionItemsTab } from './ActionItemsTab'
+import DualStreamTranscriptView from './DualStreamTranscriptView'
+
 import { AISummaryTab } from './AISummaryTab'
 import { AlertsTab } from './AlertsTab'
 import { useRecordingService } from './RecordingService'
@@ -28,7 +29,9 @@ import {
   BookOpenIcon,
   AlertTriangleIcon,
   SaveIcon,
-  CheckIcon
+  CheckIcon,
+  Plus,
+  Trash2
 } from 'lucide-react'
 
 /// <reference path="../../preload/index.d.ts" />
@@ -95,6 +98,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [combinedRecordingPath, setCombinedRecordingPath] = useState<string | null>(null)
   const [isRecording, setIsRecording] = useState(false)
   const [liveText, setLiveText] = useState('')
+  const [microphoneTranscript, setMicrophoneTranscript] = useState<TranscriptLine[]>([])
+  const [systemAudioTranscript, setSystemAudioTranscript] = useState<TranscriptLine[]>([])
+  const [liveTextMicrophone, setLiveTextMicrophone] = useState('')
+  const [liveTextSystemAudio, setLiveTextSystemAudio] = useState('')
 
   // UI state
   const [showAskFriday, setShowAskFriday] = useState(false)
@@ -116,6 +123,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   const [aiLoadingMessage, setAiLoadingMessage] = useState('')
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [hasStartedConversation, setHasStartedConversation] = useState(false)
+  const [newActionItem, setNewActionItem] = useState('')
 
   // Refs
   const playbackInterval = useRef<NodeJS.Timeout | null>(null)
@@ -241,18 +249,27 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   }, [alertKeywords])
 
   // Recording service callbacks
-  const handleTranscriptionResult = useCallback((result: TranscriptionResult): void => {
+  const handleTranscriptionResult = useCallback((result: TranscriptionResult & { stream_type?: string }): void => {
     console.log('🎤 Transcription result:', result)
-      if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
+    if (result.type === 'transcript' && result.text && result.text !== 'undefined') {
+      // Route to appropriate live text based on stream type
+      const streamType = result.stream_type || 'microphone'
+      
+      if (streamType === 'system') {
+        console.log('🎵 SYSTEM_AUDIO_DEBUG: System audio live text update received in TranscriptScreen:', result.text)
+        // System audio results are handled by RecordingService and synced via transcript state
+      } else {
+        console.log('🎤 Microphone live text update:', result.text)
         setLiveText((prev) => prev + ' ' + result.text)
+      }
 
       // Check for alerts on new transcript text
       checkForAlerts(result.text)
       
       // This will be handled by the recording service itself
       // The transcript state is managed by the service
-      } else if (result.type === 'error') {
-        console.error('Transcription error:', result.message)
+    } else if (result.type === 'error') {
+      console.error('Transcription error:', result.message)
     }
   }, [checkForAlerts])
 
@@ -323,10 +340,16 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   }, [loadRecording, currentTime, totalTime])
 
   const handleCombinedRecordingFailed = useCallback((result: RecordingResult): void => {
-      console.error('❌ Recording failed during operation:', result.error)
+      // Only log as error if it's not a "No recording in progress" case
+      if (result.error && result.error.includes('No recording in progress')) {
+        console.log('ℹ️ Recording stop called but no recording was in progress - this is normal')
+        setTranscriptionStatus('ready') // Set to 'ready' for normal stop cases
+      } else {
+        console.error('❌ Recording failed during operation:', result.error)
+        setTranscriptionStatus('error') // Set to 'error' for actual failures
+      }
       
       setIsRecording(false)
-      setTranscriptionStatus('error')
   }, [])
 
   // Memoize recording service props to prevent re-creation
@@ -352,7 +375,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
   // Initialize data from meeting prop
   useEffect(() => {
     if (meeting) {
-      console.log('🎵 Meeting data:', meeting)
+      console.log('🎵 Meeting data loaded:', {
+        id: meeting.id,
+        title: meeting.title,
+        actionItemsCount: meeting.actionItems?.length || 0,
+        actionItemsData: meeting.actionItems,
+        hasNotes: !!meeting.notes,
+        notesLength: meeting.notes?.length || 0
+      })
       console.log('📝 Transcript data from meeting:', meeting.transcript)
       console.log('📝 Transcript length:', meeting.transcript?.length || 0)
       setTitle(meeting.title)
@@ -460,8 +490,24 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         setTranscript(state.transcript)
       }
       
+      // Sync dual stream transcripts
+      if (state.microphoneTranscript.length > microphoneTranscript.length) {
+        console.log('🎤 Syncing microphone transcript:', state.microphoneTranscript.length, 'lines')
+        setMicrophoneTranscript(state.microphoneTranscript)
+      }
+      
+      if (state.systemAudioTranscript.length > systemAudioTranscript.length) {
+        console.log('🎵 SYSTEM_AUDIO_DEBUG: Syncing system audio transcript:', state.systemAudioTranscript.length, 'lines (previous:', systemAudioTranscript.length, ')')
+        setSystemAudioTranscript(state.systemAudioTranscript)
+      }
+      
       // Sync other state
       setLiveText(state.liveText)
+      setLiveTextMicrophone(state.liveTextMicrophone)
+      if (state.liveTextSystemAudio !== liveTextSystemAudio) {
+        console.log('🎵 SYSTEM_AUDIO_DEBUG: Syncing system audio live text:', state.liveTextSystemAudio.substring(0, 100) + '...')
+      }
+      setLiveTextSystemAudio(state.liveTextSystemAudio)
       
       // Update combined recording path
       if (state.combinedRecordingPath && state.combinedRecordingPath !== combinedRecordingPath) {
@@ -500,7 +546,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
 
     const interval = setInterval(updateState, 100)
     return () => clearInterval(interval)
-  }, [recordingService, isRecording, transcript.length, combinedRecordingPath])
+  }, [recordingService, isRecording, transcript.length, microphoneTranscript.length, systemAudioTranscript.length, combinedRecordingPath])
 
   // Auto-save effect - enhanced for better reliability
   useEffect(() => {
@@ -546,16 +592,15 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
     previousTabRef.current = activeTab
   }, [activeTab, hasUnsavedChanges, meeting?.id, savingMeeting])
 
-  // Auto-save when component unmounts (navigation away)
+  // Auto-save when component unmounts
   useEffect(() => {
     return () => {
-      if (hasUnsavedChanges && meeting?.id && !savingMeeting) {
-        console.log('🔄 Auto-saving on component unmount')
-        // Note: This might not complete if navigation is immediate
+      console.log('🔄 Auto-saving on component unmount')
+      if (meeting?.id && hasUnsavedChanges) {
         handleSaveMeeting()
       }
     }
-  }, [hasUnsavedChanges, meeting?.id, savingMeeting])
+  }, [])
 
   // Global keyboard shortcut handler for Cmd+S
   useEffect(() => {
@@ -702,6 +747,14 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         transcriptLength: transcript.length,
         currentCombinedPath: combinedRecordingPath,
         existingRecordingPath: meeting.recordingPath,
+        existingTranscript: meeting.transcript,
+        actionItems: meeting.actionItems,
+        summary: meeting.summary,
+        notes: meeting.notes,
+        tags: meeting.tags,
+        context: meeting.context,
+        contextFiles: meeting.context_files,
+        chatMessages: meeting.chatMessages,
         hasRecordedAudioBlob: !!recordedAudioBlob,
         totalTime
       })
@@ -758,11 +811,22 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         transcriptLines: updatedMeetingData.transcript?.length || 0,
         recordingPath: updatedMeetingData.recordingPath,
         duration: updatedMeetingData.duration,
-        title: updatedMeetingData.title
+        title: updatedMeetingData.title,
+        actionItemsCount: updatedMeetingData.actionItems?.length || 0,
+        actionItemsData: updatedMeetingData.actionItems
       })
 
       await window.api.db.updateMeeting(meeting.id, updatedMeetingData)
-      console.log('✅ Meeting data saved successfully')
+      console.log('✅ Meeting data saved successfully to database')
+      
+      // Verify the save by reading back from database
+      const savedMeeting = await window.api.db.getMeeting(meeting.id)
+      console.log('🔍 Verification - Data read back from database:', {
+        actionItemsCount: savedMeeting?.actionItems?.length || 0,
+        actionItemsData: savedMeeting?.actionItems,
+        notes: savedMeeting?.notes,
+        title: savedMeeting?.title
+      })
       
       // Update save status
       setHasUnsavedChanges(false)
@@ -771,6 +835,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
       console.log('✅ Saved meeting with:', {
         transcriptLines: transcript.length,
         recordingPath,
+        actionItems,
         duration: formatTime(totalTime)
       })
     } catch (error) {
@@ -939,7 +1004,7 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
             notes: noteContent || notes,
             summary
           })
-          result = geminiResult?.success && (geminiResult as any).answer ? (geminiResult as any).answer : 'Based on the transcript, here are the key points you might have missed...'
+          result = geminiResult?.success && geminiResult.response ? geminiResult.response : 'Based on the transcript, here are the key points you might have missed...'
           break
         }
         default:
@@ -998,11 +1063,11 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         summary
       })
 
-      if (result?.success && (result as any).answer) {
+      if (result?.success && result.response) {
         const assistantMessage = {
           id: (Date.now() + 1).toString(),
           type: 'assistant' as const,
-          content: (result as any).answer,
+          content: result.response,
           timestamp: new Date()
         }
         setChatMessages(prev => [...prev, assistantMessage])
@@ -1108,7 +1173,10 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
               <div className="notes-editor">
                 <BlockNoteEditor
                   value={noteContent || notes}
-                  onChange={setNoteContent}
+                  onChange={(value) => {
+                    setNoteContent(value)
+                    setNotes(value || '')
+                  }}
                   placeholder="Add more updates or notes... (Press Cmd+S to save)"
                   height={200}
                   onSave={handleSaveMeeting}
@@ -1142,7 +1210,97 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
         )
       
       case 'actions':
-        return <ActionItemsTab />
+        return (
+          <div className="action-items-content">
+            <div className="content-section">
+              {/* Save indicator */}
+              <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'flex-end' }}>
+                <SaveIndicator
+                  isSaving={savingMeeting}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  showKeyboardHint={true}
+                />
+              </div>
+              
+              <div>
+                <h2>Action Items</h2>
+                <p className="tab-description">Track tasks and follow-ups from your meeting</p>
+              </div>
+
+              <div className="add-item-section">
+                <input
+                  value={newActionItem}
+                  onChange={(e) => setNewActionItem(e.target.value)}
+                  placeholder="Add new action item..."
+                  className="form-input"
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && newActionItem.trim()) {
+                      const newItem = {
+                        id: Date.now(),
+                        text: newActionItem.trim(),
+                        completed: false
+                      }
+                      setActionItems([...actionItems, newItem])
+                      setNewActionItem('')
+                    }
+                  }}
+                />
+                <button 
+                  onClick={() => {
+                    if (newActionItem.trim()) {
+                      const newItem = {
+                        id: Date.now(),
+                        text: newActionItem.trim(),
+                        completed: false
+                      }
+                      setActionItems([...actionItems, newItem])
+                      setNewActionItem('')
+                    }
+                  }}
+                  className="add-btn"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+
+              <div className="action-items-list">
+                {actionItems.map((item) => (
+                  <div key={item.id} className="action-item">
+                    <input
+                      type="checkbox"
+                      checked={item.completed}
+                      onChange={() => {
+                        const updatedItems = actionItems.map((actionItem) => 
+                          actionItem.id === item.id ? { ...actionItem, completed: !actionItem.completed } : actionItem
+                        )
+                        setActionItems(updatedItems)
+                      }}
+                      className="action-checkbox"
+                    />
+                    <span className={`action-text ${item.completed ? 'completed' : ''}`}>
+                      {item.text}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setActionItems(actionItems.filter(actionItem => actionItem.id !== item.id))
+                      }}
+                      className="delete-btn"
+                      title="Delete item"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {actionItems.length === 0 && (
+                <div className="empty-state">
+                  <p>No action items yet. Add one above to get started.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )
       
       case 'summary':
         return (
@@ -1571,20 +1729,16 @@ const TranscriptScreen: React.FC<TranscriptScreenProps> = ({ meeting }) => {
               </div>
             </div>
             
-            <div className="transcript-content">
-              {transcript.map((line, index) => (
-                <div key={index} className="transcript-bubble">
-                  <span className="transcript-time">{line.time}</span>
-                  <p className="transcript-text">{line.text}</p>
-                </div>
-              ))}
-              
-              {transcript.length === 0 && (
-                <div className="transcript-empty">
-                  <MessageSquareIcon size={48} />
-                  <p>No transcript yet. Start recording to see live transcription.</p>
-                </div>
-              )}
+            <div className="transcript-content" style={{ height: 'calc(100% - 120px)', overflow: 'hidden' }}>
+              {/* Use DualStreamTranscriptView for separated mic and system audio */}
+              <DualStreamTranscriptView
+                isRecording={isRecording}
+                microphoneTranscript={microphoneTranscript}
+                systemAudioTranscript={systemAudioTranscript}
+                liveTextMicrophone={liveTextMicrophone}
+                liveTextSystemAudio={liveTextSystemAudio}
+                currentTime={currentTime}
+              />
             </div>
             
             {/* Playback Controls */}

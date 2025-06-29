@@ -1820,41 +1820,39 @@ const CHUNK_SIZE_LIMIT = 50 * 1024 * 1024;
 async function requestMicrophonePermission() {
   try {
     const hasPermission = electron.systemPreferences.getMediaAccessStatus("microphone");
-    console.log("🎤 Current microphone permission status:", hasPermission);
     if (hasPermission === "granted") {
-      console.log("✅ Microphone permission already granted");
+      console.log("✅ AUDIO: Microphone permission already granted");
       return true;
     }
     if (hasPermission === "denied") {
-      console.log("❌ Microphone permission denied - please enable in System Preferences");
+      console.log("❌ AUDIO: Microphone permission denied - please enable in System Preferences");
       return false;
     }
     if (hasPermission === "not-determined") {
-      console.log("🔐 Requesting microphone permission...");
+      console.log("🔐 AUDIO: Requesting microphone permission...");
       const granted = await electron.systemPreferences.askForMediaAccess("microphone");
-      console.log(granted ? "✅ Permission granted!" : "❌ Permission denied");
+      console.log(granted ? "✅ AUDIO: Permission granted!" : "❌ AUDIO: Permission denied");
       return granted;
     }
     return false;
   } catch (error) {
-    console.error("❌ Error requesting microphone permission:", error);
+    console.error("❌ AUDIO: Error requesting microphone permission:", error);
     return false;
   }
 }
 async function requestScreenCapturePermission() {
   try {
     const hasPermission = electron.systemPreferences.getMediaAccessStatus("screen");
-    console.log("🖥️ Current screen capture permission status:", hasPermission);
     if (hasPermission === "granted") {
-      console.log("✅ Screen capture permission already granted");
+      console.log("✅ AUDIO: Screen capture permission already granted");
       return true;
     }
     if (hasPermission === "denied") {
-      console.log("❌ Screen capture permission denied - please enable in System Preferences");
+      console.log("❌ AUDIO: Screen capture permission denied - please enable in System Preferences");
       return false;
     }
     if (hasPermission === "not-determined") {
-      console.log("🔐 Requesting screen capture permission...");
+      console.log("🔐 AUDIO: Requesting screen capture permission...");
       electron.dialog.showMessageBox(mainWindow, {
         type: "info",
         title: "Screen Recording Permission Required",
@@ -1868,10 +1866,10 @@ async function requestScreenCapturePermission() {
         const checkPermission = () => {
           const currentStatus = electron.systemPreferences.getMediaAccessStatus("screen");
           if (currentStatus === "granted") {
-            console.log("✅ Screen capture permission granted!");
+            console.log("✅ AUDIO: Screen capture permission granted!");
             resolve(true);
           } else if (currentStatus === "denied") {
-            console.log("❌ Screen capture permission denied");
+            console.log("❌ AUDIO: Screen capture permission denied");
             resolve(false);
           } else {
             setTimeout(checkPermission, 1e3);
@@ -1882,7 +1880,7 @@ async function requestScreenCapturePermission() {
     }
     return false;
   } catch (error) {
-    console.error("❌ Error requesting screen capture permission:", error);
+    console.error("❌ AUDIO: Error requesting screen capture permission:", error);
     return false;
   }
 }
@@ -1911,10 +1909,8 @@ function createWindow() {
   mainWindow.on("ready-to-show", async () => {
     const isFirstRun = await firstRunSetupService.isFirstRun();
     if (isFirstRun) {
-      console.log("🚀 First run detected, showing setup dialog");
       const setupSuccess = await firstRunSetupService.showSetupDialog();
       if (!setupSuccess) {
-        console.log("❌ Setup cancelled, exiting");
         electron.app.quit();
         return;
       }
@@ -1937,56 +1933,39 @@ function createWindow() {
   }
 }
 function getAppIcon() {
-  console.log("🔍 Resolving app icon for platform:", process.platform);
   if (process.platform === "darwin") {
     const icnsPath = path__namespace.join(__dirname, "../../build/icon.icns");
-    console.log("🔍 Checking for macOS icon at:", icnsPath);
     if (fs__namespace.existsSync(icnsPath)) {
-      console.log("✅ Using macOS .icns icon:", icnsPath);
       return icnsPath;
     }
   } else if (process.platform === "win32") {
     const icoPath = path__namespace.join(__dirname, "../../build/icon.ico");
-    console.log("🔍 Checking for Windows icon at:", icoPath);
     if (fs__namespace.existsSync(icoPath)) {
-      console.log("✅ Using Windows .ico icon:", icoPath);
       return icoPath;
     }
   }
   const pngPath = path__namespace.join(__dirname, "../../build/icon.png");
-  console.log("🔍 Checking for PNG icon at:", pngPath);
   if (fs__namespace.existsSync(pngPath)) {
-    console.log("✅ Using PNG icon:", pngPath);
     return pngPath;
   }
   const resourcesPath = path__namespace.join(__dirname, "../../resources/FridayLogoOnly.png");
-  console.log("🔍 Checking for resources icon at:", resourcesPath);
   if (fs__namespace.existsSync(resourcesPath)) {
-    console.log("✅ Using resources icon:", resourcesPath);
     return resourcesPath;
   }
-  console.log("⚠️ Using bundled fallback icon:", icon);
   return icon;
 }
 function getTrayIcon() {
-  console.log("🔍 Resolving tray icon for platform:", process.platform);
   if (process.platform === "darwin") {
     const trayIconPath = path__namespace.join(__dirname, "../../resources/tray-icon.png");
-    console.log("🔍 Checking for macOS tray icon at:", trayIconPath);
     if (fs__namespace.existsSync(trayIconPath)) {
-      console.log("✅ Using macOS tray icon:", trayIconPath);
       return trayIconPath;
     }
     const fridayLogoPath = path__namespace.join(__dirname, "../../resources/FridayLogoOnly.png");
-    console.log("🔍 Checking for Friday logo at:", fridayLogoPath);
     if (fs__namespace.existsSync(fridayLogoPath)) {
-      console.log("✅ Using Friday logo for tray:", fridayLogoPath);
       return fridayLogoPath;
     }
     const smallIconPath = path__namespace.join(__dirname, "../../build/icon.png");
-    console.log("🔍 Checking for build icon at:", smallIconPath);
     if (fs__namespace.existsSync(smallIconPath)) {
-      console.log("✅ Using build icon for tray:", smallIconPath);
       return smallIconPath;
     }
   } else if (process.platform === "win32") {
@@ -2004,51 +1983,49 @@ function getTrayIcon() {
       return trayIconPath;
     }
   }
-  console.log("⚠️ Using bundled fallback icon for tray:", icon);
   return icon;
 }
 async function checkSwiftRecorderAvailability() {
   return new Promise((resolve) => {
     const recorderPath = path__namespace.join(process.cwd(), "Recorder");
     if (!fs__namespace.existsSync(recorderPath)) {
-      console.log("❌ Swift recorder binary not found at:", recorderPath);
+      console.log("❌ AUDIO: Swift recorder binary not found at:", recorderPath);
       resolve(false);
       return;
     }
-    console.log("✅ Swift recorder binary found at:", recorderPath);
+    console.log("✅ AUDIO: Swift recorder binary found at:", recorderPath);
     resolve(true);
   });
 }
 function ensureRecordingDirectory(dirPath) {
   try {
     const resolvedPath = dirPath.startsWith("~/") ? path__namespace.join(os__namespace.homedir(), dirPath.slice(2)) : dirPath;
-    console.log("📂 Ensuring recording directory exists:", resolvedPath);
+    console.log("📂 AUDIO: Ensuring recording directory exists:", resolvedPath);
     if (!fs__namespace.existsSync(resolvedPath)) {
       fs__namespace.mkdirSync(resolvedPath, { recursive: true });
-      console.log("✅ Created recording directory:", resolvedPath);
+      console.log("✅ AUDIO: Created recording directory:", resolvedPath);
     }
     const testFile = path__namespace.join(resolvedPath, ".test-write-permissions");
     try {
       fs__namespace.writeFileSync(testFile, "test");
       fs__namespace.unlinkSync(testFile);
-      console.log("✅ Recording directory has write permissions");
+      console.log("✅ AUDIO: Recording directory has write permissions");
     } catch (permError) {
-      console.error("❌ No write permissions for recording directory:", permError);
+      console.error("❌ AUDIO: No write permissions for recording directory:", permError);
       return { success: false, error: "No write permissions for recording directory" };
     }
     return { success: true, path: resolvedPath };
   } catch (error) {
-    console.error("❌ Failed to ensure recording directory:", error);
+    console.error("❌ AUDIO: Failed to ensure recording directory:", error);
     return { success: false, error: `Failed to create recording directory: ${error}` };
   }
 }
 const audioDeviceManager = {
   async getCurrentDevice() {
     try {
-      console.log("🔊 Getting current audio device...");
+      console.log("🔊 AUDIO: Getting current audio device...");
       const result = await new Promise((resolve) => {
-        const { spawn: spawn2 } = require("child_process");
-        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
+        const swift = child_process.spawn("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
         let output = "";
         swift.stdout.on("data", (data) => {
           output += data.toString();
@@ -2090,7 +2067,7 @@ const audioDeviceManager = {
   },
   async switchToBuiltInSpeakers() {
     try {
-      console.log("🔊 Switching to built-in speakers for recording...");
+      console.log("🔊 AUDIO: Switching to built-in speakers for recording...");
       return {
         success: true,
         message: "Audio will be temporarily switched during recording and automatically restored after"
@@ -2104,10 +2081,9 @@ const audioDeviceManager = {
   },
   async enableBluetoothWorkaround() {
     try {
-      console.log("🔧 Running Bluetooth audio restoration...");
-      const { spawn: spawn2 } = require("child_process");
+      console.log("🔧 AUDIO: Running Bluetooth audio restoration...");
       const result = await new Promise((resolve) => {
-        const swift = spawn2("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
+        const swift = child_process.spawn("swift", [path__namespace.join(process.cwd(), "fix-bluetooth-audio.swift")]);
         let output = "";
         swift.stdout.on("data", (data) => {
           output += data.toString();
@@ -2148,14 +2124,14 @@ const audioDeviceManager = {
   },
   async prepareForRecording() {
     try {
-      console.log("🎙️ Preparing audio devices for recording...");
+      console.log("🎙️ AUDIO: Preparing audio devices for recording...");
       const currentDevices = {
         input: await this.getCurrentInputDevice(),
         output: await this.getCurrentOutputDevice()
       };
       const hasBluetoothDevice = await this.hasConnectedBluetoothDevice();
       if (hasBluetoothDevice) {
-        console.log("🎧 Bluetooth audio device detected");
+        console.log("🎧 AUDIO: Bluetooth audio device detected");
       }
       await this.validateAudioRouting();
       return {
@@ -2164,7 +2140,7 @@ const audioDeviceManager = {
         message: "Audio devices prepared for recording"
       };
     } catch (error) {
-      console.error("❌ Failed to prepare audio devices:", error);
+      console.error("❌ AUDIO: Failed to prepare audio devices:", error);
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error"
@@ -2268,10 +2244,10 @@ async function startCombinedRecording(recordingPath, filename) {
           currentRecordingFilename = `${baseFilename}.flac`;
         }
         const outputPath = path__namespace.join(currentRecordingPath, currentRecordingFilename);
-        console.log("📁 Recording will be saved to:", outputPath);
-        console.log("🎯 Current recording path:", currentRecordingPath);
-        console.log("📄 Current recording filename:", currentRecordingFilename);
-        console.log("🎙️ Starting ScreenCaptureKit recording...");
+        console.log("📁 AUDIO: Recording will be saved to:", outputPath);
+        console.log("🎯 AUDIO: Current recording path:", currentRecordingPath);
+        console.log("📄 AUDIO: Current recording filename:", currentRecordingFilename);
+        console.log("🎙️ AUDIO: Starting ScreenCaptureKit recording...");
         const args = [
           "--record",
           resolvedPath,
@@ -2293,7 +2269,7 @@ async function startCombinedRecording(recordingPath, filename) {
         let lastOutputTime = Date.now();
         const outputTimeoutId = setTimeout(() => {
           if (!outputReceived) {
-            console.log("❌ No output received from Swift recorder within 10 seconds");
+            console.log("❌ AUDIO: No output received from Swift recorder within 10 seconds");
             if (swiftRecorderProcess) {
               swiftRecorderProcess.kill("SIGTERM");
               swiftRecorderProcess = null;
@@ -2309,11 +2285,11 @@ async function startCombinedRecording(recordingPath, filename) {
         const hangDetectionInterval = setInterval(() => {
           const timeSinceLastOutput = Date.now() - lastOutputTime;
           if (timeSinceLastOutput > 15e3 && !hasStarted) {
-            console.log("❌ Swift recorder appears to be hanging");
+            console.log("❌ AUDIO: Swift recorder appears to be hanging");
             clearInterval(hangDetectionInterval);
             clearTimeout(outputTimeoutId);
             if (swiftRecorderProcess) {
-              console.log("🛑 Terminating hanging Swift recorder process");
+              console.log("🛑 AUDIO: Terminating hanging Swift recorder process");
               swiftRecorderProcess.kill("SIGKILL");
               swiftRecorderProcess = null;
             }
@@ -2331,15 +2307,15 @@ async function startCombinedRecording(recordingPath, filename) {
           outputReceived = true;
           lastOutputTime = Date.now();
           const output = data.toString().trim();
-          console.log("📤 Swift recorder output:", output);
+          console.log("📤 AUDIO: Swift recorder output:", output);
           try {
             const response = JSON.parse(output);
             if (response.code === "RECORDING_STARTED") {
               hasStarted = true;
               clearTimeout(outputTimeoutId);
               clearInterval(hangDetectionInterval);
-              console.log("✅ ScreenCaptureKit recording started successfully");
-              console.log("📝 Output file:", response.path);
+              console.log("✅ AUDIO: ScreenCaptureKit recording started successfully");
+              console.log("📝 AUDIO: Output file:", response.path);
               currentRecordingPath = path__namespace.dirname(response.path);
               currentRecordingFilename = path__namespace.basename(response.path);
               resolve({
@@ -2348,12 +2324,12 @@ async function startCombinedRecording(recordingPath, filename) {
                 warning: "Recording in FLAC format - will be converted to MP3 when stopped"
               });
             } else if (response.code === "TRANSCRIPTION_CHUNK") {
-              console.log("🎵 SYSTEM_AUDIO_DEBUG: Received system audio transcription chunk:", {
+              console.log("🎵 TRANSCRIPTION: Received system audio transcription chunk:", {
                 path: response.path,
                 stream_type: response.stream_type,
                 socket_available: !!(transcriptionSocket && !transcriptionSocket.destroyed),
-                file_exists: require("fs").existsSync(response.path),
-                file_size: require("fs").existsSync(response.path) ? require("fs").statSync(response.path).size : 0
+                file_exists: fs__namespace.existsSync(response.path),
+                file_size: fs__namespace.existsSync(response.path) ? fs__namespace.statSync(response.path).size : 0
               });
               if (transcriptionSocket && !transcriptionSocket.destroyed && isTranscriptionReady) {
                 const request = {
@@ -2361,21 +2337,21 @@ async function startCombinedRecording(recordingPath, filename) {
                   audio_path: response.path,
                   stream_type: response.stream_type || "system"
                 };
-                console.log("📤 SYSTEM_AUDIO_DEBUG: Sending system audio chunk request:", request);
+                console.log("📤 TRANSCRIPTION: Sending system audio chunk request:", request);
                 try {
                   transcriptionSocket.write(JSON.stringify(request) + "\n");
-                  console.log("✅ SYSTEM_AUDIO_DEBUG: Successfully sent system audio chunk for transcription");
+                  console.log("✅ TRANSCRIPTION: Successfully sent system audio chunk for transcription");
                 } catch (error) {
-                  console.error("❌ SYSTEM_AUDIO_DEBUG: Failed to send system audio chunk:", error);
+                  console.error("❌ TRANSCRIPTION: Failed to send system audio chunk:", error);
                 }
               } else {
-                console.warn("⚠️ SYSTEM_AUDIO_DEBUG: Transcription socket not available for system audio chunk:", {
+                console.warn("⚠️ TRANSCRIPTION: Transcription socket not available for system audio chunk:", {
                   socket_exists: !!transcriptionSocket,
                   socket_destroyed: transcriptionSocket?.destroyed,
                   service_ready: isTranscriptionReady
                 });
                 if (!isTranscriptionReady) {
-                  console.log("⏳ Queuing system audio chunk for later processing when service is ready");
+                  console.log("⏳ TRANSCRIPTION: Queuing system audio chunk for later processing when service is ready");
                   setTimeout(() => {
                     if (isTranscriptionReady && transcriptionSocket && !transcriptionSocket.destroyed) {
                       const retryRequest = {
@@ -2385,18 +2361,18 @@ async function startCombinedRecording(recordingPath, filename) {
                       };
                       try {
                         transcriptionSocket.write(JSON.stringify(retryRequest) + "\n");
-                        console.log("✅ Successfully sent queued system audio chunk for transcription");
+                        console.log("✅ TRANSCRIPTION: Successfully sent queued system audio chunk for transcription");
                       } catch (error) {
-                        console.error("❌ Failed to send queued system audio chunk:", error);
+                        console.error("❌ TRANSCRIPTION: Failed to send queued system audio chunk:", error);
                       }
                     }
                   }, 2e3);
                 }
               }
             } else if (response.code === "DEBUG") {
-              console.log("🔍 Swift recorder debug:", response.message);
+              console.log("🔍 AUDIO: Swift recorder debug:", response.message);
             } else if (response.code === "SYSTEM_AUDIO_DEBUG") {
-              console.log("🎵 SYSTEM_AUDIO_DEBUG:", response.message);
+              console.log("🎵 TRANSCRIPTION: System audio debug:", response.message);
             } else if (response.code === "PERMISSION_DENIED") {
               clearTimeout(outputTimeoutId);
               clearInterval(hangDetectionInterval);
@@ -2423,19 +2399,19 @@ async function startCombinedRecording(recordingPath, filename) {
               });
             }
           } catch {
-            console.log("📝 Non-JSON output from Swift recorder:", output);
+            console.log("📝 AUDIO: Non-JSON output from Swift recorder:", output);
           }
         });
         swiftRecorderProcess.stderr?.on("data", (data) => {
           outputReceived = true;
           lastOutputTime = Date.now();
           const error = data.toString().trim();
-          console.error("❌ Swift recorder error:", error);
+          console.error("❌ AUDIO: Swift recorder error:", error);
         });
         swiftRecorderProcess.on("close", (code) => {
           clearTimeout(outputTimeoutId);
           clearInterval(hangDetectionInterval);
-          console.log(`🔚 Swift recorder process exited with code: ${code}`);
+          console.log(`🔚 AUDIO: Swift recorder process exited with code: ${code}`);
           if (!hasStarted) {
             resolve({
               success: false,
@@ -2826,21 +2802,21 @@ function startTranscriptionService() {
 }
 function connectToTranscriptionSocket() {
   return new Promise((resolve, reject) => {
-    console.log("🔍 DEBUG: Starting connectToTranscriptionSocket", {
+    console.log("🔍 TRANSCRIPTION: Starting connectToTranscriptionSocket", {
       actualTranscriptionPort,
       existingSocket: !!transcriptionSocket,
       existingSocketDestroyed: transcriptionSocket?.destroyed
     });
     if (transcriptionSocket) {
-      console.log("🔍 DEBUG: Destroying existing socket");
+      console.log("🔍 TRANSCRIPTION: Destroying existing socket");
       transcriptionSocket.destroy();
     }
     transcriptionSocket = new net__namespace.Socket();
     transcriptionSocket.setKeepAlive(true, 6e4);
-    console.log(`🔍 DEBUG: Attempting to connect to port ${actualTranscriptionPort}`);
+    console.log(`🔍 TRANSCRIPTION: Attempting to connect to port ${actualTranscriptionPort}`);
     transcriptionSocket.connect(actualTranscriptionPort, "localhost", () => {
-      console.log(`🔌 Connected to transcription socket server on port ${actualTranscriptionPort}`);
-      console.log("🔍 DEBUG: Connection successful, resolving promise");
+      console.log(`🔌 TRANSCRIPTION: Connected to transcription socket server on port ${actualTranscriptionPort}`);
+      console.log("🔍 TRANSCRIPTION: Connection successful, resolving promise");
       resolve();
     });
     transcriptionSocket.on("data", (data) => {
@@ -2848,7 +2824,7 @@ function connectToTranscriptionSocket() {
         const lines = data.toString().split("\n").filter((line) => line.trim());
         for (const line of lines) {
           const result = JSON.parse(line);
-          console.log("📝 MAIN PROCESS forwarding transcription result:", {
+          console.log("📝 TRANSCRIPTION: Main process forwarding transcription result:", {
             type: result.type,
             stream_type: result.stream_type,
             has_stream_type: !!result.stream_type,
@@ -2856,7 +2832,7 @@ function connectToTranscriptionSocket() {
             all_keys: Object.keys(result)
           });
           if (result.stream_type === "system") {
-            console.log("🎵 SYSTEM_AUDIO_DEBUG: Transcription result for system audio:", {
+            console.log("🎵 TRANSCRIPTION: Transcription result for system audio:", {
               type: result.type,
               text_length: result.text?.length || 0,
               text_preview: result.text?.substring(0, 100) || result.message,
@@ -2865,6 +2841,11 @@ function connectToTranscriptionSocket() {
             });
           }
           if (result.type === "live_text") {
+            console.log("📡 TRANSCRIPTION: Sending live transcription data to renderer:", {
+              text_preview: result.text?.substring(0, 50) || "NO TEXT",
+              stream_type: result.stream_type,
+              text_length: result.text?.length || 0
+            });
             if (mainWindow) {
               mainWindow.webContents.send("on-live-transcription-data", {
                 text: result.text,
@@ -2875,7 +2856,7 @@ function connectToTranscriptionSocket() {
             mainWindow.webContents.send("transcription-result", result);
           }
           console.log(
-            "📝 Transcription result:",
+            "📝 TRANSCRIPTION: Result summary:",
             result.type,
             result.text?.substring(0, 50) || result.message
           );
@@ -2885,28 +2866,28 @@ function connectToTranscriptionSocket() {
       }
     });
     transcriptionSocket.on("error", (error) => {
-      console.error("🔍 DEBUG: Socket error:", error);
-      console.log("🔍 DEBUG: Error context:", {
+      console.error("🔍 TRANSCRIPTION: Socket error:", error);
+      console.log("🔍 TRANSCRIPTION: Error context:", {
         isTranscriptionReady,
         errorCode: error.code,
         errorMessage: error.message
       });
       if (!isTranscriptionReady) {
-        console.log("🔍 DEBUG: Rejecting connection promise due to error");
+        console.log("🔍 TRANSCRIPTION: Rejecting connection promise due to error");
         reject(error);
       }
     });
     transcriptionSocket.on("close", () => {
-      console.log("📞 Socket connection closed - keeping service ready for reconnection");
+      console.log("📞 TRANSCRIPTION: Socket connection closed - keeping service ready for reconnection");
       transcriptionSocket = null;
       if (transcriptionProcess && !transcriptionProcess.killed) {
-        console.log("🔄 Attempting to reconnect to transcription service in 3 seconds...");
+        console.log("🔄 TRANSCRIPTION: Attempting to reconnect to transcription service in 3 seconds...");
         setTimeout(() => {
           if (transcriptionProcess && !transcriptionProcess.killed && !transcriptionSocket && isTranscriptionReady) {
             connectToTranscriptionSocket().then(() => {
-              console.log("✅ Reconnected to transcription service");
+              console.log("✅ TRANSCRIPTION: Reconnected to transcription service");
             }).catch((error) => {
-              console.error("Failed to reconnect to transcription service:", error);
+              console.error("❌ TRANSCRIPTION: Failed to reconnect to transcription service:", error);
               isTranscriptionReady = false;
             });
           }
@@ -3251,7 +3232,7 @@ function setupTranscriptionHandlers() {
             const lines = data.toString().split("\n").filter((line) => line.trim());
             for (const line of lines) {
               const response = JSON.parse(line);
-              if (response.hasOwnProperty("success") && response.hasOwnProperty("matches")) {
+              if (Object.prototype.hasOwnProperty.call(response, "success") && Object.prototype.hasOwnProperty.call(response, "matches")) {
                 transcriptionSocket.removeListener("data", handleAlertResponse);
                 resolve(response);
                 return;
@@ -3650,11 +3631,10 @@ function setupSystemHandlers() {
 function cleanupHangingRecorderProcesses() {
   try {
     if (process.platform === "darwin") {
-      const { execSync } = require("child_process");
       try {
-        execSync('pkill -f "recorder"', { stdio: "ignore" });
+        child_process__namespace.execSync('pkill -f "recorder"', { stdio: "ignore" });
         console.log("🧹 Cleaned up hanging recorder processes");
-      } catch (error) {
+      } catch {
       }
     }
   } catch (error) {

@@ -29,9 +29,14 @@ const api = {
     onResult: (callback) => {
       electron.ipcRenderer.on("transcription-result", (_, result) => callback(result));
     },
+    // Event listener for live transcription data
+    onLiveTranscriptionData: (callback) => {
+      electron.ipcRenderer.on("on-live-transcription-data", (_, data) => callback(data));
+    },
     // Remove listeners
     removeAllListeners: () => {
       electron.ipcRenderer.removeAllListeners("transcription-result");
+      electron.ipcRenderer.removeAllListeners("on-live-transcription-data");
     }
   },
   // Alerts API

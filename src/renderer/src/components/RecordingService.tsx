@@ -97,8 +97,6 @@ export const useRecordingService = ({
   const recordingChunksRef = useRef<Blob[]>([])
   const recordingStartTime = useRef<number>(0)
 
-
-
   // Format time utility
   const formatTime = useCallback((seconds: number): string => {
     const mins = Math.floor(seconds / 60)
@@ -147,6 +145,32 @@ export const useRecordingService = ({
       onSwiftRecorderAvailabilityChange(false)
     }
   }, [onSwiftRecorderAvailabilityChange])
+
+  // Handle live transcription data (real-time updates)
+  const handleLiveTranscriptionData = useCallback((data: { text: string; stream_type?: string }): void => {
+    console.log('📡 TRANSCRIPTION: Received live transcription data:', {
+      text: data.text?.substring(0, 50) + (data.text && data.text.length > 50 ? '...' : ''),
+      stream_type: data.stream_type,
+      has_stream_type: !!data.stream_type
+    })
+
+    if (data.text && data.text.trim() !== '') {
+      const streamType = data.stream_type || 'microphone'
+      
+      if (streamType === 'system') {
+        // Update system audio live text
+        liveTextSystemAudioRef.current = data.text
+        console.log('🎵 TRANSCRIPTION: Updated system audio live text:', data.text.substring(0, 50) + '...')
+      } else {
+        // Update microphone live text
+        liveTextMicrophoneRef.current = data.text
+        console.log('🎤 TRANSCRIPTION: Updated microphone live text:', data.text.substring(0, 50) + '...')
+      }
+
+      // Also update general live text for backward compatibility
+      liveTextRef.current = data.text
+    }
+  }, [])
 
   // Handle transcription results
   const handleTranscriptionResult = useCallback((result: TranscriptionResult & { stream_type?: string }): void => {
@@ -274,8 +298,6 @@ export const useRecordingService = ({
       onTranscriptionStatusChange('error')
     }
   }, [onTranscriptionStatusChange])
-
-
 
   // Start microphone-only transcription for combined recording (avoids system audio conflicts)
   const startMicrophoneOnlyTranscription = useCallback(async (): Promise<void> => {
@@ -1078,17 +1100,21 @@ export const useRecordingService = ({
     await checkSwiftRecorderAvailability()
   }, [initializeTranscription, checkSwiftRecorderAvailability])
 
-  // Setup event listeners
+  // Setup event listeners - run once on mount
   useEffect(() => {
     // Setup transcription result listener
     if (window.api.transcription) {
-      console.log('🎤 Setting up transcription result listener')
+      console.log('🎤 TRANSCRIPTION: Setting up transcription result listener')
       window.api.transcription.onResult(handleTranscriptionResult)
+      
+      // Setup live transcription data listener  
+      console.log('📡 TRANSCRIPTION: Setting up live transcription data listener')
+      window.api.transcription.onLiveTranscriptionData(handleLiveTranscriptionData)
     }
 
     // Setup Swift recorder event listeners
     if (window.api.swiftRecorder) {
-      console.log('🎙️ Setting up Swift recorder event listeners')
+      console.log('🎙️ AUDIO: Setting up Swift recorder event listeners')
       window.api.swiftRecorder.onRecordingStarted(onCombinedRecordingStarted)
       window.api.swiftRecorder.onRecordingStopped(onCombinedRecordingStopped)
       window.api.swiftRecorder.onRecordingFailed(onCombinedRecordingFailed)
@@ -1096,7 +1122,7 @@ export const useRecordingService = ({
 
     return () => {
       // Only cleanup when component unmounts, not on every effect run
-      console.log('🎤 Cleaning up event listeners on component unmount')
+      console.log('🎤 TRANSCRIPTION: Cleaning up event listeners on component unmount')
       if (window.api.transcription) {
         window.api.transcription.removeAllListeners()
       }
@@ -1104,7 +1130,7 @@ export const useRecordingService = ({
         window.api.swiftRecorder.removeAllListeners()
       }
     }
-  }, [handleTranscriptionResult, onCombinedRecordingStarted, onCombinedRecordingStopped, onCombinedRecordingFailed])
+  }, []) // Empty dependency array - only run once on mount
 
   return {
     startRecording,

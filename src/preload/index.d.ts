@@ -31,6 +31,7 @@ interface TranscriptionAPI {
     filePath: string
   ) => Promise<{ success: boolean; buffer?: ArrayBuffer; error?: string }>
   onResult: (callback: (result: TranscriptionResult) => void) => void
+  onLiveTranscriptionData: (callback: (data: { text: string; stream_type?: string }) => void) => void
   removeAllListeners: () => void
 }
 

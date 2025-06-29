@@ -651,7 +651,7 @@ class TranscriptionSocketServer:
         
         return analysis
     
-    def transcribe_chunk(self, audio_path, stream_type="microphone"):
+    def transcribe_chunk(self, audio_path, stream_type="microphone", conn=None):
         """Transcribe a single audio chunk quickly with stream identification"""
         try:
             if stream_type == 'system':
@@ -822,23 +822,30 @@ class TranscriptionSocketServer:
                 else:
                     print(f"🗣️ DEBUG: Segment {segment_count}: '{segment.text}' (start: {segment.start:.2f}s, end: {segment.end:.2f}s)", file=sys.stderr, flush=True)
                 
-                # NOTE: Live text updates would be sent via socket connection
-                # but transcribe_chunk method doesn't have access to conn
-                # This functionality would need to be implemented in handle_client method
+                # Send live text updates via socket connection if available
                 live_update = {
                     "type": "live_text",
                     "text": transcription.strip(),
                     "stream_type": stream_type,
                     "chunk_id": self.chunk_counter
                 }
-                # Log live update instead of sending (since conn is not available)
-                print(f"📡 Live text update: {live_update}", file=sys.stderr, flush=True)
+                
+                if conn:
+                    try:
+                        response = json.dumps(live_update) + "\n"
+                        conn.send(response.encode())
+                        print(f"📡 TRANSCRIPTION: LIVE SENT: {live_update}", file=sys.stderr, flush=True)
+                    except Exception as e:
+                        print(f"❌ TRANSCRIPTION: Failed to send live update: {e}", file=sys.stderr, flush=True)
+                else:
+                    # Log live update if no connection (for debugging)
+                    print(f"📡 TRANSCRIPTION: Live text update (no conn): {live_update}", file=sys.stderr, flush=True)
             
             final_text = transcription.strip()
             if stream_type == "system":
-                print(f"✅ SYSTEM_AUDIO_DEBUG: Final system audio transcription: '{final_text}' (length: {len(final_text)})", file=sys.stderr, flush=True)
+                print(f"✅ TRANSCRIPTION: Final system audio transcription: '{final_text}' (length: {len(final_text)})", file=sys.stderr, flush=True)
             else:
-                print(f"✅ DEBUG: Final {stream_type} transcription: '{final_text}' (length: {len(final_text)})", file=sys.stderr, flush=True)
+                print(f"✅ TRANSCRIPTION: Final {stream_type} transcription: '{final_text}' (length: {len(final_text)})", file=sys.stderr, flush=True)
             
             # Preserve and log the transcription file before cleanup
             # Use the converted file if it was created, otherwise use the original
@@ -969,7 +976,7 @@ class TranscriptionSocketServer:
     
     def handle_client(self, conn, addr):
         """Handle client connection for audio processing and alert checking"""
-        print(f"📞 Client connected from {addr}", file=sys.stderr, flush=True)
+        print(f"📞 TRANSCRIPTION: Client connected from {addr}", file=sys.stderr, flush=True)
         
         # Store client connection for broadcasting updates
         client_streams = set()  # Track streams for this client
@@ -1057,7 +1064,7 @@ class TranscriptionSocketServer:
                         self.chunk_counter += 1
                         
                         # Process the audio chunk with stream identification
-                        result = self.transcribe_chunk(audio_path, stream_type)
+                        result = self.transcribe_chunk(audio_path, stream_type, conn)
                         
                         if stream_type == 'system':
                             print(f"🎵 SYSTEM_AUDIO_DEBUG: Transcription result for system audio:", file=sys.stderr, flush=True)
@@ -1094,7 +1101,7 @@ class TranscriptionSocketServer:
                     self.chunk_counter += 1
                     
                     # Process the audio chunk
-                    result = self.transcribe_chunk(audio_path, stream_type)
+                    result = self.transcribe_chunk(audio_path, stream_type, conn)
                     
                     # Send result back to client
                     response = json.dumps(result) + "\n"

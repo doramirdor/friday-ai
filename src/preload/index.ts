@@ -39,9 +39,15 @@ const api = {
       ipcRenderer.on('transcription-result', (_, result) => callback(result))
     },
 
+    // Event listener for live transcription data
+    onLiveTranscriptionData: (callback: (data: { text: string; stream_type?: string }) => void) => {
+      ipcRenderer.on('on-live-transcription-data', (_, data) => callback(data))
+    },
+
     // Remove listeners
     removeAllListeners: () => {
       ipcRenderer.removeAllListeners('transcription-result')
+      ipcRenderer.removeAllListeners('on-live-transcription-data')
     }
   },
 

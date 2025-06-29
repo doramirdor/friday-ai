@@ -70,29 +70,29 @@ async function requestMicrophonePermission(): Promise<boolean> {
   try {
     // Check if we already have permission
     const hasPermission = systemPreferences.getMediaAccessStatus('microphone')
-    console.log('🎤 Current microphone permission status:', hasPermission)
+    // console.log('🎤 Current microphone permission status:', hasPermission)
     
     if (hasPermission === 'granted') {
-      console.log('✅ Microphone permission already granted')
+      console.log('✅ AUDIO: Microphone permission already granted')
       return true
     }
     
     if (hasPermission === 'denied') {
-      console.log('❌ Microphone permission denied - please enable in System Preferences')
+      console.log('❌ AUDIO: Microphone permission denied - please enable in System Preferences')
       return false
     }
     
     // Request permission if not determined
     if (hasPermission === 'not-determined') {
-      console.log('🔐 Requesting microphone permission...')
+      console.log('🔐 AUDIO: Requesting microphone permission...')
       const granted = await systemPreferences.askForMediaAccess('microphone')
-      console.log(granted ? '✅ Permission granted!' : '❌ Permission denied')
+      console.log(granted ? '✅ AUDIO: Permission granted!' : '❌ AUDIO: Permission denied')
       return granted
     }
     
     return false
   } catch (error) {
-    console.error('❌ Error requesting microphone permission:', error)
+    console.error('❌ AUDIO: Error requesting microphone permission:', error)
     return false
   }
 }
@@ -102,21 +102,21 @@ async function requestScreenCapturePermission(): Promise<boolean> {
   try {
     // Check if we already have permission
     const hasPermission = systemPreferences.getMediaAccessStatus('screen')
-    console.log('🖥️ Current screen capture permission status:', hasPermission)
+    // console.log('🖥️ Current screen capture permission status:', hasPermission)
     
     if (hasPermission === 'granted') {
-      console.log('✅ Screen capture permission already granted')
+      console.log('✅ AUDIO: Screen capture permission already granted')
       return true
     }
     
     if (hasPermission === 'denied') {
-      console.log('❌ Screen capture permission denied - please enable in System Preferences')
+      console.log('❌ AUDIO: Screen capture permission denied - please enable in System Preferences')
       return false
     }
     
     // Request permission if not determined
     if (hasPermission === 'not-determined') {
-      console.log('🔐 Requesting screen capture permission...')
+      console.log('🔐 AUDIO: Requesting screen capture permission...')
       // On macOS, we need to show a dialog explaining why we need screen capture
       dialog.showMessageBox(mainWindow!, {
         type: 'info',
@@ -137,10 +137,10 @@ async function requestScreenCapturePermission(): Promise<boolean> {
         const checkPermission = (): void => {
           const currentStatus = systemPreferences.getMediaAccessStatus('screen')
           if (currentStatus === 'granted') {
-            console.log('✅ Screen capture permission granted!')
+            console.log('✅ AUDIO: Screen capture permission granted!')
             resolve(true)
           } else if (currentStatus === 'denied') {
-            console.log('❌ Screen capture permission denied')
+            console.log('❌ AUDIO: Screen capture permission denied')
             resolve(false)
           } else {
             setTimeout(checkPermission, 1000) // Check again in 1 second
@@ -152,7 +152,7 @@ async function requestScreenCapturePermission(): Promise<boolean> {
     
     return false
   } catch (error) {
-    console.error('❌ Error requesting screen capture permission:', error)
+    console.error('❌ AUDIO: Error requesting screen capture permission:', error)
     return false
   }
 }
@@ -184,11 +184,11 @@ function createWindow(): void {
     const isFirstRun = await firstRunSetupService.isFirstRun()
     
     if (isFirstRun) {
-      console.log('🚀 First run detected, showing setup dialog')
+      // console.log('🚀 First run detected, showing setup dialog')
       const setupSuccess = await firstRunSetupService.showSetupDialog()
       
       if (!setupSuccess) {
-        console.log('❌ Setup cancelled, exiting')
+        // console.log('❌ Setup cancelled, exiting')
         app.quit()
         return
       }
@@ -220,74 +220,74 @@ function createWindow(): void {
 
 // Function to get appropriate app icon based on platform
 function getAppIcon(): string {
-  console.log('🔍 Resolving app icon for platform:', process.platform)
+  // console.log('🔍 Resolving app icon for platform:', process.platform)
   
   if (process.platform === 'darwin') {
     // On macOS, use .icns for the app
     const icnsPath = path.join(__dirname, '../../build/icon.icns')
-    console.log('🔍 Checking for macOS icon at:', icnsPath)
+    // console.log('🔍 Checking for macOS icon at:', icnsPath)
     if (fs.existsSync(icnsPath)) {
-      console.log('✅ Using macOS .icns icon:', icnsPath)
+      // console.log('✅ Using macOS .icns icon:', icnsPath)
       return icnsPath
     }
   } else if (process.platform === 'win32') {
     // On Windows, use .ico for the app
     const icoPath = path.join(__dirname, '../../build/icon.ico')
-    console.log('🔍 Checking for Windows icon at:', icoPath)
+    // console.log('🔍 Checking for Windows icon at:', icoPath)
     if (fs.existsSync(icoPath)) {
-      console.log('✅ Using Windows .ico icon:', icoPath)
+      // console.log('✅ Using Windows .ico icon:', icoPath)
       return icoPath
     }
   }
   
   // Fallback to PNG for Linux or if platform-specific icons don't exist
   const pngPath = path.join(__dirname, '../../build/icon.png')
-  console.log('🔍 Checking for PNG icon at:', pngPath)
+  // console.log('🔍 Checking for PNG icon at:', pngPath)
   if (fs.existsSync(pngPath)) {
-    console.log('✅ Using PNG icon:', pngPath)
+    // console.log('✅ Using PNG icon:', pngPath)
     return pngPath
   }
   
   // Try resources directory as fallback
   const resourcesPath = path.join(__dirname, '../../resources/FridayLogoOnly.png')
-  console.log('🔍 Checking for resources icon at:', resourcesPath)
+  // console.log('🔍 Checking for resources icon at:', resourcesPath)
   if (fs.existsSync(resourcesPath)) {
-    console.log('✅ Using resources icon:', resourcesPath)
+    // console.log('✅ Using resources icon:', resourcesPath)
     return resourcesPath
   }
   
   // Final fallback to the bundled icon
-  console.log('⚠️ Using bundled fallback icon:', icon)
+  // console.log('⚠️ Using bundled fallback icon:', icon)
   return icon
 }
 
 // Function to get appropriate tray icon based on platform
 function getTrayIcon(): string {
-  console.log('🔍 Resolving tray icon for platform:', process.platform)
+  // console.log('🔍 Resolving tray icon for platform:', process.platform)
   
   // Tray icons need to be smaller - typically 16x16 or 22x22 pixels
   if (process.platform === 'darwin') {
     // On macOS, don't use template for now - just use regular icon
     const trayIconPath = path.join(__dirname, '../../resources/tray-icon.png')
-    console.log('🔍 Checking for macOS tray icon at:', trayIconPath)
+    // console.log('🔍 Checking for macOS tray icon at:', trayIconPath)
     if (fs.existsSync(trayIconPath)) {
-      console.log('✅ Using macOS tray icon:', trayIconPath)
+      // console.log('✅ Using macOS tray icon:', trayIconPath)
       return trayIconPath
     }
     
     // Fallback: use the Friday logo directly, resized
     const fridayLogoPath = path.join(__dirname, '../../resources/FridayLogoOnly.png')
-    console.log('🔍 Checking for Friday logo at:', fridayLogoPath)
+    // console.log('🔍 Checking for Friday logo at:', fridayLogoPath)
     if (fs.existsSync(fridayLogoPath)) {
-      console.log('✅ Using Friday logo for tray:', fridayLogoPath)
+      // console.log('✅ Using Friday logo for tray:', fridayLogoPath)
       return fridayLogoPath
     }
     
     // Final fallback: use the small build icon
     const smallIconPath = path.join(__dirname, '../../build/icon.png')
-    console.log('🔍 Checking for build icon at:', smallIconPath)
+    // console.log('🔍 Checking for build icon at:', smallIconPath)
     if (fs.existsSync(smallIconPath)) {
-      console.log('✅ Using build icon for tray:', smallIconPath)
+      // console.log('✅ Using build icon for tray:', smallIconPath)
       return smallIconPath
     }
   } else if (process.platform === 'win32') {
@@ -311,7 +311,7 @@ function getTrayIcon(): string {
   }
   
   // Final fallback
-  console.log('⚠️ Using bundled fallback icon for tray:', icon)
+  // console.log('⚠️ Using bundled fallback icon for tray:', icon)
   return icon
 }
 
@@ -321,12 +321,12 @@ async function checkSwiftRecorderAvailability(): Promise<boolean> {
     const recorderPath = path.join(process.cwd(), 'Recorder')
 
     if (!fs.existsSync(recorderPath)) {
-      console.log('❌ Swift recorder binary not found at:', recorderPath)
+      console.log('❌ AUDIO: Swift recorder binary not found at:', recorderPath)
       resolve(false)
       return
     }
 
-    console.log('✅ Swift recorder binary found at:', recorderPath)
+    console.log('✅ AUDIO: Swift recorder binary found at:', recorderPath)
     resolve(true)
   })
 }
@@ -339,12 +339,12 @@ function ensureRecordingDirectory(dirPath: string): { success: boolean; path?: s
       ? path.join(os.homedir(), dirPath.slice(2))
       : dirPath
 
-    console.log('📂 Ensuring recording directory exists:', resolvedPath)
+    console.log('📂 AUDIO: Ensuring recording directory exists:', resolvedPath)
     
     // Create directory if it doesn't exist
     if (!fs.existsSync(resolvedPath)) {
       fs.mkdirSync(resolvedPath, { recursive: true })
-      console.log('✅ Created recording directory:', resolvedPath)
+      console.log('✅ AUDIO: Created recording directory:', resolvedPath)
     }
     
     // Test write permissions
@@ -352,15 +352,15 @@ function ensureRecordingDirectory(dirPath: string): { success: boolean; path?: s
     try {
       fs.writeFileSync(testFile, 'test')
       fs.unlinkSync(testFile)
-      console.log('✅ Recording directory has write permissions')
+      console.log('✅ AUDIO: Recording directory has write permissions')
     } catch (permError) {
-      console.error('❌ No write permissions for recording directory:', permError)
+      console.error('❌ AUDIO: No write permissions for recording directory:', permError)
       return { success: false, error: 'No write permissions for recording directory' }
     }
     
     return { success: true, path: resolvedPath }
   } catch (error) {
-    console.error('❌ Failed to ensure recording directory:', error)
+    console.error('❌ AUDIO: Failed to ensure recording directory:', error)
     return { success: false, error: `Failed to create recording directory: ${error}` }
   }
 }
@@ -369,11 +369,10 @@ function ensureRecordingDirectory(dirPath: string): { success: boolean; path?: s
 const audioDeviceManager = {
   async getCurrentDevice() {
     try {
-      console.log('🔊 Getting current audio device...')
+      console.log('🔊 AUDIO: Getting current audio device...')
       
       // Use the Swift script to check current device
       const result = await new Promise<{ success: boolean; deviceName?: string; isBluetooth?: boolean; error?: string }>((resolve) => {
-        const { spawn } = require('child_process')
         const swift = spawn('swift', [path.join(process.cwd(), 'fix-bluetooth-audio.swift')])
         
         let output = ''
@@ -423,7 +422,7 @@ const audioDeviceManager = {
 
   async switchToBuiltInSpeakers() {
     try {
-      console.log('🔊 Switching to built-in speakers for recording...')
+      console.log('🔊 AUDIO: Switching to built-in speakers for recording...')
       
       // Note: The actual switching happens in the Swift recorder
       // This is just a notification to the frontend
@@ -441,10 +440,9 @@ const audioDeviceManager = {
 
   async enableBluetoothWorkaround() {
     try {
-      console.log('🔧 Running Bluetooth audio restoration...')
+      console.log('🔧 AUDIO: Running Bluetooth audio restoration...')
       
       // Run the restoration script
-      const { spawn } = require('child_process')
       const result = await new Promise<{ success: boolean; message?: string; error?: string }>((resolve) => {
         const swift = spawn('swift', [path.join(process.cwd(), 'fix-bluetooth-audio.swift')])
         
@@ -491,7 +489,7 @@ const audioDeviceManager = {
 
   async prepareForRecording() {
     try {
-      console.log('🎙️ Preparing audio devices for recording...')
+      console.log('🎙️ AUDIO: Preparing audio devices for recording...')
       
       // Store current audio device state
       const currentDevices = {
@@ -503,7 +501,7 @@ const audioDeviceManager = {
       const hasBluetoothDevice = await this.hasConnectedBluetoothDevice()
       
       if (hasBluetoothDevice) {
-        console.log('🎧 Bluetooth audio device detected')
+        console.log('🎧 AUDIO: Bluetooth audio device detected')
         // Future: Could add logic to switch to built-in devices if needed
       }
       
@@ -516,7 +514,7 @@ const audioDeviceManager = {
         message: 'Audio devices prepared for recording'
       }
     } catch (error) {
-      console.error('❌ Failed to prepare audio devices:', error)
+      console.error('❌ AUDIO: Failed to prepare audio devices:', error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -667,11 +665,11 @@ async function startCombinedRecording(
 
           const outputPath = path.join(currentRecordingPath, currentRecordingFilename)
 
-          console.log('📁 Recording will be saved to:', outputPath)
-          console.log('🎯 Current recording path:', currentRecordingPath)
-          console.log('📄 Current recording filename:', currentRecordingFilename)
+          console.log('📁 AUDIO: Recording will be saved to:', outputPath)
+          console.log('🎯 AUDIO: Current recording path:', currentRecordingPath)
+          console.log('📄 AUDIO: Current recording filename:', currentRecordingFilename)
 
-          console.log('🎙️ Starting ScreenCaptureKit recording...')
+          console.log('🎙️ AUDIO: Starting ScreenCaptureKit recording...')
           
           // Swift recorder arguments for ScreenCaptureKit recording
           const args = [
@@ -695,7 +693,7 @@ async function startCombinedRecording(
           // Set up output monitoring
           const outputTimeoutId = setTimeout(() => {
             if (!outputReceived) {
-              console.log('❌ No output received from Swift recorder within 10 seconds')
+              console.log('❌ AUDIO: No output received from Swift recorder within 10 seconds')
               if (swiftRecorderProcess) {
                 swiftRecorderProcess.kill('SIGTERM')
                 swiftRecorderProcess = null
@@ -713,12 +711,12 @@ async function startCombinedRecording(
           const hangDetectionInterval = setInterval(() => {
             const timeSinceLastOutput = Date.now() - lastOutputTime
             if (timeSinceLastOutput > 15000 && !hasStarted) { // 15 seconds without output
-              console.log('❌ Swift recorder appears to be hanging')
+              console.log('❌ AUDIO: Swift recorder appears to be hanging')
               clearInterval(hangDetectionInterval)
               clearTimeout(outputTimeoutId)
               
               if (swiftRecorderProcess) {
-                console.log('🛑 Terminating hanging Swift recorder process')
+                console.log('🛑 AUDIO: Terminating hanging Swift recorder process')
                 swiftRecorderProcess.kill('SIGKILL')
                 swiftRecorderProcess = null
               }
@@ -738,7 +736,7 @@ async function startCombinedRecording(
             outputReceived = true
             lastOutputTime = Date.now()
             const output = data.toString().trim()
-            console.log('📤 Swift recorder output:', output)
+            console.log('📤 AUDIO: Swift recorder output:', output)
 
             try {
               const response = JSON.parse(output)
@@ -748,8 +746,8 @@ async function startCombinedRecording(
                 clearTimeout(outputTimeoutId)
                 clearInterval(hangDetectionInterval)
                 
-                console.log('✅ ScreenCaptureKit recording started successfully')
-                console.log('📝 Output file:', response.path)
+                console.log('✅ AUDIO: ScreenCaptureKit recording started successfully')
+                console.log('📝 AUDIO: Output file:', response.path)
                 
                 // Store the actual recording path
                 currentRecordingPath = path.dirname(response.path)
@@ -762,12 +760,12 @@ async function startCombinedRecording(
                 })
               } else if (response.code === 'TRANSCRIPTION_CHUNK') {
                 // Handle live transcription chunks from system audio
-                console.log('🎵 SYSTEM_AUDIO_DEBUG: Received system audio transcription chunk:', {
+                console.log('🎵 TRANSCRIPTION: Received system audio transcription chunk:', {
                   path: response.path,
                   stream_type: response.stream_type,
                   socket_available: !!(transcriptionSocket && !transcriptionSocket.destroyed),
-                  file_exists: require('fs').existsSync(response.path),
-                  file_size: require('fs').existsSync(response.path) ? require('fs').statSync(response.path).size : 0
+                  file_exists: fs.existsSync(response.path),
+                  file_size: fs.existsSync(response.path) ? fs.statSync(response.path).size : 0
                 })
                 
                 if (transcriptionSocket && !transcriptionSocket.destroyed && isTranscriptionReady) {
@@ -778,16 +776,16 @@ async function startCombinedRecording(
                     stream_type: response.stream_type || 'system'
                   }
                   
-                  console.log('📤 SYSTEM_AUDIO_DEBUG: Sending system audio chunk request:', request)
+                  console.log('📤 TRANSCRIPTION: Sending system audio chunk request:', request)
                   
                   try {
                     transcriptionSocket.write(JSON.stringify(request) + '\n')
-                    console.log('✅ SYSTEM_AUDIO_DEBUG: Successfully sent system audio chunk for transcription')
+                    console.log('✅ TRANSCRIPTION: Successfully sent system audio chunk for transcription')
                   } catch (error) {
-                    console.error('❌ SYSTEM_AUDIO_DEBUG: Failed to send system audio chunk:', error)
+                    console.error('❌ TRANSCRIPTION: Failed to send system audio chunk:', error)
                   }
                 } else {
-                  console.warn('⚠️ SYSTEM_AUDIO_DEBUG: Transcription socket not available for system audio chunk:', {
+                  console.warn('⚠️ TRANSCRIPTION: Transcription socket not available for system audio chunk:', {
                     socket_exists: !!transcriptionSocket,
                     socket_destroyed: transcriptionSocket?.destroyed,
                     service_ready: isTranscriptionReady
@@ -795,7 +793,7 @@ async function startCombinedRecording(
                   
                   // Queue the chunk for later processing if service isn't ready
                   if (!isTranscriptionReady) {
-                    console.log('⏳ Queuing system audio chunk for later processing when service is ready')
+                    console.log('⏳ TRANSCRIPTION: Queuing system audio chunk for later processing when service is ready')
                     // Store chunk path for retry when service becomes ready
                     setTimeout(() => {
                       if (isTranscriptionReady && transcriptionSocket && !transcriptionSocket.destroyed) {
@@ -806,9 +804,9 @@ async function startCombinedRecording(
                         }
                         try {
                           transcriptionSocket.write(JSON.stringify(retryRequest) + '\n')
-                          console.log('✅ Successfully sent queued system audio chunk for transcription')
+                          console.log('✅ TRANSCRIPTION: Successfully sent queued system audio chunk for transcription')
                         } catch (error) {
-                          console.error('❌ Failed to send queued system audio chunk:', error)
+                          console.error('❌ TRANSCRIPTION: Failed to send queued system audio chunk:', error)
                         }
                       }
                     }, 2000) // Retry after 2 seconds
@@ -816,10 +814,10 @@ async function startCombinedRecording(
                 }
               } else if (response.code === 'DEBUG') {
                 // Handle debug messages from Swift recorder
-                console.log('🔍 Swift recorder debug:', response.message)
+                console.log('🔍 AUDIO: Swift recorder debug:', response.message)
               } else if (response.code === 'SYSTEM_AUDIO_DEBUG') {
                 // Handle system audio debug messages from Swift recorder
-                console.log('🎵 SYSTEM_AUDIO_DEBUG:', response.message)
+                console.log('🎵 TRANSCRIPTION: System audio debug:', response.message)
               } else if (response.code === 'PERMISSION_DENIED') {
                 clearTimeout(outputTimeoutId)
                 clearInterval(hangDetectionInterval)
@@ -846,7 +844,7 @@ async function startCombinedRecording(
                 })
               }
             } catch {
-              console.log('📝 Non-JSON output from Swift recorder:', output)
+              console.log('📝 AUDIO: Non-JSON output from Swift recorder:', output)
             }
           })
 
@@ -854,13 +852,13 @@ async function startCombinedRecording(
             outputReceived = true
             lastOutputTime = Date.now()
             const error = data.toString().trim()
-            console.error('❌ Swift recorder error:', error)
+            console.error('❌ AUDIO: Swift recorder error:', error)
           })
 
           swiftRecorderProcess.on('close', (code) => {
             clearTimeout(outputTimeoutId)
             clearInterval(hangDetectionInterval)
-            console.log(`🔚 Swift recorder process exited with code: ${code}`)
+            console.log(`🔚 AUDIO: Swift recorder process exited with code: ${code}`)
             
             if (!hasStarted) {
               resolve({
@@ -1357,14 +1355,14 @@ function startTranscriptionService(): Promise<void> {
 
 function connectToTranscriptionSocket(): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log('🔍 DEBUG: Starting connectToTranscriptionSocket', {
+    console.log('🔍 TRANSCRIPTION: Starting connectToTranscriptionSocket', {
       actualTranscriptionPort,
       existingSocket: !!transcriptionSocket,
       existingSocketDestroyed: transcriptionSocket?.destroyed
     })
     
     if (transcriptionSocket) {
-      console.log('🔍 DEBUG: Destroying existing socket')
+      console.log('🔍 TRANSCRIPTION: Destroying existing socket')
       transcriptionSocket.destroy()
     }
     
@@ -1373,10 +1371,10 @@ function connectToTranscriptionSocket(): Promise<void> {
     // Remove timeout - let it stay connected
     // transcriptionSocket.setTimeout(30000) // 30 second timeout
 
-    console.log(`🔍 DEBUG: Attempting to connect to port ${actualTranscriptionPort}`)
+    console.log(`🔍 TRANSCRIPTION: Attempting to connect to port ${actualTranscriptionPort}`)
     transcriptionSocket.connect(actualTranscriptionPort, 'localhost', () => {
-      console.log(`🔌 Connected to transcription socket server on port ${actualTranscriptionPort}`)
-      console.log('🔍 DEBUG: Connection successful, resolving promise')
+      console.log(`🔌 TRANSCRIPTION: Connected to transcription socket server on port ${actualTranscriptionPort}`)
+      console.log('🔍 TRANSCRIPTION: Connection successful, resolving promise')
       resolve()
     })
 
@@ -1390,7 +1388,7 @@ function connectToTranscriptionSocket(): Promise<void> {
         for (const line of lines) {
           const result = JSON.parse(line)
 
-          console.log('📝 MAIN PROCESS forwarding transcription result:', {
+          console.log('📝 TRANSCRIPTION: Main process forwarding transcription result:', {
             type: result.type,
             stream_type: result.stream_type,
             has_stream_type: !!result.stream_type,
@@ -1399,7 +1397,7 @@ function connectToTranscriptionSocket(): Promise<void> {
           })
 
           if (result.stream_type === 'system') {
-            console.log('🎵 SYSTEM_AUDIO_DEBUG: Transcription result for system audio:', {
+            console.log('🎵 TRANSCRIPTION: Transcription result for system audio:', {
               type: result.type,
               text_length: result.text?.length || 0,
               text_preview: result.text?.substring(0, 100) || result.message,
@@ -1409,6 +1407,11 @@ function connectToTranscriptionSocket(): Promise<void> {
           }
 
           if (result.type === 'live_text') {
+            console.log('📡 TRANSCRIPTION: Sending live transcription data to renderer:', {
+              text_preview: result.text?.substring(0, 50) || 'NO TEXT',
+              stream_type: result.stream_type,
+              text_length: result.text?.length || 0
+            })
             if (mainWindow) {
               mainWindow.webContents.send('on-live-transcription-data', {
                 text: result.text,
@@ -1420,7 +1423,7 @@ function connectToTranscriptionSocket(): Promise<void> {
           }
 
           console.log(
-            '📝 Transcription result:',
+            '📝 TRANSCRIPTION: Result summary:',
             result.type,
             result.text?.substring(0, 50) || result.message
           )
@@ -1431,15 +1434,15 @@ function connectToTranscriptionSocket(): Promise<void> {
     })
 
     transcriptionSocket.on('error', (error) => {
-      console.error('🔍 DEBUG: Socket error:', error)
-      console.log('🔍 DEBUG: Error context:', {
+      console.error('🔍 TRANSCRIPTION: Socket error:', error)
+      console.log('🔍 TRANSCRIPTION: Error context:', {
         isTranscriptionReady,
-        errorCode: (error as any).code,
+        errorCode: (error as NodeJS.ErrnoException).code,
         errorMessage: error.message
       })
       // Don't reject here during normal operation, only during initial connection
       if (!isTranscriptionReady) {
-        console.log('🔍 DEBUG: Rejecting connection promise due to error')
+        console.log('🔍 TRANSCRIPTION: Rejecting connection promise due to error')
         reject(error)
       }
     })
@@ -1451,21 +1454,21 @@ function connectToTranscriptionSocket(): Promise<void> {
     // })
 
     transcriptionSocket.on('close', () => {
-      console.log('📞 Socket connection closed - keeping service ready for reconnection')
+      console.log('📞 TRANSCRIPTION: Socket connection closed - keeping service ready for reconnection')
       transcriptionSocket = null
       // Don't set isTranscriptionReady to false here to allow reconnection
       
       // Attempt to reconnect after a shorter delay if the process is still running
       if (transcriptionProcess && !transcriptionProcess.killed) {
-        console.log('🔄 Attempting to reconnect to transcription service in 3 seconds...')
+        console.log('🔄 TRANSCRIPTION: Attempting to reconnect to transcription service in 3 seconds...')
         setTimeout(() => {
           if (transcriptionProcess && !transcriptionProcess.killed && !transcriptionSocket && isTranscriptionReady) {
             connectToTranscriptionSocket()
               .then(() => {
-                console.log('✅ Reconnected to transcription service')
+                console.log('✅ TRANSCRIPTION: Reconnected to transcription service')
               })
               .catch((error) => {
-                console.error('Failed to reconnect to transcription service:', error)
+                console.error('❌ TRANSCRIPTION: Failed to reconnect to transcription service:', error)
                 // Only set to false if reconnection fails multiple times
                 isTranscriptionReady = false
               })
@@ -1912,7 +1915,7 @@ function setupTranscriptionHandlers(): void {
   )
 
   // Alerts IPC handlers
-  ipcMain.handle('alerts:check-keywords', async (_, options: { transcript: string; keywords: any[] }) => {
+  ipcMain.handle('alerts:check-keywords', async (_, options: { transcript: string; keywords: unknown[] }) => {
     try {
       // Check if transcription service is ready (we use the same socket)
       const socketConnected = transcriptionSocket && !transcriptionSocket.destroyed
@@ -1932,7 +1935,7 @@ function setupTranscriptionHandlers(): void {
               const response = JSON.parse(line)
               
               // Check if this is an alert response
-              if (response.hasOwnProperty('success') && response.hasOwnProperty('matches')) {
+              if (Object.prototype.hasOwnProperty.call(response, 'success') && Object.prototype.hasOwnProperty.call(response, 'matches')) {
                 transcriptionSocket!.removeListener('data', handleAlertResponse)
                 resolve(response)
                 return
@@ -2428,11 +2431,10 @@ function cleanupHangingRecorderProcesses(): void {
   try {
     if (process.platform === 'darwin') {
       // Kill any hanging recorder processes
-      const { execSync } = require('child_process')
       try {
-        execSync('pkill -f "recorder"', { stdio: 'ignore' })
+        child_process.execSync('pkill -f "recorder"', { stdio: 'ignore' })
         console.log('🧹 Cleaned up hanging recorder processes')
-      } catch (error) {
+      } catch {
         // Ignore errors - likely means no processes were found
       }
     }
